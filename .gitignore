@@ -1,0 +1,7 @@
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj
+.DS_Store
+build/
+Matisa.app/
