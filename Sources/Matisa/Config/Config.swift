@@ -30,6 +30,7 @@ struct RawService: Decodable {
     // common
     let build: RawBuild?
     let scripts: [RawNamedCommand]?
+    let group: String?
 }
 
 struct RawComposePort: Decodable {
@@ -112,7 +113,8 @@ extension AppConfig {
                     url: rs.url,
                     command: cmd,
                     build: Self.buildFromRaw(rs.build, owner: "project '\(name)'"),
-                    scripts: Self.scriptsFromRaw(rs.scripts)
+                    scripts: Self.scriptsFromRaw(rs.scripts),
+                    group: Self.normaliseGroup(rs.group)
                 ))
 
             case "docker":
@@ -135,7 +137,8 @@ extension AppConfig {
                     image: image,
                     port: port,
                     url: rs.url,
-                    scripts: Self.scriptsFromRaw(rs.scripts)
+                    scripts: Self.scriptsFromRaw(rs.scripts),
+                    group: Self.normaliseGroup(rs.group)
                 ))
 
             case "compose":
@@ -151,7 +154,8 @@ extension AppConfig {
                     file: Self.expand(fileStr),
                     ports: composePorts,
                     build: Self.buildFromRaw(rs.build, owner: "compose '\(name)'"),
-                    scripts: Self.scriptsFromRaw(rs.scripts)
+                    scripts: Self.scriptsFromRaw(rs.scripts),
+                    group: Self.normaliseGroup(rs.group)
                 ))
 
             default:
@@ -174,6 +178,12 @@ extension AppConfig {
                 .map { NamedCommand(name: $0.name, command: $0.command) }
             return mapped.isEmpty ? nil : .multi(mapped)
         }
+    }
+
+    static func normaliseGroup(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     static func scriptsFromRaw(_ raw: [RawNamedCommand]?) -> [NamedCommand] {

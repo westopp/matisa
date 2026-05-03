@@ -18,6 +18,7 @@ struct ProjectFields: Hashable, Sendable {
     let command: String
     let build: BuildSpec?
     let scripts: [NamedCommand]
+    let group: String?
 }
 
 struct DockerFields: Hashable, Sendable {
@@ -26,6 +27,7 @@ struct DockerFields: Hashable, Sendable {
     let port: Int
     let url: String?
     let scripts: [NamedCommand]
+    let group: String?
 }
 
 struct ComposeFields: Hashable, Sendable {
@@ -34,6 +36,7 @@ struct ComposeFields: Hashable, Sendable {
     let ports: [ComposePort]
     let build: BuildSpec?
     let scripts: [NamedCommand]
+    let group: String?
 }
 
 /// A named ad-hoc command attached to a service. The `name` is the menu
@@ -168,6 +171,17 @@ extension ServiceSpec {
         case .docker(let f): f.scripts
         case .compose(let f): f.scripts
         case .unmanaged: []
+        }
+    }
+
+    /// Group name as declared in config. Trimmed and non-empty when present.
+    /// `nil` for ungrouped services and unmanaged entries.
+    var group: String? {
+        switch self {
+        case .project(let f): f.group
+        case .docker(let f): f.group
+        case .compose(let f): f.group
+        case .unmanaged: nil
         }
     }
 

@@ -56,18 +56,18 @@ struct MainWindowView: View {
                     }
 
                     CollapsibleSection(id: "projects", title: "Projects", count: filteredProjects.count) {
-                        rows(filteredProjects)
+                        groupedRows(filteredProjects, category: "projects")
                     }
 
                     if !filteredDocker.isEmpty {
                         CollapsibleSection(id: "docker", title: "Docker", count: filteredDocker.count) {
-                            rows(filteredDocker)
+                            groupedRows(filteredDocker, category: "docker")
                         }
                     }
 
                     if !filteredCompose.isEmpty {
                         CollapsibleSection(id: "compose", title: "Compose Stacks", count: filteredCompose.count) {
-                            rows(filteredCompose)
+                            groupedRows(filteredCompose, category: "compose")
                         }
                     }
 
@@ -134,23 +134,47 @@ struct MainWindowView: View {
                     Label("Show in Finder", systemImage: "folder")
                 }
             } label: {
-                Image(systemName: "folder.fill")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 24, height: 24)
-                    .background {
-                        Circle().fill(Color.primary.opacity(0.08))
-                    }
-                    .overlay {
-                        Circle().strokeBorder(Color.primary.opacity(0.10))
-                    }
+                circleIcon("folder.fill")
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Config folder")
+
+            Menu {
+                Button {
+                    NotificationCenter.default.post(name: .collapsibleSectionsCollapseAll, object: nil)
+                } label: {
+                    Label("Collapse All", systemImage: "rectangle.compress.vertical")
+                }
+                Button {
+                    NotificationCenter.default.post(name: .collapsibleSectionsExpandAll, object: nil)
+                } label: {
+                    Label("Expand All", systemImage: "rectangle.expand.vertical")
+                }
+            } label: {
+                circleIcon("chevron.up.chevron.down")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Sections")
+
             Spacer()
         }
+    }
+
+    private func circleIcon(_ systemImage: String) -> some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.secondary)
+            .frame(width: 24, height: 24)
+            .background {
+                Circle().fill(Color.primary.opacity(0.08))
+            }
+            .overlay {
+                Circle().strokeBorder(Color.primary.opacity(0.10))
+            }
     }
 
     private func copyConfigPath() {
@@ -341,6 +365,34 @@ struct MainWindowView: View {
         filteredUnmanaged.filter {
             if case .unmanaged(let f) = $0.spec, case .process = f.kind { return true }
             return false
+        }
+    }
+
+    /// Lays out a category's services with optional sub-groups. Ungrouped
+    /// services render at the category root; groups appear below as nested
+    /// CollapsibleSections. Single-member groups flatten to avoid one-row
+    /// indents.
+    @ViewBuilder
+    private func groupedRows(_ services: [Service], category: String) -> some View {
+        let partition = ServiceGrouping.partition(services)
+        VStack(alignment: .leading, spacing: 10) {
+            if !partition.ungrouped.isEmpty {
+                rows(partition.ungrouped)
+            }
+            ForEach(partition.groups, id: \.key) { group in
+                if group.services.count == 1 {
+                    rows(group.services)
+                } else {
+                    CollapsibleSection(
+                        id: "\(category).group.\(group.key)",
+                        title: group.displayName,
+                        count: group.services.count
+                    ) {
+                        rows(group.services)
+                    }
+                    .padding(.leading, 12)
+                }
+            }
         }
     }
 
