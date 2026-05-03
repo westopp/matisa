@@ -56,7 +56,7 @@ struct ComposePort: Hashable, Sendable {
 }
 
 enum UnmanagedKind: Hashable, Sendable {
-    case process(pid: Int32, command: String, port: Int)
+    case process(pid: Int32, command: String, port: Int, appName: String?)
     case container(name: String, image: String, port: Int?)
 }
 
@@ -65,27 +65,28 @@ struct UnmanagedFields: Hashable, Sendable {
 
     var displayName: String {
         switch kind {
-        case let .process(_, command, port): "\(command) :\(port)"
+        case let .process(_, command, _, appName): appName ?? command
         case let .container(name, _, _): name
         }
     }
 
     var subtitle: String {
         switch kind {
-        case let .process(pid, _, _): "PID \(pid)"
+        case let .process(pid, command, _, appName):
+            appName != nil ? "\(command) · PID \(pid)" : "PID \(pid)"
         case let .container(_, image, _): image
         }
     }
 
     var port: Int? {
         switch kind {
-        case let .process(_, _, port): port
+        case let .process(_, _, port, _): port
         case let .container(_, _, port): port
         }
     }
 
     var pid: Int32? {
-        if case let .process(pid, _, _) = kind { return pid }
+        if case let .process(pid, _, _, _) = kind { return pid }
         return nil
     }
 

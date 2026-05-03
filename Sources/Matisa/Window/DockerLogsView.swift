@@ -31,7 +31,7 @@ struct DockerLogsView: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    Text(content.isEmpty ? "Waiting for logs…" : content)
+                    Text(content.isEmpty ? AttributedString("Waiting for logs…") : ANSI.attributedString(from: content))
                         .font(.system(.caption, design: .monospaced))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)

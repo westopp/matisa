@@ -29,7 +29,7 @@ struct LogTailView: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    Text(content.isEmpty ? "No logs yet." : content)
+                    Text(content.isEmpty ? AttributedString("No logs yet.") : ANSI.attributedString(from: content))
                         .font(.system(.caption, design: .monospaced))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)

@@ -94,7 +94,12 @@ final class TaskRunner {
         let cwdEscaped = cwd.path.replacingOccurrences(of: "'", with: "'\\''")
         let wrapper = "cd '\(cwdEscaped)' && exec \(command)"
         process.arguments = ["-l", "-c", wrapper]
-        process.environment = ProcessInfo.processInfo.environment
+        // Encourage colored output even though stdout/stderr are pipes.
+        var env = ProcessInfo.processInfo.environment
+        env["FORCE_COLOR"] = env["FORCE_COLOR"] ?? "1"
+        env["CLICOLOR_FORCE"] = env["CLICOLOR_FORCE"] ?? "1"
+        env["TERM"] = env["TERM"] ?? "xterm-256color"
+        process.environment = env
 
         let outPipe = Pipe()
         let errPipe = Pipe()

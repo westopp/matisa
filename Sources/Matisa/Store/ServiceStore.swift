@@ -192,16 +192,30 @@ final class ServiceStore {
         // Unmanaged processes: dev-y listening ports we haven't matched.
         var unmanagedBuilt: [Service] = []
         var seenPIDs: Set<Int32> = []
+        var pidsToResolve: [Int32] = []
+        var processCommandByPID: [Int32: (command: String, port: Int)] = [:]
         for lp in ports where !matchedPIDs.contains(lp.pid) && !matchedManagedPorts.contains(lp.port) {
             guard UnmanagedHeuristics.looksLikeDevServer(lp) else { continue }
             if lp.pid <= 1 { continue }
             if seenPIDs.contains(lp.pid) { continue }
             seenPIDs.insert(lp.pid)
+            pidsToResolve.append(lp.pid)
+            processCommandByPID[lp.pid] = (lp.command, lp.port)
+        }
+
+        let appNames = await ProcessIntrospect.resolveAppNames(for: pidsToResolve)
+        for pid in pidsToResolve {
+            guard let info = processCommandByPID[pid] else { continue }
             unmanagedBuilt.append(Service(
                 spec: .unmanaged(UnmanagedFields(
-                    kind: .process(pid: lp.pid, command: lp.command, port: lp.port)
+                    kind: .process(
+                        pid: pid,
+                        command: info.command,
+                        port: info.port,
+                        appName: appNames[pid]
+                    )
                 )),
-                state: .unmanaged(pid: lp.pid),
+                state: .unmanaged(pid: pid),
                 logsPath: nil
             ))
         }
@@ -306,7 +320,7 @@ final class ServiceStore {
             markState(service.id, .stopped)
         case .unmanaged(let f):
             switch f.kind {
-            case let .process(pid, _, _):
+            case let .process(pid, _, _, _):
                 ProcessSupervisor.killForeign(pid: pid)
             case let .container(name, _, _):
                 _ = try? await Shell.run(
@@ -472,7 +486,7 @@ final class ServiceStore {
 
         case .unmanaged(let f):
             switch f.kind {
-            case let .process(pid, _, _):
+            case let .process(pid, _, _, _):
                 await ProcessSupervisor.stopWithEscalation(pid: pid, foreign: true)
             case let .container(name, _, _):
                 _ = try? await Shell.run(executable: DockerProbe.dockerPath, arguments: ["stop", name])

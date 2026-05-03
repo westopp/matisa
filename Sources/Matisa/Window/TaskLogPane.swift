@@ -47,7 +47,7 @@ struct TaskLogPane: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    Text(buffer.isEmpty ? "No output yet." : buffer)
+                    Text(buffer.isEmpty ? AttributedString("No output yet.") : ANSI.attributedString(from: buffer))
                         .font(.system(.caption, design: .monospaced))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)

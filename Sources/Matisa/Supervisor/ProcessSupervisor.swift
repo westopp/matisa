@@ -56,7 +56,14 @@ enum ProcessSupervisor {
         let cArgv: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) } + [nil]
         defer { for p in cArgv { free(p) } }
 
-        let env = ProcessInfo.processInfo.environment
+        // Hint to most CLIs that they should emit ANSI colors even though
+        // their stdout is a pipe rather than a TTY. Covered by FORCE_COLOR
+        // (Node tooling), CLICOLOR_FORCE (BSD ls and friends), and a
+        // 256-color TERM (anything that sniffs the terminfo entry).
+        var env = ProcessInfo.processInfo.environment
+        env["FORCE_COLOR"] = env["FORCE_COLOR"] ?? "1"
+        env["CLICOLOR_FORCE"] = env["CLICOLOR_FORCE"] ?? "1"
+        env["TERM"] = env["TERM"] ?? "xterm-256color"
         let envStrings = env.map { "\($0.key)=\($0.value)" }
         let cEnvp: [UnsafeMutablePointer<CChar>?] = envStrings.map { strdup($0) } + [nil]
         defer { for p in cEnvp { free(p) } }

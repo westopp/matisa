@@ -12,7 +12,7 @@ struct Service: Identifiable, Hashable, Sendable {
         case .compose(let f):   "compose:\(f.name)"
         case .unmanaged(let f):
             switch f.kind {
-            case let .process(pid, _, _):     "unmanaged:proc:\(pid)"
+            case let .process(pid, _, _, _):  "unmanaged:proc:\(pid)"
             case let .container(name, _, _):  "unmanaged:cont:\(name)"
             }
         }

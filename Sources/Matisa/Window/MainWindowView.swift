@@ -86,15 +86,6 @@ struct MainWindowView: View {
                                 .padding(.vertical, 6)
                         } else {
                             VStack(alignment: .leading, spacing: 10) {
-                                if !filteredUnmanagedContainers.isEmpty {
-                                    CollapsibleSection(
-                                        id: "unmanaged.docker",
-                                        title: "Docker Containers",
-                                        count: filteredUnmanagedContainers.count
-                                    ) {
-                                        unmanagedRows(filteredUnmanagedContainers)
-                                    }
-                                }
                                 if !filteredUnmanagedProcesses.isEmpty {
                                     CollapsibleSection(
                                         id: "unmanaged.projects",
@@ -102,6 +93,15 @@ struct MainWindowView: View {
                                         count: filteredUnmanagedProcesses.count
                                     ) {
                                         unmanagedRows(filteredUnmanagedProcesses)
+                                    }
+                                }
+                                if !filteredUnmanagedContainers.isEmpty {
+                                    CollapsibleSection(
+                                        id: "unmanaged.docker",
+                                        title: "Docker Containers",
+                                        count: filteredUnmanagedContainers.count
+                                    ) {
+                                        unmanagedRows(filteredUnmanagedContainers)
                                     }
                                 }
                             }
@@ -346,15 +346,11 @@ struct MainWindowView: View {
 
     @ViewBuilder
     private func unmanagedRows(_ services: [Service]) -> some View {
-        VStack(spacing: 6) {
-            ForEach(services) { svc in
-                UnmanagedRow(
-                    service: svc,
-                    onStart: { Task { await store.perform(.start, on: svc) } },
-                    onStop: { Task { await store.perform(.stop, on: svc) } }
-                )
-            }
-        }
+        TruncatedUnmanagedList(
+            services: services,
+            onStart: { svc in Task { await store.perform(.start, on: svc) } },
+            onStop:  { svc in Task { await store.perform(.stop,  on: svc) } }
+        )
     }
 
     // MARK: - Helpers
@@ -377,5 +373,57 @@ struct MainWindowView: View {
             }
         case .starting, .stopping: break
         }
+    }
+}
+
+/// Lays out an unmanaged subsection: running rows first, then a capped tail
+/// of stopped rows with a show more/less toggle. Cap is 4 when nothing is
+/// running, 3 when something is — matches the "always surface running first"
+/// rule.
+private struct TruncatedUnmanagedList: View {
+    let services: [Service]
+    let onStart: (Service) -> Void
+    let onStop: (Service) -> Void
+
+    @State private var expanded: Bool = false
+
+    var body: some View {
+        let running = services.filter { !isStopped($0) }
+        let stopped = services.filter(isStopped)
+        let cap = running.isEmpty ? 4 : 3
+        let visibleStopped = expanded ? stopped : Array(stopped.prefix(cap))
+        let hidden = stopped.count - visibleStopped.count
+
+        VStack(spacing: 6) {
+            ForEach(running) { svc in row(svc) }
+            ForEach(visibleStopped) { svc in row(svc) }
+            if stopped.count > cap {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() }
+                } label: {
+                    Text(expanded ? "Show less" : "Show \(hidden) more")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ svc: Service) -> some View {
+        UnmanagedRow(
+            service: svc,
+            onStart: { onStart(svc) },
+            onStop:  { onStop(svc) }
+        )
+    }
+
+    private func isStopped(_ svc: Service) -> Bool {
+        if case .stopped = svc.state { return true }
+        return false
     }
 }
