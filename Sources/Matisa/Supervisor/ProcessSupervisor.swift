@@ -13,10 +13,12 @@ enum ProcessSupervisor {
 
     /// Spawn a detached process. Returns the PID once the kernel hands it back.
     /// Stdout + stderr are appended to `logURL`; stdin from /dev/null.
+    /// `extraEnv` overrides any keys inherited from Matisa's process env.
     static func spawnDetached(
         shellCommand: String,
         workingDirectory: URL,
-        serviceID: String
+        serviceID: String,
+        extraEnv: [String: String] = [:]
     ) throws -> SpawnResult {
         let logURL = Paths.logFile(for: serviceID)
         if !FileManager.default.fileExists(atPath: logURL.path) {
@@ -64,6 +66,8 @@ enum ProcessSupervisor {
         env["FORCE_COLOR"] = env["FORCE_COLOR"] ?? "1"
         env["CLICOLOR_FORCE"] = env["CLICOLOR_FORCE"] ?? "1"
         env["TERM"] = env["TERM"] ?? "xterm-256color"
+        // User-declared env wins over the inherited values.
+        for (k, v) in extraEnv { env[k] = v }
         let envStrings = env.map { "\($0.key)=\($0.value)" }
         let cEnvp: [UnsafeMutablePointer<CChar>?] = envStrings.map { strdup($0) } + [nil]
         defer { for p in cEnvp { free(p) } }

@@ -37,18 +37,40 @@ final class ConfigLoader {
         // Normalise `build` (when an object) and `scripts` from
         // Record<string, string> to an ordered array of { name, command }
         // before JSON.stringify, since NSJSONSerialization on Apple platforms
-        // doesn't preserve object key order.
+        // doesn't preserve object key order. Same goes for `env` — string
+        // values become base vars, object values become named contexts.
         let script = """
         const c = (await import('\(url.path)')).default;
         const out = typeof c === 'function' ? await c() : c;
         const norm = (v) => (v && typeof v === 'object' && !Array.isArray(v))
           ? Object.entries(v).map(([name, command]) => ({ name, command }))
           : v;
+        const splitEnv = (e) => {
+          if (!e || typeof e !== 'object' || Array.isArray(e)) return undefined;
+          const vars = [];
+          const contexts = [];
+          for (const [k, v] of Object.entries(e)) {
+            if (v == null) continue;
+            if (typeof v === 'object' && !Array.isArray(v)) {
+              const cvars = [];
+              for (const [ck, cv] of Object.entries(v)) {
+                if (cv == null) continue;
+                if (typeof cv === 'object') continue;
+                cvars.push({ name: ck, value: String(cv) });
+              }
+              contexts.push({ name: k, vars: cvars });
+            } else {
+              vars.push({ name: k, value: String(v) });
+            }
+          }
+          return { vars, contexts };
+        };
         if (out && Array.isArray(out.services)) {
           out.services = out.services.map((s) => ({
             ...s,
             build: typeof s?.build === 'string' ? s.build : norm(s?.build),
             scripts: norm(s?.scripts),
+            env: splitEnv(s?.env),
           }));
         }
         process.stdout.write(JSON.stringify(out));

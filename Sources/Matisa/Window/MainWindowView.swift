@@ -143,11 +143,18 @@ struct MainWindowView: View {
 
             Menu {
                 Button {
+                    var state = UIStatePersistence.load()
+                    state.collapseByDefault = true
+                    UIStatePersistence.save(state)
                     NotificationCenter.default.post(name: .collapsibleSectionsCollapseAll, object: nil)
                 } label: {
                     Label("Collapse All", systemImage: "rectangle.compress.vertical")
                 }
                 Button {
+                    var state = UIStatePersistence.load()
+                    state.collapsedSections.removeAll()
+                    state.collapseByDefault = false
+                    UIStatePersistence.save(state)
                     NotificationCenter.default.post(name: .collapsibleSectionsExpandAll, object: nil)
                 } label: {
                     Label("Expand All", systemImage: "rectangle.expand.vertical")
@@ -383,10 +390,34 @@ struct MainWindowView: View {
                 if group.services.count == 1 {
                     rows(group.services)
                 } else {
+                    let allRunning = group.services.allSatisfy { $0.state.isRunning }
+                    let anyRunning = group.services.contains { $0.state.isRunning }
                     CollapsibleSection(
                         id: "\(category).group.\(group.key)",
                         title: group.displayName,
-                        count: group.services.count
+                        count: group.services.count,
+                        trailing: {
+                            HStack(spacing: 2) {
+                                IconButton(
+                                    "play.fill",
+                                    help: "Start all in \(group.displayName)",
+                                    disabled: allRunning
+                                ) {
+                                    for svc in group.services where !svc.state.isRunning {
+                                        Task { await store.perform(.start, on: svc) }
+                                    }
+                                }
+                                IconButton(
+                                    "stop.fill",
+                                    help: "Stop all in \(group.displayName)",
+                                    disabled: !anyRunning
+                                ) {
+                                    for svc in group.services where svc.state.isRunning {
+                                        Task { await store.perform(.stop, on: svc) }
+                                    }
+                                }
+                            }
+                        }
                     ) {
                         rows(group.services)
                     }

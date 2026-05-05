@@ -16,7 +16,11 @@ struct ServiceDetailView: View {
 
             metadataLine
 
-            Divider()
+            if let env = service.spec.env, !env.isEmpty {
+                EnvironmentSection(serviceID: service.id, env: env)
+            } else {
+                Divider()
+            }
 
             logsArea
         }

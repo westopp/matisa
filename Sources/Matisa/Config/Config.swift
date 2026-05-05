@@ -31,6 +31,25 @@ struct RawService: Decodable {
     let build: RawBuild?
     let scripts: [RawNamedCommand]?
     let group: String?
+    let env: RawEnv?
+}
+
+struct RawEnvVar: Decodable, Hashable {
+    let name: String
+    let value: String
+}
+
+struct RawEnvContext: Decodable, Hashable {
+    let name: String
+    let vars: [RawEnvVar]
+}
+
+/// `env` is normalised by the bun eval into ordered arrays before reaching
+/// Swift, since JSONSerialization on Apple platforms doesn't preserve
+/// object key order. Same trick we use for `build` / `scripts`.
+struct RawEnv: Decodable {
+    let vars: [RawEnvVar]
+    let contexts: [RawEnvContext]
 }
 
 struct RawComposePort: Decodable {
@@ -114,7 +133,8 @@ extension AppConfig {
                     command: cmd,
                     build: Self.buildFromRaw(rs.build, owner: "project '\(name)'"),
                     scripts: Self.scriptsFromRaw(rs.scripts),
-                    group: Self.normaliseGroup(rs.group)
+                    group: Self.normaliseGroup(rs.group),
+                    env: Self.envFromRaw(rs.env)
                 ))
 
             case "docker":
@@ -190,6 +210,25 @@ extension AppConfig {
         (raw ?? [])
             .filter { !$0.name.isEmpty && !$0.command.isEmpty }
             .map { NamedCommand(name: $0.name, command: $0.command) }
+    }
+
+    static func envFromRaw(_ raw: RawEnv?) -> EnvSpec? {
+        guard let raw else { return nil }
+        let base = raw.vars
+            .filter { !$0.name.isEmpty }
+            .map { EnvVar(name: $0.name, value: $0.value) }
+        let contexts = raw.contexts
+            .filter { !$0.name.isEmpty }
+            .map { c in
+                EnvContext(
+                    name: c.name,
+                    vars: c.vars
+                        .filter { !$0.name.isEmpty }
+                        .map { EnvVar(name: $0.name, value: $0.value) }
+                )
+            }
+        if base.isEmpty && contexts.isEmpty { return nil }
+        return EnvSpec(base: base, contexts: contexts)
     }
 
     static func expand(_ path: String) -> URL {

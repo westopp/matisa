@@ -19,6 +19,7 @@ struct ProjectFields: Hashable, Sendable {
     let build: BuildSpec?
     let scripts: [NamedCommand]
     let group: String?
+    let env: EnvSpec?
 }
 
 struct DockerFields: Hashable, Sendable {
@@ -56,6 +57,50 @@ enum BuildSpec: Hashable, Sendable {
 struct ComposePort: Hashable, Sendable {
     let host: Int
     let url: String?
+}
+
+/// A single env var entry. Order is preserved from the user's TS config so
+/// the UI can display vars in declaration order.
+struct EnvVar: Hashable, Sendable {
+    let name: String
+    let value: String
+}
+
+/// A named context (e.g. `dev`, `test`). When this context is the active
+/// global selection, its vars layer on top of the base set.
+struct EnvContext: Hashable, Sendable {
+    let name: String
+    let vars: [EnvVar]
+}
+
+/// Per-service env block. Strings at the top level become `base` vars
+/// (always applied); object-valued top-level keys become named `contexts`
+/// (applied as overlays when the matching context is active).
+struct EnvSpec: Hashable, Sendable {
+    let base: [EnvVar]
+    let contexts: [EnvContext]
+
+    var contextNames: [String] { contexts.map(\.name) }
+
+    var isEmpty: Bool { base.isEmpty && contexts.isEmpty }
+
+    /// Effective env to inject for the given active context. Base first,
+    /// then the matching context overlays — more specific wins.
+    func effective(activeContext: String?) -> [String: String] {
+        var dict: [String: String] = [:]
+        for v in base { dict[v.name] = v.value }
+        if let active = activeContext,
+           let ctx = contexts.first(where: { $0.name == active }) {
+            for v in ctx.vars { dict[v.name] = v.value }
+        }
+        return dict
+    }
+
+    /// All vars in the named context (without merging base). Used by the
+    /// "Environment" pretty view when a non-default tab is selected.
+    func vars(in contextName: String) -> [EnvVar] {
+        contexts.first(where: { $0.name == contextName })?.vars ?? []
+    }
 }
 
 enum UnmanagedKind: Hashable, Sendable {
@@ -182,6 +227,15 @@ extension ServiceSpec {
         case .docker(let f): f.group
         case .compose(let f): f.group
         case .unmanaged: nil
+        }
+    }
+
+    /// Configured env block, if any. Only project services support env in
+    /// v1 — docker/compose users wire their own via `-e` / compose YAML.
+    var env: EnvSpec? {
+        switch self {
+        case .project(let f): f.env
+        case .docker, .compose, .unmanaged: nil
         }
     }
 

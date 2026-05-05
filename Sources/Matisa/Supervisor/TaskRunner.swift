@@ -78,7 +78,8 @@ final class TaskRunner {
         kind: TaskKind,
         name: String,
         command: String,
-        cwd: URL
+        cwd: URL,
+        extraEnv: [String: String] = [:]
     ) {
         if slot(serviceID, kind).state.isRunning { return }
 
@@ -99,6 +100,8 @@ final class TaskRunner {
         env["FORCE_COLOR"] = env["FORCE_COLOR"] ?? "1"
         env["CLICOLOR_FORCE"] = env["CLICOLOR_FORCE"] ?? "1"
         env["TERM"] = env["TERM"] ?? "xterm-256color"
+        // User-declared env wins over inherited values.
+        for (k, v) in extraEnv { env[k] = v }
         process.environment = env
 
         let outPipe = Pipe()

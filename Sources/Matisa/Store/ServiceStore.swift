@@ -15,6 +15,11 @@ final class ServiceStore {
     /// Search query — drives filtered views in the UI.
     var search: String = ""
 
+    /// Globally selected env context. Mirrors `UIState.activeEnvContext` —
+    /// kept on the store so SwiftUI sees changes immediately and so callers
+    /// don't have to re-read the persisted state on every spawn.
+    var activeEnvContext: String? = UIStatePersistence.load().activeEnvContext
+
     /// Per-service ad-hoc tasks (build, scripts). Lives on the store so SwiftUI
     /// observation flows through it naturally.
     let tasks = TaskRunner()
@@ -278,6 +283,37 @@ final class ServiceStore {
         services.first(where: { $0.id == id }) ?? unmanaged.first(where: { $0.id == id })
     }
 
+    // MARK: - Env contexts
+
+    /// True when at least one configured service declares an `env` block.
+    /// The pickers hide entirely when this is false.
+    var hasAnyEnvConfigured: Bool {
+        services.contains(where: { $0.spec.env?.isEmpty == false })
+    }
+
+    /// Union of declared context names across all services, in first-seen
+    /// order. Drives the picker's option list.
+    var availableEnvContexts: [String] {
+        var seen: Set<String> = []
+        var result: [String] = []
+        for svc in services {
+            for name in svc.spec.env?.contextNames ?? [] {
+                if seen.insert(name).inserted {
+                    result.append(name)
+                }
+            }
+        }
+        return result
+    }
+
+    /// Set the active context (or `nil` for "none") and persist it.
+    func setActiveEnvContext(_ name: String?) {
+        activeEnvContext = name
+        var state = UIStatePersistence.load()
+        state.activeEnvContext = name
+        UIStatePersistence.save(state)
+    }
+
     func perform(_ action: ServiceAction, on service: Service) async {
         switch action {
         case .start:           await start(service)
@@ -356,7 +392,8 @@ final class ServiceStore {
             kind: .build,
             name: chosen.name,
             command: chosen.command,
-            cwd: service.spec.workingDirectory
+            cwd: service.spec.workingDirectory,
+            extraEnv: service.spec.env?.effective(activeContext: activeEnvContext) ?? [:]
         )
     }
 
@@ -369,7 +406,8 @@ final class ServiceStore {
             kind: .script,
             name: match.name,
             command: match.command,
-            cwd: service.spec.workingDirectory
+            cwd: service.spec.workingDirectory,
+            extraEnv: service.spec.env?.effective(activeContext: activeEnvContext) ?? [:]
         )
     }
 
@@ -414,7 +452,8 @@ final class ServiceStore {
                 let result = try ProcessSupervisor.spawnDetached(
                     shellCommand: f.command,
                     workingDirectory: f.path,
-                    serviceID: service.id
+                    serviceID: service.id,
+                    extraEnv: f.env?.effective(activeContext: activeEnvContext) ?? [:]
                 )
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 StatePersistence.upsert(PersistedSpawn(

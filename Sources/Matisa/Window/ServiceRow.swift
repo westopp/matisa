@@ -68,12 +68,8 @@ struct ServiceRow: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.tertiary)
             }
-            if let url = service.spec.primaryURL {
-                Text(verbatim: url)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+            if let env = service.spec.env, !env.isEmpty {
+                EnvContextPicker(scope: env)
             }
         }
     }
@@ -119,13 +115,21 @@ struct IconButton: View {
     let systemImage: String
     let help: String
     var tint: Color? = nil
+    var disabled: Bool = false
     let onTap: () -> Void
     @State private var hovering = false
 
-    init(_ systemImage: String, help: String, tint: Color? = nil, onTap: @escaping () -> Void) {
+    init(
+        _ systemImage: String,
+        help: String,
+        tint: Color? = nil,
+        disabled: Bool = false,
+        onTap: @escaping () -> Void
+    ) {
         self.systemImage = systemImage
         self.help = help
         self.tint = tint
+        self.disabled = disabled
         self.onTap = onTap
     }
 
@@ -137,10 +141,12 @@ struct IconButton: View {
                 .frame(width: 22, height: 22)
                 .background {
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(hovering ? Color.primary.opacity(0.10) : Color.clear)
+                        .fill(hovering && !disabled ? Color.primary.opacity(0.10) : Color.clear)
                 }
         }
         .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.35 : 1.0)
         .onHover { hovering = $0 }
         .help(help)
     }

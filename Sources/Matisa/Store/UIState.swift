@@ -1,9 +1,33 @@
 import Foundation
 import Observation
 
-/// Persistent UI state — currently just which section headers are collapsed.
+/// Persistent UI state — which section headers are collapsed, plus a sticky
+/// "collapse by default" flag for sections that haven't mounted yet.
 struct UIState: Codable, Sendable {
     var collapsedSections: Set<String> = []
+    /// Set by Collapse All so sections that weren't yet in the view tree at
+    /// the time of the bulk action still come up collapsed when they finally
+    /// appear (e.g. a nested group inside a section that was itself
+    /// collapsed). Cleared by Expand All.
+    var collapseByDefault: Bool = false
+    /// Globally selected env context name. `nil` means no overlay — only
+    /// base env vars are injected. Survives app restart.
+    var activeEnvContext: String? = nil
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.collapsedSections = try container.decodeIfPresent(Set<String>.self, forKey: .collapsedSections) ?? []
+        self.collapseByDefault = try container.decodeIfPresent(Bool.self, forKey: .collapseByDefault) ?? false
+        self.activeEnvContext = try container.decodeIfPresent(String.self, forKey: .activeEnvContext)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case collapsedSections
+        case collapseByDefault
+        case activeEnvContext
+    }
 }
 
 /// Live in-memory tracker of currently mounted CollapsibleSections and their
