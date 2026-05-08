@@ -40,7 +40,37 @@ mkdir -p "${APP_DIR}/Contents/MacOS"
 mkdir -p "${APP_DIR}/Contents/Resources"
 cp "$BIN_PATH" "${APP_DIR}/Contents/MacOS/${APP_NAME}"
 cp Resources/Info.plist "${APP_DIR}/Contents/Info.plist"
-if [ -f Resources/AppIcon.icns ]; then
+
+# Compile the Liquid Glass `.icon` source into the assets macOS Tahoe
+# expects: `Assets.car` (layered, appearance-aware Liquid Glass icon, looked
+# up by `CFBundleIconName`) plus a flat `Matisa.icns` (legacy bitmap
+# fallback found via `CFBundleIconFile`). Requires Xcode 26's `actool` —
+# older actool versions silently produce nothing.
+if [ -d icon-assets/Matisa.icon ]; then
+    echo "→ Compiling icon-assets/Matisa.icon…"
+    ICON_TMP="$(mktemp -d)"
+    if xcrun actool icon-assets/Matisa.icon \
+            --app-icon Matisa \
+            --compile "$ICON_TMP" \
+            --output-partial-info-plist "$ICON_TMP/partial.plist" \
+            --minimum-deployment-target 14.0 \
+            --platform macosx \
+            --target-device mac \
+            --include-all-app-icons \
+            --enable-on-demand-resources NO \
+            --notices --warnings --errors >/dev/null 2>&1 \
+       && [ -f "$ICON_TMP/Assets.car" ] && [ -f "$ICON_TMP/Matisa.icns" ]; then
+        cp "$ICON_TMP/Assets.car" "${APP_DIR}/Contents/Resources/Assets.car"
+        cp "$ICON_TMP/Matisa.icns" "${APP_DIR}/Contents/Resources/Matisa.icns"
+        rm -rf "$ICON_TMP"
+    else
+        rm -rf "$ICON_TMP"
+        echo "  ✗ actool failed (need Xcode 26+); falling back to Resources/AppIcon.icns"
+        if [ -f Resources/AppIcon.icns ]; then
+            cp Resources/AppIcon.icns "${APP_DIR}/Contents/Resources/AppIcon.icns"
+        fi
+    fi
+elif [ -f Resources/AppIcon.icns ]; then
     cp Resources/AppIcon.icns "${APP_DIR}/Contents/Resources/AppIcon.icns"
 fi
 

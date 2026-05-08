@@ -4,6 +4,7 @@ import AppKit
 enum SidebarSelection: Hashable {
     case service(String)
     case caddy
+    case docker
     case configError
 }
 
@@ -30,8 +31,58 @@ struct MainWindowView: View {
                     .disabled(store.isRefreshing)
             }
         }
+        .alert(
+            "Docker isn't running",
+            isPresented: dockerPromptBinding,
+            presenting: store.pendingDockerPrompt
+        ) { prompt in
+            Button("Start Docker") {
+                Task { await store.confirmDockerStart() }
+            }
+            Button("Cancel", role: .cancel) {
+                store.cancelDockerStart()
+            }
+        } message: { prompt in
+            Text("Start Docker Desktop and continue with \(actionLabel(prompt.action)) on \(prompt.serviceName)?")
+        }
+        .sheet(isPresented: dockerStartingBinding) {
+            DockerStartingSheet()
+                .environment(store)
+        }
         .onAppear { autoSelect() }
         .onChange(of: store.services.map(\.id)) { _, _ in autoSelect() }
+    }
+
+    private var dockerPromptBinding: Binding<Bool> {
+        Binding(
+            get: { store.pendingDockerPrompt != nil },
+            set: { if !$0 { store.cancelDockerStart() } }
+        )
+    }
+
+    private var dockerStartingBinding: Binding<Bool> {
+        Binding(
+            get: { store.dockerSystem.isStarting },
+            // Esc / click-outside / programmatic dismiss → treat as Cancel.
+            // The sheet is also dismissed naturally when the state transitions
+            // out of `.starting`, in which case `cancelDockerStartInFlight` is
+            // a no-op (it guards on `.isStarting`).
+            set: { presented in
+                if !presented { store.cancelDockerStartInFlight() }
+            }
+        )
+    }
+
+    private func actionLabel(_ action: ServiceAction) -> String {
+        switch action {
+        case .start: "starting"
+        case .stop: "stopping"
+        case .restart: "restarting"
+        case .pull: "pulling"
+        case .takeOver: "taking over"
+        case .kill: "killing"
+        default: "this action"
+        }
     }
 
     // MARK: - Sidebar
@@ -55,27 +106,65 @@ struct MainWindowView: View {
                         configErrorRow
                     }
 
-                    CollapsibleSection(id: "projects", title: "Projects", count: filteredProjects.count) {
+                    CollapsibleSection(
+                        id: "projects",
+                        title: "Projects",
+                        count: filteredProjects.count,
+                        collapsedAccessory: {
+                            GroupRunningIndicator(runningCount: runningCount(filteredProjects))
+                        }
+                    ) {
                         groupedRows(filteredProjects, category: "projects")
                     }
 
                     if !filteredDocker.isEmpty {
-                        CollapsibleSection(id: "docker", title: "Docker", count: filteredDocker.count) {
+                        CollapsibleSection(
+                            id: "docker",
+                            title: "Docker",
+                            count: filteredDocker.count,
+                            collapsedAccessory: {
+                                GroupRunningIndicator(runningCount: runningCount(filteredDocker))
+                            }
+                        ) {
                             groupedRows(filteredDocker, category: "docker")
                         }
                     }
 
                     if !filteredCompose.isEmpty {
-                        CollapsibleSection(id: "compose", title: "Compose Stacks", count: filteredCompose.count) {
+                        CollapsibleSection(
+                            id: "compose",
+                            title: "Compose Stacks",
+                            count: filteredCompose.count,
+                            collapsedAccessory: {
+                                GroupRunningIndicator(runningCount: runningCount(filteredCompose))
+                            }
+                        ) {
                             groupedRows(filteredCompose, category: "compose")
                         }
                     }
 
-                    CollapsibleSection(id: "caddy", title: "Reverse Proxy", count: 1) {
-                        caddyRow
+                    CollapsibleSection(
+                        id: "system",
+                        title: "System",
+                        count: 2,
+                        collapsedAccessory: {
+                            GroupRunningIndicator(runningCount: systemRunningCount)
+                        }
+                    ) {
+                        VStack(spacing: 6) {
+                            caddyRow
+                            dockerRow
+                        }
                     }
 
-                    CollapsibleSection(id: "unmanaged", title: "Unmanaged", count: filteredUnmanaged.count) {
+                    CollapsibleSection(
+                        id: "unmanaged",
+                        title: "Unmanaged",
+                        count: filteredUnmanaged.count,
+                        collapsedAccessory: {
+                            GroupRunningIndicator(runningCount: unmanagedActiveCount(filteredUnmanaged))
+                        }
+                    ) {
                         if filteredUnmanaged.isEmpty {
                             Text(store.unmanaged.isEmpty
                                 ? "Nothing running outside Matisa."
@@ -90,7 +179,10 @@ struct MainWindowView: View {
                                     CollapsibleSection(
                                         id: "unmanaged.projects",
                                         title: "Projects",
-                                        count: filteredUnmanagedProcesses.count
+                                        count: filteredUnmanagedProcesses.count,
+                                        collapsedAccessory: {
+                                            GroupRunningIndicator(runningCount: unmanagedActiveCount(filteredUnmanagedProcesses))
+                                        }
                                     ) {
                                         unmanagedRows(filteredUnmanagedProcesses)
                                     }
@@ -99,7 +191,10 @@ struct MainWindowView: View {
                                     CollapsibleSection(
                                         id: "unmanaged.docker",
                                         title: "Docker Containers",
-                                        count: filteredUnmanagedContainers.count
+                                        count: filteredUnmanagedContainers.count,
+                                        collapsedAccessory: {
+                                            GroupRunningIndicator(runningCount: runningCount(filteredUnmanagedContainers))
+                                        }
                                     ) {
                                         unmanagedRows(filteredUnmanagedContainers)
                                     }
@@ -318,6 +413,89 @@ struct MainWindowView: View {
         .onTapGesture { selection = .caddy }
     }
 
+    @ViewBuilder
+    private var dockerRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "shippingbox.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Docker")
+                    .font(.body.weight(.medium))
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(dockerIndicatorColor)
+                        .frame(width: 7, height: 7)
+                    Text(dockerStatusLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            dockerRowTrailing
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(selection == .docker ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.04))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(
+                    selection == .docker ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.12)
+                )
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .onTapGesture { selection = .docker }
+    }
+
+    @ViewBuilder
+    private var dockerRowTrailing: some View {
+        switch store.dockerSystem {
+        case .starting:
+            ProgressView().controlSize(.small)
+        case .running:
+            IconButton("stop.fill", help: "Quit Docker Desktop", tint: .red) {
+                Task { await store.performDockerStop() }
+            }
+        case .startFailed:
+            HStack(spacing: 4) {
+                IconButton("xmark", help: "Dismiss", tint: .secondary) {
+                    store.clearDockerStartFailure()
+                }
+                IconButton("arrow.clockwise", help: "Retry start", tint: .green) {
+                    store.clearDockerStartFailure()
+                    Task { await store.performDockerStart() }
+                }
+            }
+        case .stopped, .unknown:
+            IconButton("play.fill", help: "Start Docker Desktop", tint: .green) {
+                Task { await store.performDockerStart() }
+            }
+        }
+    }
+
+    private var dockerIndicatorColor: Color {
+        switch store.dockerSystem {
+        case .running: .green
+        case .starting: .yellow
+        case .startFailed: .orange
+        case .stopped, .unknown: .secondary
+        }
+    }
+
+    private var dockerStatusLabel: String {
+        switch store.dockerSystem {
+        case .running: "Running"
+        case .stopped: "Stopped"
+        case .starting: "Starting…"
+        case .startFailed: "Failed to start"
+        case .unknown: "Checking…"
+        }
+    }
+
     // MARK: - Detail
 
     @ViewBuilder
@@ -331,6 +509,8 @@ struct MainWindowView: View {
             }
         case .caddy:
             CaddyDetailView()
+        case .docker:
+            DockerDetailView()
         case .configError:
             ConfigErrorView()
         case .none:
@@ -375,6 +555,30 @@ struct MainWindowView: View {
         }
     }
 
+    /// Count of services in `state.isRunning` — what the indicator shows for
+    /// managed sections (projects, docker, compose, unmanaged containers).
+    private func runningCount(_ services: [Service]) -> Int {
+        services.filter { $0.state.isRunning }.count
+    }
+
+    /// For the unmanaged section: a `.unmanaged(pid:)` state means the
+    /// service is currently active (it's listed precisely because lsof
+    /// caught it listening). Treat both `.running` and `.unmanaged` as
+    /// active so unmanaged processes count toward the indicator.
+    private func unmanagedActiveCount(_ services: [Service]) -> Int {
+        services.filter {
+            switch $0.state {
+            case .running, .unmanaged: return true
+            default: return false
+            }
+        }.count
+    }
+
+    /// System section has two rows (Caddy, Docker). Lit when each is up.
+    private var systemRunningCount: Int {
+        (store.caddyService.running ? 1 : 0) + (store.dockerSystem.isRunning ? 1 : 0)
+    }
+
     /// Lays out a category's services with optional sub-groups. Ungrouped
     /// services render at the category root; groups appear below as nested
     /// CollapsibleSections. Single-member groups flatten to avoid one-row
@@ -392,6 +596,7 @@ struct MainWindowView: View {
                 } else {
                     let allRunning = group.services.allSatisfy { $0.state.isRunning }
                     let anyRunning = group.services.contains { $0.state.isRunning }
+                    let runningCount = group.services.filter { $0.state.isRunning }.count
                     CollapsibleSection(
                         id: "\(category).group.\(group.key)",
                         title: group.displayName,
@@ -417,6 +622,9 @@ struct MainWindowView: View {
                                     }
                                 }
                             }
+                        },
+                        collapsedAccessory: {
+                            GroupRunningIndicator(runningCount: runningCount)
                         }
                     ) {
                         rows(group.services)

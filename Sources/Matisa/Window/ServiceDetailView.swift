@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct ServiceDetailView: View {
     @Environment(ServiceStore.self) private var store
@@ -16,6 +17,10 @@ struct ServiceDetailView: View {
 
             metadataLine
 
+            if let links = composeLinks {
+                linksSection(links)
+            }
+
             if let env = service.spec.env, !env.isEmpty {
                 EnvironmentSection(serviceID: service.id, env: env)
             } else {
@@ -31,7 +36,7 @@ struct ServiceDetailView: View {
     // MARK: - Hero
 
     private var hero: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             kindBadge
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
@@ -43,7 +48,20 @@ struct ServiceDetailView: View {
                     urlPill(url)
                 }
             }
-            Spacer()
+            Spacer(minLength: 12)
+            if canShare {
+                ExposureControl(service: service)
+            }
+        }
+    }
+
+    /// Share UI is hidden for unmanaged services and for compose stacks
+    /// without a primary HTTP target — those are degenerate cases.
+    private var canShare: Bool {
+        switch service.spec {
+        case .project, .docker: return true
+        case .compose: return service.spec.exposedPorts.first?.port != nil
+        case .unmanaged: return false
         }
     }
 
@@ -95,6 +113,84 @@ struct ServiceDetailView: View {
 
             IconButton("doc.on.doc", help: "Copy URL") {
                 Task { await store.perform(.copyURL, on: service) }
+            }
+        }
+    }
+
+    // MARK: - Compose links
+
+    /// All `(host, url)` entries declared on a compose stack — only surfaced
+    /// when there's more than one, since the hero pill already covers the
+    /// single-link case. Returns `nil` for non-compose services and for
+    /// compose stacks with ≤ 1 declared URL.
+    private var composeLinks: [(host: Int, url: String)]? {
+        guard case .compose(let f) = service.spec else { return nil }
+        let withURL = f.ports.compactMap { p -> (Int, String)? in
+            guard let url = p.url, !url.isEmpty else { return nil }
+            return (p.host, url)
+        }
+        return withURL.count >= 2 ? withURL : nil
+    }
+
+    @ViewBuilder
+    private func linksSection(_ links: [(host: Int, url: String)]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Links")
+                .font(.system(size: 11, weight: .semibold))
+                .textCase(.uppercase)
+                .foregroundStyle(.secondary)
+            // Horizontal flow — pills wrap onto multiple rows as needed
+            // instead of stacking vertically. The first entry gets a slightly
+            // heavier accent fill in lieu of an explicit "primary" badge.
+            FlowLayout(spacing: 6, lineSpacing: 6) {
+                ForEach(Array(links.enumerated()), id: \.offset) { idx, link in
+                    linkPill(link.host, link.url, isPrimary: idx == 0)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func linkPill(_ port: Int, _ url: String, isPrimary: Bool) -> some View {
+        let fillOpacity: Double = isPrimary ? 0.22 : 0.10
+        let strokeOpacity: Double = isPrimary ? 0.50 : 0.25
+        HStack(spacing: 4) {
+            Button {
+                if let target = URL(string: "http://\(url)") {
+                    NSWorkspace.shared.open(target)
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "safari")
+                        .font(.caption2)
+                    Text(url)
+                        .font(.system(.caption, design: .monospaced))
+                    // `verbatim:` so 4-digit port numbers like 5732 don't get
+                    // a locale thousands separator inserted ("5 732" in
+                    // some Swiss/EU locales).
+                    Text(verbatim: ":\(port)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(Color.accentColor.opacity(0.65))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background {
+                    Capsule().fill(Color.accentColor.opacity(fillOpacity))
+                }
+                .overlay {
+                    Capsule().strokeBorder(Color.accentColor.opacity(strokeOpacity))
+                }
+                .foregroundStyle(Color.accentColor)
+            }
+            .buttonStyle(.plain)
+            .help("Open in browser")
+
+            CircleIconButton(
+                systemImage: "doc.on.doc",
+                help: "Copy URL"
+            ) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString("http://\(url)", forType: .string)
             }
         }
     }

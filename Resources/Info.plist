@@ -15,9 +15,9 @@
 	<key>CFBundleDisplayName</key>
 	<string>Matisa</string>
 	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
+	<string>Matisa</string>
 	<key>CFBundleIconName</key>
-	<string>AppIcon</string>
+	<string>Matisa</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

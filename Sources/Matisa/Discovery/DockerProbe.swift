@@ -22,6 +22,58 @@ enum DockerProbe {
         Shell.which("docker") ?? "/usr/local/bin/docker"
     }
 
+    // MARK: - Daemon
+
+    /// Cheap probe: `docker info -f '{{.ServerVersion}}'` returns 0 only when
+    /// the daemon is reachable. A short timeout prevents the probe itself from
+    /// hanging if the daemon socket exists but nobody's listening.
+    static func daemonRunning(timeout: TimeInterval = 3) async -> Bool {
+        do {
+            let code = try await Shell.run(
+                executable: dockerPath,
+                arguments: ["info", "-f", "{{.ServerVersion}}"],
+                timeout: timeout
+            )
+            return code == 0
+        } catch {
+            return false
+        }
+    }
+
+    /// Launch Docker Desktop. The call returns as soon as `open` hands off to
+    /// LaunchServices — the VM/daemon take several seconds more to come up,
+    /// so callers should follow this with `awaitDaemonReady`.
+    static func startDockerDesktop() async {
+        _ = try? await Shell.run(
+            executable: "/usr/bin/open",
+            arguments: ["-a", "Docker"]
+        )
+    }
+
+    /// Quit Docker Desktop via AppleScript. Cleaner than killing the process
+    /// because it lets the VM shut down gracefully.
+    static func stopDockerDesktop() async {
+        _ = try? await Shell.run(
+            executable: "/usr/bin/osascript",
+            arguments: ["-e", "quit app \"Docker\""]
+        )
+    }
+
+    /// Poll the daemon until it answers or `timeout` elapses. Returns true if
+    /// it came up, false on timeout or task cancellation.
+    static func awaitDaemonReady(timeout: TimeInterval = 30) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if Task.isCancelled { return false }
+            if await daemonRunning(timeout: 2) { return true }
+            if Task.isCancelled { return false }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        return false
+    }
+
+    // MARK: - Discovery
+
     static func listContainers() async -> [DockerContainer] {
         guard let output = try? await Shell.runCapturing(
             executable: dockerPath,
@@ -68,10 +120,11 @@ enum DockerProbe {
     // MARK: - Compose actions (whole-stack only)
 
     static func composeUp(file: URL) async throws {
-        try await Shell.run(
+        try await Shell.runCapturingStderrTail(
             executable: dockerPath,
             arguments: ["compose", "-f", file.path, "up", "-d"],
-            currentDirectoryURL: file.deletingLastPathComponent()
+            currentDirectoryURL: file.deletingLastPathComponent(),
+            timeout: 300
         )
     }
 
@@ -79,7 +132,8 @@ enum DockerProbe {
         try await Shell.run(
             executable: dockerPath,
             arguments: ["compose", "-f", file.path, "down"],
-            currentDirectoryURL: file.deletingLastPathComponent()
+            currentDirectoryURL: file.deletingLastPathComponent(),
+            timeout: 60
         )
     }
 
@@ -87,7 +141,8 @@ enum DockerProbe {
         try await Shell.run(
             executable: dockerPath,
             arguments: ["compose", "-f", file.path, "restart"],
-            currentDirectoryURL: file.deletingLastPathComponent()
+            currentDirectoryURL: file.deletingLastPathComponent(),
+            timeout: 120
         )
     }
 
@@ -95,7 +150,8 @@ enum DockerProbe {
         try await Shell.run(
             executable: dockerPath,
             arguments: ["compose", "-f", file.path, "pull"],
-            currentDirectoryURL: file.deletingLastPathComponent()
+            currentDirectoryURL: file.deletingLastPathComponent(),
+            timeout: 300
         )
     }
 
@@ -112,10 +168,14 @@ enum DockerProbe {
         // If a stopped container with our managed name exists, just start it.
         if let existing = await listContainers().first(where: { $0.name == cname }) {
             if existing.isRunning { return }
-            try await Shell.run(executable: dockerPath, arguments: ["start", cname])
+            try await Shell.runCapturingStderrTail(
+                executable: dockerPath,
+                arguments: ["start", cname],
+                timeout: 60
+            )
             return
         }
-        try await Shell.run(
+        try await Shell.runCapturingStderrTail(
             executable: dockerPath,
             arguments: [
                 "run", "-d",
@@ -123,32 +183,86 @@ enum DockerProbe {
                 "--restart", "unless-stopped",
                 "-p", "\(port):\(port)",
                 image
-            ]
+            ],
+            timeout: 300
         )
     }
 
     static func inlineStop(name: String) async throws {
         let cname = inlineContainerName(name)
-        try await Shell.run(executable: dockerPath, arguments: ["stop", cname])
+        try await Shell.run(
+            executable: dockerPath,
+            arguments: ["stop", cname],
+            timeout: 60
+        )
+    }
+
+    static func inlineKill(name: String) async throws {
+        let cname = inlineContainerName(name)
+        try await Shell.run(
+            executable: dockerPath,
+            arguments: ["kill", cname],
+            timeout: 30
+        )
     }
 
     static func inlineRestart(name: String) async throws {
         let cname = inlineContainerName(name)
-        try await Shell.run(executable: dockerPath, arguments: ["restart", cname])
+        try await Shell.run(
+            executable: dockerPath,
+            arguments: ["restart", cname],
+            timeout: 120
+        )
     }
 
     static func inlineRemove(name: String) async throws {
         let cname = inlineContainerName(name)
-        try await Shell.run(executable: dockerPath, arguments: ["rm", "-f", cname])
+        try await Shell.run(
+            executable: dockerPath,
+            arguments: ["rm", "-f", cname],
+            timeout: 60
+        )
     }
 
     static func inlinePull(image: String) async throws {
-        try await Shell.run(executable: dockerPath, arguments: ["pull", image])
+        try await Shell.run(
+            executable: dockerPath,
+            arguments: ["pull", image],
+            timeout: 300
+        )
     }
 
     /// Returns true if our managed inline container for `name` is running.
     static func inlineIsRunning(name: String) async -> Bool {
         let cname = inlineContainerName(name)
         return await listContainers().contains(where: { $0.name == cname && $0.isRunning })
+    }
+
+    // MARK: - Unmanaged container actions
+
+    /// Start an unmanaged (user-owned) container by raw container name. Unlike
+    /// `inline*`, no `matisa.` prefix — the user owns the naming.
+    static func unmanagedStart(name: String) async throws {
+        try await Shell.run(
+            executable: dockerPath,
+            arguments: ["start", name],
+            timeout: 60
+        )
+    }
+
+    static func unmanagedStop(name: String) async throws {
+        try await Shell.run(
+            executable: dockerPath,
+            arguments: ["stop", name],
+            timeout: 60
+        )
+    }
+
+    static func unmanagedKill(name: String) async throws {
+        try await Shell.run(
+            executable: dockerPath,
+            arguments: ["kill", name],
+            timeout: 30
+        )
     }
 }

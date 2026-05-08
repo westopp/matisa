@@ -3,11 +3,12 @@ import Combine
 
 /// Section header with a chevron that toggles its content. Collapsed state is
 /// persisted across launches via `UIStatePersistence`.
-struct CollapsibleSection<Trailing: View, Content: View>: View {
+struct CollapsibleSection<Trailing: View, CollapsedAccessory: View, Content: View>: View {
     let id: String
     let title: String
     let count: Int
     let trailing: () -> Trailing
+    let collapsedAccessory: () -> CollapsedAccessory
     @ViewBuilder let content: () -> Content
 
     @State private var collapsed: Bool = false
@@ -17,12 +18,14 @@ struct CollapsibleSection<Trailing: View, Content: View>: View {
         title: String,
         count: Int,
         @ViewBuilder trailing: @escaping () -> Trailing,
+        @ViewBuilder collapsedAccessory: @escaping () -> CollapsedAccessory,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.id = id
         self.title = title
         self.count = count
         self.trailing = trailing
+        self.collapsedAccessory = collapsedAccessory
         self.content = content
 
         // Seed `collapsed` from persistence so the first frame is correct.
@@ -36,34 +39,34 @@ struct CollapsibleSection<Trailing: View, Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Button {
-                    setCollapsed(!collapsed)
-                    persist()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 10)
-                        Text(title)
-                            .font(.system(size: 11, weight: .semibold))
-                            .textCase(.uppercase)
-                            .foregroundStyle(.secondary)
-                        Text("\(count)")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background {
-                                Capsule().fill(Color.primary.opacity(0.06))
-                            }
-                        Spacer()
+                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 10)
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .textCase(.uppercase)
+                    .foregroundStyle(.secondary)
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background {
+                        Capsule().fill(Color.primary.opacity(0.06))
                     }
-                    .contentShape(Rectangle())
+                if collapsed {
+                    collapsedAccessory()
                 }
-                .buttonStyle(.plain)
-
+                Spacer()
                 trailing()
+            }
+            // Whole-row click toggles collapse — child Buttons (accessory,
+            // trailing) intercept their own taps so they don't bubble here.
+            .contentShape(Rectangle())
+            .onTapGesture {
+                setCollapsed(!collapsed)
+                persist()
             }
 
             if !collapsed {
@@ -147,7 +150,26 @@ struct CollapsibleSection<Trailing: View, Content: View>: View {
     }
 }
 
-extension CollapsibleSection where Trailing == EmptyView {
+extension CollapsibleSection where CollapsedAccessory == EmptyView {
+    init(
+        id: String,
+        title: String,
+        count: Int,
+        @ViewBuilder trailing: @escaping () -> Trailing,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.init(
+            id: id,
+            title: title,
+            count: count,
+            trailing: trailing,
+            collapsedAccessory: { EmptyView() },
+            content: content
+        )
+    }
+}
+
+extension CollapsibleSection where Trailing == EmptyView, CollapsedAccessory == EmptyView {
     init(
         id: String,
         title: String,
@@ -159,6 +181,26 @@ extension CollapsibleSection where Trailing == EmptyView {
             title: title,
             count: count,
             trailing: { EmptyView() },
+            collapsedAccessory: { EmptyView() },
+            content: content
+        )
+    }
+}
+
+extension CollapsibleSection where Trailing == EmptyView {
+    init(
+        id: String,
+        title: String,
+        count: Int,
+        @ViewBuilder collapsedAccessory: @escaping () -> CollapsedAccessory,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.init(
+            id: id,
+            title: title,
+            count: count,
+            trailing: { EmptyView() },
+            collapsedAccessory: collapsedAccessory,
             content: content
         )
     }

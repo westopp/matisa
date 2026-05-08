@@ -92,7 +92,9 @@ final class ConfigTests: XCTestCase {
                         ComposePort(host: 4317, url: nil),
                     ]
                 ))
-            ]
+            ],
+            tunnel: .defaults,
+            localNetwork: .defaults
         )
         let rendered = CaddyfileGenerator.render(from: cfg)
         XCTAssertTrue(rendered.contains("auto_https off"))

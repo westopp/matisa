@@ -5,6 +5,32 @@ import Foundation
 struct AppConfig: Sendable {
     let caddyfile: URL?
     let services: [ServiceSpec]
+    let tunnel: TunnelConfig
+    let localNetwork: LocalNetworkConfig
+}
+
+/// Public-tunnel (sish) settings. Defaults are baked in so users don't have
+/// to declare anything to use the feature.
+struct TunnelConfig: Hashable, Sendable {
+    let sshKeyPath: URL
+    let server: String
+    let port: Int
+    let user: String
+
+    static let defaults = TunnelConfig(
+        sshKeyPath: URL(fileURLWithPath: NSString(string: "~/.ssh/sish_tunnel").expandingTildeInPath),
+        server: "tunnel.westopp.com",
+        port: 2222,
+        user: "matisa"
+    )
+}
+
+/// Same-network advertisement settings. Services are exposed as
+/// `<service>.<domain>` over mDNS.
+struct LocalNetworkConfig: Hashable, Sendable {
+    let domain: String
+
+    static let defaults = LocalNetworkConfig(domain: "matisa.local")
 }
 
 /// Raw schema as decoded from the bun-evaluated JSON. Path strings are still
@@ -12,6 +38,19 @@ struct AppConfig: Sendable {
 struct RawConfig: Decodable {
     var caddyfile: String?
     var services: [RawService] = []
+    var tunnel: RawTunnel?
+    var localNetwork: RawLocalNetwork?
+}
+
+struct RawTunnel: Decodable {
+    let sshKeyPath: String?
+    let server: String?
+    let port: Int?
+    let user: String?
+}
+
+struct RawLocalNetwork: Decodable {
+    let domain: String?
 }
 
 struct RawService: Decodable {
@@ -183,7 +222,38 @@ extension AppConfig {
             }
         }
 
-        return AppConfig(caddyfile: caddyfile, services: specs)
+        let tunnel = Self.tunnelFromRaw(raw.tunnel)
+        let localNetwork = Self.localNetworkFromRaw(raw.localNetwork)
+
+        return AppConfig(
+            caddyfile: caddyfile,
+            services: specs,
+            tunnel: tunnel,
+            localNetwork: localNetwork
+        )
+    }
+
+    static func tunnelFromRaw(_ raw: RawTunnel?) -> TunnelConfig {
+        let d = TunnelConfig.defaults
+        guard let raw else { return d }
+        let key = raw.sshKeyPath.map(Self.expand) ?? d.sshKeyPath
+        let server = raw.server?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let user = raw.user?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return TunnelConfig(
+            sshKeyPath: key,
+            server: (server?.isEmpty == false ? server! : d.server),
+            port: raw.port ?? d.port,
+            user: (user?.isEmpty == false ? user! : d.user)
+        )
+    }
+
+    static func localNetworkFromRaw(_ raw: RawLocalNetwork?) -> LocalNetworkConfig {
+        let d = LocalNetworkConfig.defaults
+        guard let raw else { return d }
+        let domain = raw.domain?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return LocalNetworkConfig(
+            domain: (domain?.isEmpty == false ? domain! : d.domain)
+        )
     }
 
     static func buildFromRaw(_ raw: RawBuild?, owner: String) -> BuildSpec? {

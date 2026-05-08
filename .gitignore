@@ -5,3 +5,8 @@ DerivedData/
 .DS_Store
 build/
 Matisa.app/
+*.d
+*.o
+*.swiftdeps
+*.swiftdeps~
+.review/

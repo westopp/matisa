@@ -1,10 +1,13 @@
 import SwiftUI
 
 struct ServiceRow: View {
+    @Environment(ServiceStore.self) private var store
     let service: Service
     let isSelected: Bool
     let onPrimary: () -> Void
     let onAction: (ServiceAction) -> Void
+
+    @State private var showFailurePopover = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -14,17 +17,7 @@ struct ServiceRow: View {
                 .frame(width: 18)
 
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(service.name)
-                        .font(.body.weight(.medium))
-                        .lineLimit(1)
-                    if service.isRunningUnmanaged {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                            .help("Running outside Matisa")
-                    }
-                }
+                titleLine
                 metaLine
             }
 
@@ -59,6 +52,48 @@ struct ServiceRow: View {
     }
 
     @ViewBuilder
+    private var titleLine: some View {
+        HStack(spacing: 6) {
+            Text(service.name)
+                .font(.body.weight(.medium))
+                .lineLimit(1)
+            if service.isRunningUnmanaged {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .help("Running outside Matisa")
+            }
+            if let failure = store.launchFailures[service.id] {
+                failureIndicator(failure)
+            }
+        }
+    }
+
+    /// Click target for the captured launch failure. Opens a popover with
+    /// the full error and a copy-to-clipboard action; the popover is its
+    /// own coordinate space so its sizing can't leak into the row layout.
+    @ViewBuilder
+    private func failureIndicator(_ failure: LaunchFailure) -> some View {
+        Button {
+            showFailurePopover = true
+        } label: {
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.caption2)
+                .foregroundStyle(.red)
+        }
+        .buttonStyle(.plain)
+        .help("Last launch failed — click for details")
+        .popover(isPresented: $showFailurePopover, arrowEdge: .leading) {
+            LaunchFailurePopover(
+                serviceID: service.id,
+                failure: failure,
+                onClose: { showFailurePopover = false }
+            )
+            .environment(store)
+        }
+    }
+
+    @ViewBuilder
     private var metaLine: some View {
         HStack(spacing: 8) {
             StateBadge(state: service.state, compact: true)
@@ -86,6 +121,29 @@ struct ServiceRow: View {
             if case .project = service.spec {
                 IconButton("folder", help: "Reveal in Finder") { onAction(.revealInFinder) }
             }
+            exposureIndicators
+        }
+    }
+
+    /// Tiny, non-interactive icons that surface active public-tunnel /
+    /// same-network exposures so the user can see at a glance which services
+    /// are reachable off-laptop without opening the detail view.
+    @ViewBuilder
+    private var exposureIndicators: some View {
+        let exposure = store.exposure(for: service)
+        if exposure.publicTunnel.isActive {
+            Image(systemName: "globe")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color(red: 0.36, green: 0.55, blue: 0.95))
+                .frame(width: 18, height: 18)
+                .help("Public tunnel active")
+        }
+        if exposure.sameNetwork.isActive {
+            Image(systemName: "wifi")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color(red: 0.20, green: 0.65, blue: 0.65))
+                .frame(width: 18, height: 18)
+                .help("Exposed on local network")
         }
     }
 
@@ -111,6 +169,35 @@ struct ServiceRow: View {
 
 /// Borderless icon button with hover styling and a tooltip. Used everywhere
 /// an icon-only action lives.
+/// Small circular variant of `IconButton`. Used where the action wants to
+/// read as visually separate from an adjacent pill rather than nested in it.
+struct CircleIconButton: View {
+    let systemImage: String
+    let help: String
+    var size: CGFloat = 22
+    let onTap: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: onTap) {
+            Image(systemName: systemImage)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: size, height: size)
+                .background {
+                    Circle()
+                        .fill(hovering ? Color.primary.opacity(0.10) : Color.primary.opacity(0.04))
+                }
+                .overlay {
+                    Circle().strokeBorder(Color.primary.opacity(0.15))
+                }
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
+    }
+}
+
 struct IconButton: View {
     let systemImage: String
     let help: String
