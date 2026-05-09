@@ -69,17 +69,7 @@ struct EnvironmentSection: View {
     /// `store.activeEnvContext` (which controls what gets *injected*).
     /// `nil` = "default" tab (the base, always-applied vars).
     @State private var viewedTab: String? = nil
-    @State private var revealed: Set<String> = []
-
-    private static let secretRegex = try! NSRegularExpression(
-        pattern: "TOKEN|SECRET|KEY|PASSWORD|PASS|CREDENTIAL",
-        options: [.caseInsensitive]
-    )
-
-    private static func looksSensitive(_ key: String) -> Bool {
-        let range = NSRange(key.startIndex..., in: key)
-        return secretRegex.firstMatch(in: key, range: range) != nil
-    }
+    @State private var revealAll: Bool = false
 
     /// Total of base + every overlay var. Communicates "how much env stuff
     /// lives on this service" at-a-glance; the picker in trailing carries
@@ -120,7 +110,35 @@ struct EnvironmentSection: View {
                 tabButton(label: name, value: name)
             }
             Spacer(minLength: 0)
+            revealToggle
         }
+    }
+
+    @ViewBuilder
+    private var revealToggle: some View {
+        Button {
+            revealAll.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: revealAll ? "eye.slash" : "eye")
+                    .font(.system(size: 10))
+                Text(revealAll ? "Hide all" : "Show all")
+                    .font(.caption)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(Color.primary.opacity(0.04))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.10))
+            }
+        }
+        .buttonStyle(.plain)
+        .help(revealAll ? "Hide all values" : "Reveal all values")
     }
 
     @ViewBuilder
@@ -180,14 +198,9 @@ struct EnvironmentSection: View {
 
     @ViewBuilder
     private func envRow(_ v: EnvVar) -> some View {
-        let sensitive = Self.looksSensitive(v.name)
-        let isRevealed = revealed.contains(v.name)
-        let displayValue: String = {
-            if sensitive && !isRevealed {
-                return String(repeating: "•", count: min(max(v.value.count, 4), 12))
-            }
-            return v.value
-        }()
+        let displayValue: String = revealAll
+            ? v.value
+            : String(repeating: "•", count: min(max(v.value.count, 4), 12))
 
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(v.name)
@@ -202,18 +215,6 @@ struct EnvironmentSection: View {
                 .truncationMode(.tail)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if sensitive {
-                Button {
-                    if isRevealed { revealed.remove(v.name) }
-                    else { revealed.insert(v.name) }
-                } label: {
-                    Image(systemName: isRevealed ? "eye.slash" : "eye")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
-                .help(isRevealed ? "Hide value" : "Reveal value")
-            }
         }
         .padding(.vertical, 2)
     }
