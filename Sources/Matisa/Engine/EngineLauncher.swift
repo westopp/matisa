@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import MatisaCore
 
 /// Locates and starts the matisa-engine binary on behalf of the app.
 ///
@@ -98,6 +99,7 @@ enum EngineLauncher {
 
     enum LaunchError: Error, CustomStringConvertible {
         case binaryNotFound
+        case pathTooLong(String)
         case spawnFailed(Int32, String)
         case didNotComeUp(String)
 
@@ -105,6 +107,8 @@ enum EngineLauncher {
             switch self {
             case .binaryNotFound:
                 return "matisa-engine binary not found (set MATISA_ENGINE_BINARY or build the app bundle)"
+            case .pathTooLong(let p):
+                return "socket path too long for sockaddr_un (max 103 bytes incl. NUL): \(p)"
             case .spawnFailed(let code, let msg):
                 return "posix_spawn failed rc=\(code): \(msg)"
             case .didNotComeUp(let path):
@@ -128,6 +132,12 @@ enum EngineLauncher {
         socketPath: String,
         timeout: TimeInterval = 5.0
     ) async throws -> LaunchResult {
+        // sun_path on Darwin is 104 bytes including the trailing NUL.
+        // Catch this here, not after a 5-second timeout-with-redirected-stderr.
+        guard socketPath.utf8.count < 104 else {
+            throw LaunchError.pathTooLong(socketPath)
+        }
+
         if probeConnect(path: socketPath) {
             return LaunchResult(alreadyRunning: true, didSpawn: false)
         }
@@ -145,16 +155,28 @@ enum EngineLauncher {
     }
 
     /// posix_spawn the engine in its own session so it survives the app.
-    /// stdout/stderr redirected to /dev/null — the engine writes its own
-    /// log file via the OS_LOG / FileHandle.standardError path it already
-    /// uses; we don't need its noise in the app's console.
+    /// stdin is /dev/null; stdout and stderr are redirected to
+    /// `~/Library/Logs/Matisa/engine.log` (append, mode 0600) so any
+    /// startup diagnostics — bind failures, flock contention, accept-loop
+    /// errors — land somewhere the user can recover them.
     private static func spawnDetached(binary: URL) throws {
         var fileActions: posix_spawn_file_actions_t? = nil
         posix_spawn_file_actions_init(&fileActions)
         defer { posix_spawn_file_actions_destroy(&fileActions) }
+        // stdin is harmless to discard. stdout and stderr go to the engine's
+        // log file so startup diagnostics (path-too-long, flock contention,
+        // bind EADDRINUSE, accept errors) are recoverable — discarding them
+        // turns a 5-second timeout into an opaque mystery.
         posix_spawn_file_actions_addopen(&fileActions, 0, "/dev/null", O_RDONLY, 0)
-        posix_spawn_file_actions_addopen(&fileActions, 1, "/dev/null", O_WRONLY, 0)
-        posix_spawn_file_actions_addopen(&fileActions, 2, "/dev/null", O_WRONLY, 0)
+        let logPath = CorePaths.logsDir.appendingPathComponent("engine.log").path
+        posix_spawn_file_actions_addopen(
+            &fileActions, 1, logPath,
+            O_WRONLY | O_APPEND | O_CREAT, 0o600
+        )
+        posix_spawn_file_actions_addopen(
+            &fileActions, 2, logPath,
+            O_WRONLY | O_APPEND | O_CREAT, 0o600
+        )
 
         var attr: posix_spawnattr_t? = nil
         posix_spawnattr_init(&attr)
