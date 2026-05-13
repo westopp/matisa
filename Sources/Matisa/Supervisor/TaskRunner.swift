@@ -243,17 +243,30 @@ final class TaskRunner {
 
     /// Replace the slots for one service with the engine's view, wholesale.
     /// Kinds present in `wire` overwrite local entries; kinds *absent* from
-    /// `wire` are dropped (the engine is the authority — if it doesn't have
-    /// a slot for `.build`, we shouldn't either).
+    /// `wire` are dropped — **except for slots whose `pid > 0`**, which were
+    /// spawned on the local-fallback path during an engine-unreachable
+    /// window. Those processes are still alive on this app; the engine has
+    /// no record of them. Wiping them would orphan the Process and leave
+    /// the user with no UI handle to cancel it (the local `stop` reads pid
+    /// from the slot map, so a missing entry would silently no-op).
     func replaceSlotsFromEngine(serviceID: String, wire: [MatisaCore.TaskKind: MatisaCore.TaskSlot]) {
-        var inner: [TaskKind: TaskSlot] = [:]
-        for (k, v) in wire {
-            inner[Self.localKind(k)] = Self.localSlot(v)
+        let existing = slots[serviceID] ?? [:]
+        var next: [TaskKind: TaskSlot] = [:]
+        // Preserve any locally-spawned slots — their pid > 0 marks them as
+        // app-owned, not engine-owned.
+        for (k, v) in existing where v.pid > 0 {
+            next[k] = v
         }
-        if inner.isEmpty {
+        // Overlay the engine's view. The engine doesn't know about locally
+        // spawned tasks, so it won't have entries for them; engine-owned
+        // slots always have pid == 0 (set by `localSlot`).
+        for (k, v) in wire {
+            next[Self.localKind(k)] = Self.localSlot(v)
+        }
+        if next.isEmpty {
             slots.removeValue(forKey: serviceID)
         } else {
-            slots[serviceID] = inner
+            slots[serviceID] = next
         }
     }
 

@@ -152,17 +152,25 @@ final class TaskService: @unchecked Sendable {
         }
     }
 
-    /// Wipe the buffer without stopping the process.
+    /// Wipe the buffer without stopping the process. No-op when no slot
+    /// exists — we used to default a missing slot to `.idle + buffer:""`
+    /// and write it back, which left ghost entries in the map for any
+    /// service whose pane had ever been cleared.
     func clear(serviceID: String, kind: TaskKind) {
         queue.sync {
+            guard slots[serviceID]?[kind] != nil else { return }
             mutateLocked(serviceID, kind) { $0 = TaskSlot(state: $0.state, buffer: "") }
         }
     }
 
     /// Close the pane. No-op while the task is still running; on an exited
     /// slot, drops the entry entirely so subsequent `list(id)` calls return a
-    /// map without this kind. Mirrors the app's `TaskRunner.closePane` —
-    /// closed panes don't survive in the slot map.
+    /// map without this kind. Diverges slightly from the app's pre-2e.3
+    /// `TaskRunner.closePane`, which transitions the slot to `.idle` with an
+    /// empty buffer — equivalent over the wire because the app's
+    /// `replaceSlotsFromEngine` treats absent and `.idle` the same way
+    /// (`isPaneVisible` returns false for both), and an absent entry keeps
+    /// the `tasks.list` payload small.
     func closePane(serviceID: String, kind: TaskKind) {
         queue.sync {
             guard let current = slots[serviceID]?[kind] else { return }
