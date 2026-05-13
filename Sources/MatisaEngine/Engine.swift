@@ -18,6 +18,7 @@ final class Engine {
     private let dockerDaemonService = DockerDaemonService()
     private let caddyService: CaddyService
     private let taskService = TaskService()
+    private let tunnelService: TunnelService
     private let startedAt = Date()
 
     init() {
@@ -47,6 +48,31 @@ final class Engine {
             servicesService: servicesService,
             discoveryService: discoveryService
         )
+        // Phase 2e.1: tunnels. Closure-injected lookups keep TunnelService
+        // free of a hard dependency on ConfigService / ServicesService —
+        // tests can stand it up without bun. The post-snapshot hook is
+        // setter-injected (rather than ctor-passed) to avoid a circular
+        // init dep: TunnelService captures a closure that calls back into
+        // ServicesService.lookup, so ServicesService can't hold the
+        // TunnelService at construction time.
+        let configService = self.configService
+        self.tunnelService = TunnelService(
+            lookupService: { id in try servicesService.lookup(serviceID: id) },
+            loadTunnelConfig: {
+                let bytes = try configService.get()
+                do {
+                    let raw = try JSONDecoder().decode(RawConfig.self, from: bytes)
+                    let app = try AppConfig.from(raw)
+                    return app.tunnel
+                } catch {
+                    throw RPCError.internalError("config decode failed: \(error)")
+                }
+            }
+        )
+        let tunnelService = self.tunnelService
+        servicesService.postSnapshotHook = { managed in
+            tunnelService.reconcileAfterSnapshot(managed)
+        }
 
         // Capture dispatcher locally so the closure doesn't need self.
         // The accept callback runs synchronously on a growing dispatch worker
@@ -257,6 +283,23 @@ final class Engine {
         }
         dispatcher.register("tasks.list") { [taskService] (p: ServiceIDParams) -> TaskList in
             TaskList(slots: taskService.list(serviceID: p.id))
+        }
+
+        // Public tunnels (sish) — phase 2e.1. Engine spawns the SSH child,
+        // parses sish's banner for the assigned hostname, and tears the
+        // tunnel down automatically when the underlying service stops (via
+        // ServicesService.postSnapshotHook → TunnelService.reconcileAfterSnapshot).
+        // All gating (service running, ssh key present, port available)
+        // happens engine-side; the toggle RPC is a single fire-and-forget.
+        dispatcher.register("exposure.public_tunnel.toggle") { [tunnelService] (p: ServiceIDParams) -> EmptyResponse in
+            tunnelService.toggle(serviceID: p.id)
+            return EmptyResponse()
+        }
+        dispatcher.register("exposure.public_tunnel.status") { [tunnelService] (p: ServiceIDParams) -> PublicTunnelStatus in
+            tunnelService.status(serviceID: p.id)
+        }
+        dispatcher.register("exposure.public_tunnel.list") { [tunnelService] () -> PublicTunnelStatusList in
+            PublicTunnelStatusList(statuses: tunnelService.list())
         }
     }
 

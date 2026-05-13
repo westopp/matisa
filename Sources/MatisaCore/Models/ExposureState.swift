@@ -21,6 +21,19 @@ public enum PublicTunnelStatus: Hashable, Sendable {
     }
 }
 
+/// Wire shape for `exposure.public_tunnel.list` — wraps the service id →
+/// status map so the JSON-RPC `result` is always an object. The engine
+/// returns the full per-service map (including idle entries that were ever
+/// active and haven't been cleared); the app's local TunnelManager mirrors
+/// the contents while preserving locally-spawned entries.
+public struct PublicTunnelStatusList: Codable, Sendable {
+    public let statuses: [String: PublicTunnelStatus]
+
+    public init(statuses: [String: PublicTunnelStatus]) {
+        self.statuses = statuses
+    }
+}
+
 extension PublicTunnelStatus: Codable {
     private enum Tag: String, Codable { case idle, connecting, live, disconnected, error }
     private enum CodingKeys: String, CodingKey { case type, url, message }

@@ -147,6 +147,28 @@ final class TunnelManager {
         }
     }
 
+    /// Replace the status map with the engine's view, wholesale — **except**
+    /// for service ids whose local Process is still live. Those tunnels were
+    /// spawned by the local-fallback path during an engine-unreachable
+    /// window; the engine has no record of them, and wiping their status
+    /// would orphan the SSH child. Same shape as `TaskRunner.replaceSlotsFromEngine`.
+    func replaceStatusesFromEngine(_ engineStatuses: [String: PublicTunnelStatus]) {
+        var next: [String: PublicTunnelStatus] = [:]
+        // Preserve locally-spawned (and still alive) tunnels.
+        for (id, status) in statuses {
+            if let proc = processes[id], proc.isRunning {
+                next[id] = status
+            }
+        }
+        // Overlay the engine's view. The engine owns its own tunnels and
+        // doesn't see app-spawned ones, so collisions only happen on
+        // engine-recovery — the engine's view wins in that rare case.
+        for (id, status) in engineStatuses {
+            next[id] = status
+        }
+        statuses = next
+    }
+
     // MARK: - Internal
 
     private func ingest(serviceID: String, chunk: String) {

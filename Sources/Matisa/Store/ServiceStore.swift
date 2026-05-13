@@ -253,20 +253,38 @@ final class ServiceStore {
             }
         }
 
+        // Phase 2e.1: mirror tunnel statuses from the engine when reachable.
+        // The engine's `reconcileAfterSnapshot` already tore down tunnels for
+        // services that just stopped (inside `services.snapshot` before the
+        // response was built), so the auto-teardown block below only runs in
+        // the local-fallback path.
+        if engineReachable,
+           let list = try? await EngineClient.shared.call(
+               "exposure.public_tunnel.list",
+               as: PublicTunnelStatusList.self
+           ) {
+            tunnels.replaceStatusesFromEngine(list.statuses)
+        }
+
         // After the new states are committed, look at lifecycle transitions
         // to auto-tear-down public tunnels for services that just stopped.
         // Same-network registrations stay up — visitors get a Caddy 502
         // rather than a DNS error, which is more diagnosable.
-        for svc in managed {
-            let prev = lastSeenStateByID[svc.id]
-            let nowRunning = svc.state.isRunning
-            let wasRunning = prev?.isRunning ?? false
-            if wasRunning && !nowRunning {
-                if tunnels.status(for: svc.id).isActive {
-                    tunnels.stopBecauseServiceStopped(serviceID: svc.id)
+        //
+        // Engine-reachable path skips this — the engine's
+        // `TunnelService.reconcileAfterSnapshot` is the authority.
+        if !engineReachable {
+            for svc in managed {
+                let prev = lastSeenStateByID[svc.id]
+                let nowRunning = svc.state.isRunning
+                let wasRunning = prev?.isRunning ?? false
+                if wasRunning && !nowRunning {
+                    if tunnels.status(for: svc.id).isActive {
+                        tunnels.stopBecauseServiceStopped(serviceID: svc.id)
+                    }
                 }
+                lastSeenStateByID[svc.id] = svc.state
             }
-            lastSeenStateByID[svc.id] = svc.state
         }
     }
 
@@ -363,9 +381,33 @@ final class ServiceStore {
         return out
     }
 
-    /// Toggle the public tunnel for a service. No-op if the service isn't
-    /// running or the configured SSH key is missing.
+    /// Toggle the public tunnel for a service. Engine-first; the engine's
+    /// `exposure.public_tunnel.toggle` handles all the gating (service
+    /// running, ssh key present, port available) so the app side doesn't
+    /// need to preflight. On engine-unreachable, runs the same checks +
+    /// local TunnelManager calls as pre-2e.1.
     func togglePublicTunnel(_ service: Service) {
+        Task {
+            do {
+                _ = try await EngineClient.shared.call(
+                    "exposure.public_tunnel.toggle",
+                    params: ServiceIDParams(id: service.id),
+                    as: EmptyResponse.self
+                )
+                return
+            } catch EngineClient.ClientError.rpcError(_, let msg) {
+                FileHandle.standardError.write(
+                    Data("ServiceStore: engine rpcError on exposure.public_tunnel.toggle: \(msg)\n".utf8)
+                )
+                return
+            } catch {
+                // Transport / decode failure → fall through to local.
+            }
+            togglePublicTunnelLocal(service)
+        }
+    }
+
+    private func togglePublicTunnelLocal(_ service: Service) {
         let status = tunnels.status(for: service.id)
         if status.isActive {
             tunnels.stop(serviceID: service.id)

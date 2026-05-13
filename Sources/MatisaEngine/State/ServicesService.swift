@@ -16,6 +16,15 @@ final class ServicesService {
     private let spawnStore: PersistedSpawnStore
     private let queue = DispatchQueue(label: "engine.services", qos: .userInitiated)
 
+    /// Optional post-snapshot hook. Receives the merged `managed` list right
+    /// before `snapshot()` returns. Phase 2e.1 wires `TunnelService.reconcileAfterSnapshot`
+    /// here so a service that just transitioned running → not-running has
+    /// its public tunnel torn down inside the same tick — clients never see
+    /// "service stopped, tunnel still live". Setter-injected (rather than
+    /// a constructor param) to avoid a circular init dependency: TunnelService
+    /// captures a closure that calls back into this service's `lookup`.
+    var postSnapshotHook: (@Sendable ([Service]) -> Void)?
+
     init(
         configService: ConfigService,
         discoveryService: DiscoveryService,
@@ -64,6 +73,13 @@ final class ServicesService {
             for id in merged.deadSpawnIDs {
                 spawnStore.remove(serviceID: id)
             }
+
+            // Phase 2e.1: give the tunnel service a chance to reconcile its
+            // per-service tunnels against the new lifecycle states *before*
+            // we return the snapshot. A service that just stopped will have
+            // its SSH child SIGTERMed here so the client's next read sees
+            // both the .stopped state and the .idle tunnel atomically.
+            postSnapshotHook?(merged.managed)
 
             return ServicesSnapshot(
                 managed: merged.managed,

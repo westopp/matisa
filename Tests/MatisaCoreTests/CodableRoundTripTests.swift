@@ -124,6 +124,27 @@ final class CodableRoundTripTests: XCTestCase {
         try roundTrip(PublicTunnelStatus.error("sish refused connection"))
     }
 
+    // MARK: - PublicTunnelStatusList (phase 2e.1 wire format)
+
+    func testPublicTunnelStatusList_roundTrip() throws {
+        let list = PublicTunnelStatusList(statuses: [
+            "project:web": .live(url: "https://abc.tunnel.westopp.com"),
+            "project:api": .connecting,
+            "docker:redis": .idle,
+            "project:broken": .error("ssh permission denied"),
+        ])
+        let data = try encoder.encode(list)
+        let decoded = try decoder.decode(PublicTunnelStatusList.self, from: data)
+        XCTAssertEqual(decoded.statuses, list.statuses)
+    }
+
+    func testPublicTunnelStatusList_empty_roundTrip() throws {
+        let list = PublicTunnelStatusList(statuses: [:])
+        let data = try encoder.encode(list)
+        let decoded = try decoder.decode(PublicTunnelStatusList.self, from: data)
+        XCTAssertEqual(decoded.statuses, list.statuses)
+    }
+
     // MARK: - SameNetworkStatus
 
     func testSameNetworkStatus_allVariants() throws {
