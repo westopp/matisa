@@ -29,3 +29,13 @@ public struct LaunchFailure: Hashable, Sendable, Codable {
         self.summary = summary
     }
 }
+
+/// Wire shape for `launch_failures.list`. Wraps the map so the JSON-RPC
+/// `result` is always an object (some clients reject top-level dicts when
+/// they're expecting a record-shaped response).
+public struct LaunchFailuresList: Codable, Sendable {
+    public let failures: [String: LaunchFailure]
+    public init(failures: [String: LaunchFailure]) {
+        self.failures = failures
+    }
+}

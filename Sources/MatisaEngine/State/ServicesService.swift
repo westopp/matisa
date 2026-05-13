@@ -56,6 +56,15 @@ final class ServicesService {
                 appNamesByPID: appNames
             )
 
+            // Phase 2c.2: the engine now owns the state file, so this is the
+            // authoritative cleanup point for stale spawn records (PIDs that
+            // died without going through the lifecycle stop path — power loss,
+            // OOM kills, manual `kill -9`, etc.). 2b.2 had the app's local
+            // merge doing this; the app keeps it as fallback only.
+            for id in merged.deadSpawnIDs {
+                spawnStore.remove(serviceID: id)
+            }
+
             return ServicesSnapshot(
                 managed: merged.managed,
                 unmanaged: merged.unmanaged,
@@ -64,6 +73,21 @@ final class ServicesService {
             )
         }
     }
+
+    /// Look up a single service by id. Builds the same snapshot used by
+    /// `services.snapshot` and searches both managed and unmanaged lists.
+    /// Used by `LifecycleService` to resolve the action target. Returns nil
+    /// for unknown ids; throws when the underlying config load fails.
+    func lookup(serviceID: String) throws -> Service? {
+        let snap = try snapshot()
+        return snap.managed.first(where: { $0.id == serviceID })
+            ?? snap.unmanaged.first(where: { $0.id == serviceID })
+    }
+
+    /// Exposes the store so LifecycleService can write the same file the
+    /// snapshot reads from. (Both go through the same instance — single
+    /// queue, no double-write.)
+    var spawnStoreRef: PersistedSpawnStore { spawnStore }
 
     private func loadConfig() throws -> AppConfig {
         let bytes = try configService.get()

@@ -14,13 +14,23 @@ final class Engine {
     private let configService = ConfigService()
     private let discoveryService = DiscoveryService()
     private let servicesService: ServicesService
+    private let lifecycleService: LifecycleService
     private let startedAt = Date()
 
     init() {
         self.socketPath = Engine.resolveSocketPath()
-        self.servicesService = ServicesService(
+        let servicesService = ServicesService(
             configService: configService,
             discoveryService: discoveryService
+        )
+        self.servicesService = servicesService
+        // Closure-based lookup keeps LifecycleService decoupled from
+        // ConfigService — tests can inject a stub without round-tripping
+        // through bun. `lookup` reuses the merged snapshot so the engine
+        // sees the same view that drives `services.snapshot`.
+        self.lifecycleService = LifecycleService(
+            lookupService: { id in try servicesService.lookup(serviceID: id) },
+            spawnStore: servicesService.spawnStoreRef
         )
 
         // Capture dispatcher locally so the closure doesn't need self.
@@ -96,6 +106,47 @@ final class Engine {
         // engine's services.snapshot itself failed (e.g. config error).
         dispatcher.register("discovery.snapshot") { [discoveryService] () -> DiscoverySnapshot in
             discoveryService.snapshot()
+        }
+
+        // Lifecycle — phase 2c.2. Each method returns `{}` on success;
+        // clients drive their UI off `services.snapshot` (poll loop). All
+        // gated docker/compose paths throw `dockerDaemonRequired` (-32001)
+        // if the daemon isn't reachable. Method names are snake_case for
+        // multi-word — `services.take_over` not `services.takeOver`.
+        dispatcher.register("services.start") { [lifecycleService] (p: ServiceIDParams) -> EmptyResponse in
+            try await lifecycleService.start(serviceID: p.id)
+            return EmptyResponse()
+        }
+        dispatcher.register("services.stop") { [lifecycleService] (p: ServiceIDParams) -> EmptyResponse in
+            try await lifecycleService.stop(serviceID: p.id)
+            return EmptyResponse()
+        }
+        dispatcher.register("services.kill") { [lifecycleService] (p: ServiceIDParams) -> EmptyResponse in
+            try await lifecycleService.kill(serviceID: p.id)
+            return EmptyResponse()
+        }
+        dispatcher.register("services.restart") { [lifecycleService] (p: ServiceIDParams) -> EmptyResponse in
+            try await lifecycleService.restart(serviceID: p.id)
+            return EmptyResponse()
+        }
+        dispatcher.register("services.take_over") { [lifecycleService] (p: ServiceIDParams) -> EmptyResponse in
+            try await lifecycleService.takeOver(serviceID: p.id)
+            return EmptyResponse()
+        }
+        dispatcher.register("services.pull") { [lifecycleService] (p: ServiceIDParams) -> EmptyResponse in
+            try await lifecycleService.pull(serviceID: p.id)
+            return EmptyResponse()
+        }
+
+        // Launch-failure tracker — captured by the project launch-watcher
+        // (10s window) and the docker-CLI failure paths. Clients fetch the
+        // map to render error banners; clearing is a user-driven dismiss.
+        dispatcher.register("launch_failures.list") { [lifecycleService] () -> LaunchFailuresList in
+            LaunchFailuresList(failures: lifecycleService.listLaunchFailures())
+        }
+        dispatcher.register("launch_failures.clear") { [lifecycleService] (p: ServiceIDParams) -> EmptyResponse in
+            lifecycleService.clearLaunchFailure(serviceID: p.id)
+            return EmptyResponse()
         }
     }
 

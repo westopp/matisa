@@ -67,20 +67,27 @@ final class MethodDispatcher: @unchecked Sendable {
 
 /// JSON-RPC 2.0 error model. Codes follow the spec:
 /// https://www.jsonrpc.org/specification#error_object
+///
+/// `dockerDaemonRequired` uses -32001, a server-defined code reserved by
+/// JSON-RPC §5.1 for application errors (-32000..-32099). The app's lifecycle
+/// client treats this case specially — it surfaces the same daemon-down
+/// prompt it would have shown if the local pre-flight check had failed.
 enum RPCError: Error {
     case parseError(String)             // -32700
     case invalidRequest(String)         // -32600
     case methodNotFound(String)         // -32601
     case invalidParams(String)          // -32602
     case internalError(String)          // -32603
+    case dockerDaemonRequired(String)   // -32001
 
     var code: Int {
         switch self {
-        case .parseError:     return -32700
-        case .invalidRequest: return -32600
-        case .methodNotFound: return -32601
-        case .invalidParams:  return -32602
-        case .internalError:  return -32603
+        case .parseError:           return -32700
+        case .invalidRequest:       return -32600
+        case .methodNotFound:       return -32601
+        case .invalidParams:        return -32602
+        case .internalError:        return -32603
+        case .dockerDaemonRequired: return -32001
         }
     }
 
@@ -89,7 +96,8 @@ enum RPCError: Error {
         case .parseError(let m),
              .invalidRequest(let m),
              .invalidParams(let m),
-             .internalError(let m): return m
+             .internalError(let m),
+             .dockerDaemonRequired(let m): return m
         case .methodNotFound(let name): return "Method not found: \(name)"
         }
     }
