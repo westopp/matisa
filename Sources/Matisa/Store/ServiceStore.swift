@@ -204,16 +204,24 @@ final class ServiceStore {
         // local state machine: only let the probe override the indicator
         // when we're not in a deliberate UI state.
         if engineReachable, let engineState = mirror.dockerSystem {
-            // Guard against a click-then-refresh race: if the user just
-            // pressed Start (locally marking `.starting`) while a refresh
-            // tick had already read `.stopped` from the engine pre-click,
-            // a stale write here would flicker the UI back to `.stopped`
-            // until the next 4s tick. The optimistic local `.starting`
-            // wins until the engine catches up to it.
-            let staleStoppedDuringClick =
-                dockerSystem.isStarting && engineState == .stopped
-            if !staleStoppedDuringClick {
-                dockerSystem = engineState
+            if engineState == .unknown {
+                // Engine hasn't reconciled its state machine yet (boots at
+                // .unknown). Fall back to the live probe rather than render
+                // a stuck "Checking…" — the engine's reconcile usually beats
+                // us on the next tick anyway.
+                dockerSystem = dockerDaemonRunning ? .running : .stopped
+            } else {
+                // Guard against a click-then-refresh race: if the user just
+                // pressed Start (locally marking `.starting`) while a refresh
+                // tick had already read `.stopped` from the engine pre-click,
+                // a stale write here would flicker the UI back to `.stopped`
+                // until the next 4s tick. The optimistic local `.starting`
+                // wins until the engine catches up to it.
+                let staleStoppedDuringClick =
+                    dockerSystem.isStarting && engineState == .stopped
+                if !staleStoppedDuringClick {
+                    dockerSystem = engineState
+                }
             }
         } else {
             if !dockerSystem.isStarting && !dockerSystem.isStartFailed {

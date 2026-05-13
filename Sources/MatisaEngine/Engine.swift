@@ -75,6 +75,16 @@ final class Engine {
             tunnelService.reconcileAfterSnapshot(managed)
         }
 
+        // Phase 3.1: the engine's Docker daemon state machine needs an
+        // autonomous reconciler — pre-Phase-3 the app's local-fallback path
+        // did this, but now that the engine is always-on the state machine
+        // can't sit at `.unknown` while Docker is actually running. Setter-
+        // injected to keep ServicesService free of a DockerDaemonService dep.
+        let dockerDaemonService = self.dockerDaemonService
+        servicesService.dockerStateReconcile = { [weak dockerDaemonService] running in
+            dockerDaemonService?.reconcileFromLiveProbe(running: running)
+        }
+
         // Phase 2e.2: same-network (mDNS). Constructed after CaddyService so
         // `onStateChanged` can capture it weakly — every toggle / refresh /
         // markActive transition fires the debounced regen+reload that's been

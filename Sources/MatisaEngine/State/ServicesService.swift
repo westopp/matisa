@@ -25,6 +25,14 @@ final class ServicesService {
     /// captures a closure that calls back into this service's `lookup`.
     var postSnapshotHook: (@Sendable ([Service]) -> Void)?
 
+    /// Optional hook called inside `snapshot()` with the live Docker daemon
+    /// probe result. Phase 3.1: wired in Engine.init to drive
+    /// `DockerDaemonService.reconcileFromLiveProbe`, which keeps the daemon
+    /// state machine in sync with reality without needing user actions.
+    /// Setter-injected to avoid making this service depend on
+    /// `DockerDaemonService` directly.
+    var dockerStateReconcile: (@Sendable (Bool) -> Void)?
+
     init(
         configService: ConfigService,
         discoveryService: DiscoveryService,
@@ -42,6 +50,12 @@ final class ServicesService {
             let config = try loadConfig()
             let discovery = discoveryService.snapshot()
             let spawns = spawnStore.spawns()
+
+            // Feed the live Docker probe back into DockerDaemonService so
+            // its state machine reflects reality even when the user hasn't
+            // clicked Start/Stop. Pre-2f this happened on the app side; the
+            // engine state machine added in 2f had no autonomous reconciler.
+            dockerStateReconcile?(discovery.dockerDaemonRunning)
 
             let livePIDs = SyncProcess.livePIDs(of: spawns.map(\.pid))
 

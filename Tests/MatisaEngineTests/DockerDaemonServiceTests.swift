@@ -214,6 +214,98 @@ final class DockerDaemonServiceTests: XCTestCase {
         await svc.start()
         XCTAssertTrue(waitUntil { svc.status() == .running })
     }
+
+    // MARK: - reconcileFromLiveProbe
+    //
+    // The autonomous reconciler called from `ServicesService.snapshot()` every
+    // refresh tick. Before Phase 3.1 the engine's state machine could sit at
+    // `.unknown` indefinitely because nothing called the daemon probe outside
+    // of user-driven actions; the app's pre-2f local logic used to do this
+    // reconciliation but the engine had no autonomous equivalent. The fix
+    // mirrors the pre-2f shape: terminal states (`.unknown` / `.running` /
+    // `.stopped`) re-derive from the live probe each tick, `.startFailed`
+    // clears to `.running` if the daemon came up some other way, and the
+    // transient `.starting` state is left alone because the daemon-ready poll
+    // inside `start()` owns its transition.
+
+    func testReconcileFromLiveProbe_unknownToRunning() {
+        let svc = DockerDaemonService(
+            daemonProbe: { false },
+            openDocker: {},
+            quitDocker: {}
+        )
+        XCTAssertEqual(svc.status(), .unknown)
+        svc.reconcileFromLiveProbe(running: true)
+        XCTAssertEqual(svc.status(), .running)
+    }
+
+    func testReconcileFromLiveProbe_unknownToStopped() {
+        let svc = DockerDaemonService(
+            daemonProbe: { false },
+            openDocker: {},
+            quitDocker: {}
+        )
+        XCTAssertEqual(svc.status(), .unknown)
+        svc.reconcileFromLiveProbe(running: false)
+        XCTAssertEqual(svc.status(), .stopped)
+    }
+
+    /// `.startFailed → .running` when the daemon came up some other way (user
+    /// opened Docker Desktop manually after the engine's start attempt timed
+    /// out). Mirrors the pre-Phase-2f local logic in `ServiceStore`.
+    func testReconcileFromLiveProbe_startFailedClearsToRunningWhenDaemonUp() async {
+        let svc = DockerDaemonService(
+            daemonProbe: { false },             // forces a timeout → .startFailed
+            openDocker: {},
+            quitDocker: {},
+            readyTimeout: 0.05,
+            pollIntervalNS: 10_000_000
+        )
+        await svc.start()
+        XCTAssertTrue(waitUntil { svc.status().isStartFailed })
+
+        svc.reconcileFromLiveProbe(running: true)
+        XCTAssertEqual(svc.status(), .running)
+    }
+
+    /// `.starting` is UI-driven: the in-flight `awaitDaemonReady` loop owns
+    /// the transition out of it, so a stray live-probe tick must not stomp
+    /// the state. Otherwise a click → reconcile race could flip `.starting`
+    /// back to `.stopped` while Docker is still booting.
+    func testReconcileFromLiveProbe_startingIsPreserved() async {
+        let svc = DockerDaemonService(
+            daemonProbe: { false },             // never ready → stays .starting
+            openDocker: { try? await Task.sleep(nanoseconds: 100_000_000) },
+            quitDocker: {}
+        )
+        await svc.start()
+        XCTAssertTrue(waitUntil { svc.status() == .starting })
+
+        // Reconcile with running:true must not stomp .starting; the
+        // daemon-ready poll inside start() is the authoritative transition.
+        svc.reconcileFromLiveProbe(running: true)
+        XCTAssertEqual(svc.status(), .starting)
+
+        // Cleanup so the in-flight task doesn't bleed into other tests.
+        svc.cancelStart()
+    }
+
+    /// Autonomous daemon-down detection: a `.running` state must downgrade to
+    /// `.stopped` when the live probe fails, even when the user didn't click
+    /// Stop. This is the symmetric counterpart of the `.unknown → .running`
+    /// case — both are "trust the live probe" arms.
+    func testReconcileFromLiveProbe_runningToStoppedWhenProbeFails() async {
+        let svc = DockerDaemonService(
+            daemonProbe: { true },              // ready immediately → .running
+            openDocker: {},
+            quitDocker: {}
+        )
+        await svc.start()
+        XCTAssertTrue(waitUntil { svc.status() == .running })
+
+        svc.reconcileFromLiveProbe(running: false)
+        XCTAssertEqual(svc.status(), .stopped)
+    }
 }
 
 /// Tiny thread-safe counter for use in concurrent-call tests. Avoids

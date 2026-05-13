@@ -166,6 +166,28 @@ final class DockerDaemonService: @unchecked Sendable {
         Task.detached { await quitDocker() }
     }
 
+    /// Reconcile terminal state against a live-probe result. Called from
+    /// `ServicesService.snapshot()` every refresh tick so the state machine
+    /// tracks Docker's actual state autonomously, not just through user
+    /// actions. UI-driven transient states (`.starting`, `.startFailed`)
+    /// are preserved — those represent something the engine is in the
+    /// middle of, and the daemon-ready poll owns the transition. The
+    /// `.startFailed → .running` arm mirrors `ServiceStore`'s pre-Phase-2f
+    /// behaviour: if Docker came up some other way (e.g. user clicked the
+    /// Docker Desktop icon manually), surface that as a recovery.
+    func reconcileFromLiveProbe(running: Bool) {
+        queue.sync {
+            switch state {
+            case .starting:
+                break
+            case .startFailed:
+                if running { state = .running }
+            case .unknown, .running, .stopped:
+                state = running ? .running : .stopped
+            }
+        }
+    }
+
     /// Acknowledge a `.startFailed` state — clears the indicator so the user
     /// can try again. No-op for any other state. Mirrors
     /// `ServiceStore.clearDockerStartFailure`.
