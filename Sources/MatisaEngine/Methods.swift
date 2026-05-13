@@ -6,6 +6,9 @@ import MatisaCore
 // engine-only shapes (e.g. EngineStatus, which has no app-side mirror yet)
 // stay here.
 
+/// Mirrored on the app side as `EngineStatusInfo` in
+/// `Sources/Matisa/Engine/EngineClient.swift`. Rename or add fields on both
+/// sides together — there's no compile-time link between them.
 struct EngineStatus: Encodable {
     let status: String          // "ok"
     let version: String

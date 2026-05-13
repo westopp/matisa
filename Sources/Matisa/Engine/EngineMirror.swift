@@ -23,8 +23,8 @@ final class EngineMirror {
     /// merge fallback.
     struct Snapshot {
         let services: ServicesSnapshot?
-        let launchFailures: [String: LaunchFailure]?
         let engine: EngineStatusInfo?
+        let launchFailures: [String: LaunchFailure]?
         let dockerSystem: DockerSystemState?
         let caddy: CaddyServiceInfo?
         let publicTunnels: [String: PublicTunnelStatus]?
@@ -60,8 +60,8 @@ final class EngineMirror {
         ) else {
             return Snapshot(
                 services: nil,
-                launchFailures: nil,
                 engine: nil,
+                launchFailures: nil,
                 dockerSystem: nil,
                 caddy: nil,
                 publicTunnels: nil,
@@ -142,8 +142,8 @@ final class EngineMirror {
 
         return Snapshot(
             services: snap,
-            launchFailures: failures,
             engine: engineStatus,
+            launchFailures: failures,
             dockerSystem: dockerState,
             caddy: caddy,
             publicTunnels: tunnels,

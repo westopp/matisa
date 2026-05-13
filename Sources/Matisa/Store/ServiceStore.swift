@@ -227,11 +227,16 @@ final class ServiceStore {
             }
         }
 
-        // Engine status — mirrored verbatim from engine.status when the
-        // engine is reachable, cleared when it isn't (Engine row in the
-        // System group reads this to decide running/stopped UI).
+        // Engine status — mirrored from engine.status when reachable, cleared
+        // when not. Mirrors the `launchFailures` pattern: a transient nil for
+        // this slice alone (services.snapshot OK but engine.status call blipped)
+        // is treated as "leave the local value intact for one tick" so the
+        // Engine row in the System group doesn't flicker on a momentary glitch.
         if engineReachable {
-            self.engineStatus = mirror.engine
+            if let info = mirror.engine {
+                self.engineStatus = info
+            }
+            // else: leave existing engineStatus; next tick will recover.
         } else {
             self.engineStatus = nil
         }
