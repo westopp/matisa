@@ -18,19 +18,28 @@ else
     UNIVERSAL=0
 fi
 
+ENGINE_NAME="matisa-engine"
+
 if [ "$UNIVERSAL" = "1" ]; then
     # Universal builds land in .build/apple/Products/<Config>
     case "$CONFIG" in
-        release) BIN_PATH=".build/apple/Products/Release/${APP_NAME}" ;;
-        debug)   BIN_PATH=".build/apple/Products/Debug/${APP_NAME}" ;;
-        *)       BIN_PATH=".build/apple/Products/${CONFIG}/${APP_NAME}" ;;
+        release) BIN_DIR=".build/apple/Products/Release" ;;
+        debug)   BIN_DIR=".build/apple/Products/Debug" ;;
+        *)       BIN_DIR=".build/apple/Products/${CONFIG}" ;;
     esac
 else
-    BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)/${APP_NAME}"
+    BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
 fi
 
-if [ ! -x "$BIN_PATH" ]; then
-    echo "✗ Binary not found at $BIN_PATH"
+APP_BIN="${BIN_DIR}/${APP_NAME}"
+ENGINE_BIN="${BIN_DIR}/${ENGINE_NAME}"
+
+if [ ! -x "$APP_BIN" ]; then
+    echo "✗ App binary not found at $APP_BIN"
+    exit 1
+fi
+if [ ! -x "$ENGINE_BIN" ]; then
+    echo "✗ Engine binary not found at $ENGINE_BIN"
     exit 1
 fi
 
@@ -38,7 +47,8 @@ echo "→ Assembling ${APP_DIR}…"
 rm -rf "$APP_DIR"
 mkdir -p "${APP_DIR}/Contents/MacOS"
 mkdir -p "${APP_DIR}/Contents/Resources"
-cp "$BIN_PATH" "${APP_DIR}/Contents/MacOS/${APP_NAME}"
+cp "$APP_BIN" "${APP_DIR}/Contents/MacOS/${APP_NAME}"
+cp "$ENGINE_BIN" "${APP_DIR}/Contents/MacOS/${ENGINE_NAME}"
 cp Resources/Info.plist "${APP_DIR}/Contents/Info.plist"
 
 # Compile the Liquid Glass `.icon` source into the assets macOS Tahoe
