@@ -10,10 +10,19 @@ import MatisaCore
 /// Service-resolution uses an injected `lookupService` closure so tests don't
 /// need to drive a real `ConfigService` / bun eval. Production wiring passes
 /// in a closure that calls `ServicesService.lookup(serviceID:)`.
+///
+/// **Known limitation — zombie blindness.** The launch watcher polls
+/// `LifecycleSupervisor.isAlive(pid:)`, which is a `kill(pid, 0)` probe.
+/// Since the engine never `waitpid`s on its spawned children, an exited
+/// child remains a zombie indefinitely and `isAlive` keeps returning true.
+/// Quick-exit failures (the very case the watcher exists to catch) may go
+/// unrecorded as a result. Parity with the app's `ServiceStore.watchProjectLaunch`
+/// — same bug, inherited. The fix is either a SIGCHLD reaper or per-PID
+/// `kqueue` NOTE_EXIT registration; tracked for a future phase.
 final class LifecycleService: @unchecked Sendable {
 
     /// Resolves a service id to the merged `Service` (config + state).
-    /// Returns nil for unknown ids; the caller maps that to `invalidParams`.
+    /// Returns nil for unknown ids; the caller maps that to `serviceNotFound`.
     /// Throws when the underlying config load fails — surfaces as
     /// `RPCError.internalError`.
     typealias ServiceLookup = @Sendable (String) throws -> Service?
@@ -28,6 +37,17 @@ final class LifecycleService: @unchecked Sendable {
     /// docker-failure path when the CLI returns non-zero. Transient.
     private let failuresQueue = DispatchQueue(label: "engine.lifecycle.failures")
     private var failures: [String: LaunchFailure] = [:]
+
+    /// In-flight launch-watcher tasks, keyed by serviceID. Guarded by
+    /// `failuresQueue`. Stored so a second `start` (user retry, or the start
+    /// half of a restart) can cancel the previous watcher before its 10s
+    /// window expires — otherwise the stale watcher races the fresh attempt
+    /// and may write a stale `LaunchFailure` after the new start cleared it,
+    /// or worse, call `spawnStore.remove(serviceID:)` and delete the *new*
+    /// spawn record (removal is keyed by serviceID, not PID). On natural
+    /// (deadline-elapsed) exit the entry is left in the map — completed
+    /// `Task.cancel()` is a no-op, and the next `start` evicts it.
+    private var activeWatchers: [String: Task<Void, Never>] = [:]
 
     init(
         lookupService: @escaping ServiceLookup,
@@ -95,6 +115,10 @@ final class LifecycleService: @unchecked Sendable {
 
         switch service.spec {
         case .project:
+            // Cancel any in-flight launch watcher — otherwise a user-initiated
+            // stop within the 10s window lets the watcher record a spurious
+            // "exited after Xs" LaunchFailure for the user's own action.
+            cancelWatcher(serviceID: serviceID)
             switch service.state {
             case let .running(pid, _):
                 await LifecycleSupervisor.stopWithEscalation(pid: pid)
@@ -105,19 +129,13 @@ final class LifecycleService: @unchecked Sendable {
                 break
             }
         case .docker(let f):
-            do {
-                try await DockerActions.inlineStop(name: f.name)
-            } catch {
-                recordDockerFailure(serviceID: serviceID, error: error, startedAt: Date())
-                throw error
-            }
+            // LaunchFailure is for launch attempts; a stop that errors is not
+            // a launch failure. Re-throw and let the caller surface the error.
+            // Matches the app's `ServiceStore.stop`, which uses `try? await` —
+            // failures don't update the state's `.error(...)` either.
+            try await DockerActions.inlineStop(name: f.name)
         case .compose(let f):
-            do {
-                try await DockerActions.composeDown(file: f.file)
-            } catch {
-                recordDockerFailure(serviceID: serviceID, error: error, startedAt: Date())
-                throw error
-            }
+            try await DockerActions.composeDown(file: f.file)
         case .unmanaged(let f):
             switch f.kind {
             case let .process(pid, _, _, _):
@@ -134,6 +152,10 @@ final class LifecycleService: @unchecked Sendable {
 
         switch service.spec {
         case .project:
+            // Cancel any in-flight launch watcher before killing — same reason
+            // as `stop`: a kill within the 10s window would let the watcher
+            // record a spurious launch failure for the user's own action.
+            cancelWatcher(serviceID: serviceID)
             if let pid = service.state.pid, pid > 0 {
                 let foreign = service.isRunningUnmanaged
                 if foreign {
@@ -283,6 +305,13 @@ final class LifecycleService: @unchecked Sendable {
     /// read the log tail and stash a `LaunchFailure`. The watcher exits
     /// silently after the window; later deaths are picked up by the regular
     /// snapshot loop's `deadSpawnIDs` cleanup.
+    ///
+    /// Stores its `Task` in `activeWatchers` so a subsequent `start`/`stop`/
+    /// `kill` for the same id can cancel it. Inside the loop, every iteration
+    /// checks `Task.isCancelled` and (before recording a failure) verifies
+    /// the persisted spawn still points at our PID — both defences are
+    /// needed because the cancel signal can race the wakeup from
+    /// `Task.sleep`.
     private func watchProjectLaunch(
         serviceID: String,
         pid: Int32,
@@ -292,11 +321,25 @@ final class LifecycleService: @unchecked Sendable {
         let watchSeconds: TimeInterval = 10
         let pollNS: UInt64 = 200_000_000
         let spawnStore = self.spawnStore
-        Task.detached { [weak self] in
+        let watchedPid = pid
+        let task = Task.detached { [weak self] () -> Void in
             let deadline = startedAt.addingTimeInterval(watchSeconds)
             while Date() < deadline {
+                if Task.isCancelled { return }
                 try? await Task.sleep(nanoseconds: pollNS)
-                if !LifecycleSupervisor.isAlive(pid: pid) {
+                if Task.isCancelled { return }
+                if !LifecycleSupervisor.isAlive(pid: watchedPid) {
+                    // PID-identity guard: only proceed if the persisted spawn
+                    // still points at *our* pid. A user-initiated restart or
+                    // take-over replaces the spawn record with a fresh pid;
+                    // we must not stomp on it (the LaunchFailure would be
+                    // stale, and `spawnStore.remove(serviceID:)` would delete
+                    // the new spawn since removal is keyed by serviceID).
+                    guard
+                        spawnStore.spawns()
+                            .first(where: { $0.serviceID == serviceID })?
+                            .pid == watchedPid
+                    else { return }
                     let alive = Date().timeIntervalSince(startedAt)
                     let tail = Self.readLogTail(url: logURL, lines: 10)
                     let summary = Self.summarizeFailure(tail: tail, aliveSeconds: alive)
@@ -314,6 +357,23 @@ final class LifecycleService: @unchecked Sendable {
                     return
                 }
             }
+        }
+        // Cancel any prior watcher for this id and install ours, atomically
+        // under the failuresQueue. The prior watcher's `isCancelled` check
+        // will trip on its next wakeup.
+        failuresQueue.sync {
+            activeWatchers[serviceID]?.cancel()
+            activeWatchers[serviceID] = task
+        }
+    }
+
+    /// Cancel the in-flight watcher (if any) for this id and forget it.
+    /// Used by `stop`/`kill` so user-initiated termination within the 10s
+    /// window doesn't surface as a "launch failure".
+    private func cancelWatcher(serviceID: String) {
+        failuresQueue.sync {
+            activeWatchers[serviceID]?.cancel()
+            activeWatchers.removeValue(forKey: serviceID)
         }
     }
 
@@ -350,7 +410,7 @@ final class LifecycleService: @unchecked Sendable {
 
     private func requireService(_ id: String) throws -> Service {
         guard let svc = try lookupService(id) else {
-            throw RPCError.invalidParams("unknown service: \(id)")
+            throw RPCError.serviceNotFound("unknown service: \(id)")
         }
         return svc
     }

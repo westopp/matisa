@@ -19,9 +19,16 @@ final class Engine {
 
     init() {
         self.socketPath = Engine.resolveSocketPath()
+        // Construct the persisted-spawn store once and inject the same
+        // instance into both services. Snapshot reads and lifecycle writes
+        // share a single queue inside the store; the alternative
+        // (default-constructing inside each service) would silently produce
+        // two instances racing the same file.
+        let spawnStore = PersistedSpawnStore()
         let servicesService = ServicesService(
             configService: configService,
-            discoveryService: discoveryService
+            discoveryService: discoveryService,
+            spawnStore: spawnStore
         )
         self.servicesService = servicesService
         // Closure-based lookup keeps LifecycleService decoupled from
@@ -30,7 +37,7 @@ final class Engine {
         // sees the same view that drives `services.snapshot`.
         self.lifecycleService = LifecycleService(
             lookupService: { id in try servicesService.lookup(serviceID: id) },
-            spawnStore: servicesService.spawnStoreRef
+            spawnStore: spawnStore
         )
 
         // Capture dispatcher locally so the closure doesn't need self.

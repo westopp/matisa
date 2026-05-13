@@ -72,6 +72,11 @@ final class MethodDispatcher: @unchecked Sendable {
 /// JSON-RPC §5.1 for application errors (-32000..-32099). The app's lifecycle
 /// client treats this case specially — it surfaces the same daemon-down
 /// prompt it would have shown if the local pre-flight check had failed.
+///
+/// `serviceNotFound` uses -32002, also in the server-defined range. Domain-level
+/// "no service with that id" is distinct from -32602 invalidParams (which clients
+/// may treat as a permanent client bug); not-found is recoverable — the snapshot
+/// just hasn't caught up.
 enum RPCError: Error {
     case parseError(String)             // -32700
     case invalidRequest(String)         // -32600
@@ -79,6 +84,7 @@ enum RPCError: Error {
     case invalidParams(String)          // -32602
     case internalError(String)          // -32603
     case dockerDaemonRequired(String)   // -32001
+    case serviceNotFound(String)        // -32002
 
     var code: Int {
         switch self {
@@ -88,6 +94,7 @@ enum RPCError: Error {
         case .invalidParams:        return -32602
         case .internalError:        return -32603
         case .dockerDaemonRequired: return -32001
+        case .serviceNotFound:      return -32002
         }
     }
 
@@ -97,7 +104,8 @@ enum RPCError: Error {
              .invalidRequest(let m),
              .invalidParams(let m),
              .internalError(let m),
-             .dockerDaemonRequired(let m): return m
+             .dockerDaemonRequired(let m),
+             .serviceNotFound(let m): return m
         case .methodNotFound(let name): return "Method not found: \(name)"
         }
     }

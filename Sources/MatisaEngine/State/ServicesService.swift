@@ -19,7 +19,7 @@ final class ServicesService {
     init(
         configService: ConfigService,
         discoveryService: DiscoveryService,
-        spawnStore: PersistedSpawnStore = PersistedSpawnStore()
+        spawnStore: PersistedSpawnStore
     ) {
         self.configService = configService
         self.discoveryService = discoveryService
@@ -83,11 +83,6 @@ final class ServicesService {
         return snap.managed.first(where: { $0.id == serviceID })
             ?? snap.unmanaged.first(where: { $0.id == serviceID })
     }
-
-    /// Exposes the store so LifecycleService can write the same file the
-    /// snapshot reads from. (Both go through the same instance — single
-    /// queue, no double-write.)
-    var spawnStoreRef: PersistedSpawnStore { spawnStore }
 
     private func loadConfig() throws -> AppConfig {
         let bytes = try configService.get()

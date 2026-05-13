@@ -233,6 +233,84 @@ final class LifecycleServiceTests: XCTestCase {
         XCTAssertEqual(store.spawns(), [], "watcher should prune the dead spawn record")
     }
 
+    /// Consecutive starts on the same id must not let the first watcher
+    /// race the second attempt. Before the watcher-cancellation +
+    /// PID-identity guard, the first watcher would observe the quick-exit
+    /// PID dying and write a stale `LaunchFailure` after `start` had already
+    /// cleared it, plus call `spawnStore.remove(serviceID:)` and delete the
+    /// fresh spawn record (removal is keyed by serviceID, not PID).
+    func testLaunchWatcher_doesNotOverwriteAcrossRetries() async throws {
+        let name = uniqueProjectName("retry")
+        let path = FileManager.default.temporaryDirectory
+        let id = "project:\(name)"
+
+        // Mutable holder: lookup closure reads whichever service we set last.
+        // The first start uses a quick-exit command, the second a long-runner.
+        // The watcher captures by value, so this just changes what the *next*
+        // start spawns.
+        let serviceBox = ServiceBox(initial: projectService(
+            name: name,
+            path: path,
+            command: "/bin/sh -c 'exit 1'"
+        ))
+
+        let stateFile = tempStateFile()
+        defer { try? FileManager.default.removeItem(at: stateFile) }
+        let store = PersistedSpawnStore(stateFile: stateFile)
+        let lifecycle = LifecycleService(
+            lookupService: { [serviceBox] reqID in reqID == id ? serviceBox.current : nil },
+            spawnStore: store,
+            dockerDaemonProbe: { true }
+        )
+
+        // First start — quick exit. Reap immediately so the watcher's
+        // `isAlive` will return false on its next poll.
+        try await lifecycle.start(serviceID: id)
+        let quickPID = try XCTUnwrap(store.spawns().first?.pid, "first spawn should be persisted")
+
+        // Don't wait for the watcher to act; replace the service and start
+        // the long-runner straight away. The PID-identity guard + watcher
+        // cancellation together prevent the stale watcher from clobbering
+        // the new spawn's record or failure entry.
+        serviceBox.current = projectService(
+            name: name,
+            path: path,
+            command: "/bin/sh -c 'sleep 30'"
+        )
+        try await lifecycle.start(serviceID: id)
+        let longPID = try XCTUnwrap(store.spawns().first?.pid, "second spawn should overwrite first")
+        XCTAssertNotEqual(quickPID, longPID, "second start should produce a different PID")
+
+        // Reap the quick-exit child so the (cancelled) first watcher's
+        // isAlive check would see it dead if it ran. Sleep past two watcher
+        // poll intervals (200ms each) plus margin.
+        for _ in 0..<20 {
+            tryReap(quickPID)
+            if !LifecycleSupervisor.isAlive(pid: quickPID) { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        try await Task.sleep(nanoseconds: 800_000_000)
+
+        // Critical assertions: stale watcher must not have written a failure
+        // for this id (the new attempt cleared the slot), and must not have
+        // pruned the fresh spawn record.
+        XCTAssertNil(
+            lifecycle.listLaunchFailures()[id],
+            "stale watcher must not record a failure after a fresh start"
+        )
+        let spawns = store.spawns()
+        XCTAssertEqual(spawns.count, 1, "fresh spawn should still be persisted")
+        XCTAssertEqual(spawns.first?.pid, longPID, "stale watcher must not prune the new spawn record")
+
+        // Cleanup: kill the long-runner.
+        _ = LifecycleSupervisor.forceKill(pid: longPID)
+        for _ in 0..<20 {
+            tryReap(longPID)
+            if !LifecycleSupervisor.isAlive(pid: longPID) { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
     func testProjectStart_pathNotFound_throwsAndLogs() async throws {
         let name = uniqueProjectName("badpath")
         let bogus = FileManager.default.temporaryDirectory
@@ -269,7 +347,7 @@ final class LifecycleServiceTests: XCTestCase {
 
     // MARK: - Error mapping
 
-    func testUnknownServiceID_throwsInvalidParams() async {
+    func testUnknownServiceID_throwsServiceNotFound() async {
         let stateFile = tempStateFile()
         defer { try? FileManager.default.removeItem(at: stateFile) }
         let store = PersistedSpawnStore(stateFile: stateFile)
@@ -281,10 +359,18 @@ final class LifecycleServiceTests: XCTestCase {
         do {
             try await lifecycle.start(serviceID: "project:nonexistent")
             XCTFail("expected start on unknown service to throw")
-        } catch let RPCError.invalidParams(msg) {
-            XCTAssertTrue(msg.contains("unknown service"), "expected invalidParams about unknown service: \(msg)")
+        } catch let error as RPCError {
+            guard case let .serviceNotFound(msg) = error else {
+                XCTFail("expected RPCError.serviceNotFound, got \(error)")
+                return
+            }
+            XCTAssertEqual(error.code, -32002, "serviceNotFound should map to -32002")
+            XCTAssertTrue(
+                msg.contains("project:nonexistent"),
+                "expected message to mention the bad id, got: \(msg)"
+            )
         } catch {
-            XCTFail("expected RPCError.invalidParams, got \(error)")
+            XCTFail("expected RPCError.serviceNotFound, got \(error)")
         }
     }
 
@@ -379,4 +465,12 @@ final class LifecycleServiceTests: XCTestCase {
         _ = try services.snapshot()
         XCTAssertEqual(spawnStore.spawns(), [], "snapshot should prune the dead spawn record")
     }
+}
+
+/// Reference-typed cell for tests that swap the service the lookup closure
+/// returns between calls — e.g. the watcher-retry test that starts with a
+/// quick-exit command then replaces it with a long-runner.
+private final class ServiceBox: @unchecked Sendable {
+    var current: Service
+    init(initial: Service) { self.current = initial }
 }
