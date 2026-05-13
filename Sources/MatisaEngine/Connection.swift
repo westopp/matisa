@@ -8,12 +8,16 @@ import Darwin
 /// Framing: NDJSON (one JSON object per line). Compact encoding only.
 /// Sufficient for phase 0/1; if we ever need messages with embedded newlines
 /// (we won't — JSON encoders escape them) we can swap to length-prefix.
-struct ConnectionHandler {
+///
+/// `run()` is async so the envelope's `handle` can await dispatcher handlers
+/// without blocking the worker thread. LineReader stays sync — the await
+/// belongs around dispatch, not around the read syscall.
+struct ConnectionHandler: Sendable {
 
     let fd: Int32
     let dispatcher: MethodDispatcher
 
-    func run() {
+    func run() async {
         defer { close(fd) }
         let envelope = JSONRPCEnvelope(dispatcher: dispatcher)
         let reader = LineReader(fd: fd)
@@ -21,7 +25,7 @@ struct ConnectionHandler {
             if line.isEmpty { continue }
             // handle() returns nil for notifications (JSON-RPC 2.0 §4.1:
             // "The Server MUST NOT reply to a Notification.").
-            if let response = envelope.handle(line) {
+            if let response = await envelope.handle(line) {
                 writeLine(response)
             }
         }

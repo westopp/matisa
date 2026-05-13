@@ -6,9 +6,19 @@ import Foundation
 /// methods that take params, register the typed-params overload. The dispatcher
 /// is the single boundary between Codable land and the raw bytes that go over
 /// the socket.
-final class MethodDispatcher {
+///
+/// Handlers are async so lifecycle methods (start/stop/kill/restart) can
+/// `await` without blocking the dispatcher worker. Sync closures still work —
+/// Swift transparently lifts a sync `() throws -> R` into an
+/// `() async throws -> R` parameter, so existing pure-data registrations need
+/// no changes at the call site.
+///
+/// Marked `@unchecked Sendable` because registration is single-threaded at
+/// init time and the handlers dictionary is read-only after that. Captures
+/// inside handlers must enforce their own thread-safety.
+final class MethodDispatcher: @unchecked Sendable {
 
-    typealias Handler = (Data?) throws -> Data
+    typealias Handler = @Sendable (Data?) async throws -> Data
 
     private var handlers: [String: Handler] = [:]
     private let encoder: JSONEncoder = {
@@ -19,23 +29,23 @@ final class MethodDispatcher {
     private let decoder = JSONDecoder()
 
     /// Register a method that takes no params.
-    func register<R: Encodable>(_ method: String, _ handler: @escaping () throws -> R) {
+    func register<R: Encodable>(_ method: String, _ handler: @Sendable @escaping () async throws -> R) {
         handlers[method] = { [encoder] _ in
-            try encoder.encode(handler())
+            try encoder.encode(try await handler())
         }
     }
 
     /// Register a method that takes typed params.
     func register<P: Decodable, R: Encodable>(
         _ method: String,
-        _ handler: @escaping (P) throws -> R
+        _ handler: @Sendable @escaping (P) async throws -> R
     ) {
         handlers[method] = { [encoder, decoder] data in
             guard let data = data else {
                 throw RPCError.invalidParams("\(method) requires params")
             }
             let params = try decoder.decode(P.self, from: data)
-            return try encoder.encode(handler(params))
+            return try encoder.encode(try await handler(params))
         }
     }
 
@@ -43,15 +53,15 @@ final class MethodDispatcher {
     /// pass-through of a downstream tool's JSON output (e.g. `config.get`
     /// returning the bun eval result verbatim) where Codable round-tripping
     /// adds cost and risks shape drift.
-    func registerRaw(_ method: String, _ handler: @escaping () throws -> Data) {
-        handlers[method] = { _ in try handler() }
+    func registerRaw(_ method: String, _ handler: @Sendable @escaping () async throws -> Data) {
+        handlers[method] = { _ in try await handler() }
     }
 
-    func dispatch(method: String, params: Data?) throws -> Data {
+    func dispatch(method: String, params: Data?) async throws -> Data {
         guard let handler = handlers[method] else {
             throw RPCError.methodNotFound(method)
         }
-        return try handler(params)
+        return try await handler(params)
     }
 }
 

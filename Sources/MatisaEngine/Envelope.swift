@@ -10,7 +10,7 @@ struct JSONRPCEnvelope {
 
     let dispatcher: MethodDispatcher
 
-    func handle(_ line: Data) -> Data? {
+    func handle(_ line: Data) async -> Data? {
         // Parse the envelope as a generic dictionary. We only need a few
         // top-level fields; everything else flows through opaquely.
         let obj: Any
@@ -75,7 +75,7 @@ struct JSONRPCEnvelope {
         }
 
         do {
-            let resultBytes = try dispatcher.dispatch(method: method, params: paramsData)
+            let resultBytes = try await dispatcher.dispatch(method: method, params: paramsData)
             return isNotification ? nil : encodeSuccess(id: id, resultBytes: resultBytes)
         } catch let err as RPCError {
             return isNotification ? nil

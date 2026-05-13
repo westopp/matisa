@@ -50,8 +50,8 @@ final class JSONRPCEnvelopeTests: XCTestCase {
 
     // MARK: - Happy path
 
-    func testValidRequest_returnsSuccessResponse() {
-        let out = makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping","id":1}"#))
+    func testValidRequest_returnsSuccessResponse() async {
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping","id":1}"#))
         let dict = responseDict(out)!
         XCTAssertEqual(dict["jsonrpc"] as? String, "2.0")
         XCTAssertEqual(dict["id"] as? Int, 1)
@@ -60,74 +60,78 @@ final class JSONRPCEnvelopeTests: XCTestCase {
         XCTAssertEqual(result?["value"] as? String, "ok")
     }
 
-    func testRequestWithStringId_echoesId() {
-        let out = makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping","id":"abc-123"}"#))
+    func testRequestWithStringId_echoesId() async {
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping","id":"abc-123"}"#))
         XCTAssertEqual(responseDict(out)?["id"] as? String, "abc-123")
     }
 
-    func testRequestWithNumericId_echoesId() {
-        let out = makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping","id":42}"#))
+    func testRequestWithNumericId_echoesId() async {
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping","id":42}"#))
         XCTAssertEqual(responseDict(out)?["id"] as? Int, 42)
     }
 
-    func testRequestWithNullId_responseHasNullId() {
-        let out = makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping","id":null}"#))
+    func testRequestWithNullId_responseHasNullId() async {
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping","id":null}"#))
         let dict = responseDict(out)!
         XCTAssertTrue(dict["id"] is NSNull)
         XCTAssertNotNil(dict["result"])
     }
 
-    func testRequestWithParams_paramsReachHandler() {
-        let out = makeEnvelope().handle(
+    func testRequestWithParams_paramsReachHandler() async {
+        let out = await makeEnvelope().handle(
             line(#"{"jsonrpc":"2.0","method":"echo","params":{"message":"hi"},"id":1}"#)
         )
         let result = responseDict(out)?["result"] as? [String: Any]
         XCTAssertEqual(result?["message"] as? String, "hi")
     }
 
-    func testResponseAlwaysHasJsonrpcField() {
-        let out = makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping","id":1}"#))
+    func testResponseAlwaysHasJsonrpcField() async {
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping","id":1}"#))
         XCTAssertEqual(responseDict(out)?["jsonrpc"] as? String, "2.0")
     }
 
     // MARK: - Notifications (F-002 regression coverage)
 
-    func testNotificationWithoutId_returnsNil() {
-        XCTAssertNil(makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping"}"#)))
+    func testNotificationWithoutId_returnsNil() async {
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping"}"#))
+        XCTAssertNil(out)
     }
 
-    func testNotificationWithMissingMethod_returnsNil() {
+    func testNotificationWithMissingMethod_returnsNil() async {
         // No id and no method — still a notification, server MUST NOT respond.
-        XCTAssertNil(makeEnvelope().handle(line(#"{"jsonrpc":"2.0"}"#)))
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0"}"#))
+        XCTAssertNil(out)
     }
 
-    func testNotificationWithUnknownMethod_returnsNil() {
+    func testNotificationWithUnknownMethod_returnsNil() async {
         // Dispatch fails internally, but spec is clear: no response, ever.
-        XCTAssertNil(makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"does_not_exist"}"#)))
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"does_not_exist"}"#))
+        XCTAssertNil(out)
     }
 
-    func testNotificationWithThrowingHandler_returnsNil() {
-        XCTAssertNil(makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"explode"}"#)))
+    func testNotificationWithThrowingHandler_returnsNil() async {
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"explode"}"#))
+        XCTAssertNil(out)
     }
 
     // MARK: - id type validation (F-007 regression coverage)
 
-    func testRequestWithBoolId_returnsInvalidRequestAndNullId() {
-        let out = makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping","id":true}"#))
+    func testRequestWithBoolId_returnsInvalidRequestAndNullId() async {
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping","id":true}"#))
         let dict = responseDict(out)!
         XCTAssertTrue(dict["id"] is NSNull)
         XCTAssertEqual((dict["error"] as? [String: Any])?["code"] as? Int, -32600)
     }
 
-    func testRequestWithArrayId_returnsInvalidRequest() {
-        let out = makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping","id":[1,2]}"#))
+    func testRequestWithArrayId_returnsInvalidRequest() async {
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping","id":[1,2]}"#))
         let dict = responseDict(out)!
         XCTAssertTrue(dict["id"] is NSNull)
         XCTAssertEqual((dict["error"] as? [String: Any])?["code"] as? Int, -32600)
     }
 
-    func testRequestWithObjectId_returnsInvalidRequest() {
-        let out = makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping","id":{"x":1}}"#))
+    func testRequestWithObjectId_returnsInvalidRequest() async {
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"ping","id":{"x":1}}"#))
         let dict = responseDict(out)!
         XCTAssertTrue(dict["id"] is NSNull)
         XCTAssertEqual((dict["error"] as? [String: Any])?["code"] as? Int, -32600)
@@ -135,15 +139,15 @@ final class JSONRPCEnvelopeTests: XCTestCase {
 
     // MARK: - Invalid Request
 
-    func testMissingMethod_returnsInvalidRequest() {
-        let out = makeEnvelope().handle(line(#"{"jsonrpc":"2.0","id":1}"#))
+    func testMissingMethod_returnsInvalidRequest() async {
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","id":1}"#))
         let dict = responseDict(out)!
         XCTAssertEqual((dict["error"] as? [String: Any])?["code"] as? Int, -32600)
         XCTAssertEqual(dict["id"] as? Int, 1)
     }
 
-    func testEmptyMethod_returnsInvalidRequest() {
-        let out = makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"","id":1}"#))
+    func testEmptyMethod_returnsInvalidRequest() async {
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"","id":1}"#))
         XCTAssertEqual(
             (responseDict(out)?["error"] as? [String: Any])?["code"] as? Int,
             -32600
@@ -152,8 +156,8 @@ final class JSONRPCEnvelopeTests: XCTestCase {
 
     // MARK: - Method not found
 
-    func testUnknownMethod_returnsMethodNotFoundError() {
-        let out = makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"does_not_exist","id":1}"#))
+    func testUnknownMethod_returnsMethodNotFoundError() async {
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"does_not_exist","id":1}"#))
         XCTAssertEqual(
             (responseDict(out)?["error"] as? [String: Any])?["code"] as? Int,
             -32601
@@ -162,8 +166,8 @@ final class JSONRPCEnvelopeTests: XCTestCase {
 
     // MARK: - Parse error
 
-    func testMalformedJSON_returnsParseErrorWithNullId() {
-        let out = makeEnvelope().handle(line("not json at all"))
+    func testMalformedJSON_returnsParseErrorWithNullId() async {
+        let out = await makeEnvelope().handle(line("not json at all"))
         let dict = responseDict(out)!
         XCTAssertEqual((dict["error"] as? [String: Any])?["code"] as? Int, -32700)
         XCTAssertTrue(dict["id"] is NSNull)
@@ -174,8 +178,8 @@ final class JSONRPCEnvelopeTests: XCTestCase {
     // If/when batch support is added, this test will need to change — and
     // crucially, the NDJSON framing in ConnectionHandler has to change too.
 
-    func testTopLevelArray_returnsInvalidRequest() {
-        let out = makeEnvelope().handle(line(#"[{"jsonrpc":"2.0","method":"ping","id":1}]"#))
+    func testTopLevelArray_returnsInvalidRequest() async {
+        let out = await makeEnvelope().handle(line(#"[{"jsonrpc":"2.0","method":"ping","id":1}]"#))
         let dict = responseDict(out)!
         XCTAssertEqual((dict["error"] as? [String: Any])?["code"] as? Int, -32600)
         XCTAssertTrue(dict["id"] is NSNull)
@@ -183,15 +187,15 @@ final class JSONRPCEnvelopeTests: XCTestCase {
 
     // MARK: - Handler-thrown errors
 
-    func testHandlerThrowsInternalError_returnsInternalErrorCode() {
-        let out = makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"explode","id":1}"#))
+    func testHandlerThrowsInternalError_returnsInternalErrorCode() async {
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"explode","id":1}"#))
         let err = responseDict(out)?["error"] as? [String: Any]
         XCTAssertEqual(err?["code"] as? Int, -32603)
         XCTAssertEqual(err?["message"] as? String, "kaboom")
     }
 
-    func testHandlerThrowsInvalidParams_returnsInvalidParamsCode() {
-        let out = makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"badparams","id":1}"#))
+    func testHandlerThrowsInvalidParams_returnsInvalidParamsCode() async {
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"badparams","id":1}"#))
         XCTAssertEqual(
             (responseDict(out)?["error"] as? [String: Any])?["code"] as? Int,
             -32602
@@ -200,11 +204,11 @@ final class JSONRPCEnvelopeTests: XCTestCase {
 
     // MARK: - Raw pass-through (config.get's wire path)
 
-    func testRawHandler_resultIsParsedJSON() {
+    func testRawHandler_resultIsParsedJSON() async {
         // The raw handler returns `{"already":"json","values":[1,2,3]}` bytes.
         // The envelope must place those bytes verbatim under `result` —
         // crucially, NOT wrap them in quotes as a string.
-        let out = makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"raw_passthrough","id":1}"#))
+        let out = await makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"raw_passthrough","id":1}"#))
         let dict = responseDict(out)!
         let result = dict["result"] as? [String: Any]
         XCTAssertNotNil(result, "result should be a JSON object, not a string")
