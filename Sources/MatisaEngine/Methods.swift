@@ -10,12 +10,10 @@ struct EngineStatus: Encodable {
     let uptimeSeconds: Int
 }
 
-struct ProjectList: Encodable {
-    struct Project: Encodable {
-        let id: String
-        let name: String
-        let group: String
-        let status: String      // "running" | "stopped" — full enum lands in phase 3
-    }
-    let projects: [Project]
+/// Empty placeholder until phase 2b moves discovery into the engine. Once
+/// `services.list` returns real data, this shape will mirror the merged
+/// spec + state structure that the app currently builds in `ServiceStore`.
+struct ServiceList: Encodable {
+    let services: [Service]
+    struct Service: Encodable {} // intentionally empty until 2b
 }

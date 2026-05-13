@@ -1,17 +1,62 @@
 import Foundation
 
-/// Loads and evaluates `~/.config/matisa/services.ts` by shelling out
-/// to bun. Caches the result by file mtime — re-evaluates only when the file
-/// changes on disk.
+/// Loads and evaluates `~/.config/matisa/services.ts`.
+///
+/// Phase 2a: prefers the engine over UDS — if the engine is reachable, the
+/// app reads the bun-evaluated JSON from `config.get`. Falls back to running
+/// bun directly when the engine is down, so the app keeps working in
+/// dev / pre-install scenarios.
+///
+/// Cache-by-mtime is preserved on the local-fallback path. The engine has
+/// its own mtime cache, so engine-served calls are also cheap when nothing
+/// has changed.
 @MainActor
 final class ConfigLoader {
     private(set) var lastConfig: AppConfig?
     private(set) var lastError: ConfigError?
+    private(set) var lastSource: Source = .none
     private var lastMtime: Date?
 
-    /// Load (or re-load) the config. Returns the cached config if mtime hasn't
-    /// changed. Errors are stored on the loader and also thrown.
+    enum Source: Sendable { case none, engine, local }
+
+    /// Load (or re-load) the config. Tries the engine first; on any
+    /// transport-level failure (engine unreachable, decode error) falls back
+    /// to running bun locally. RPC-level errors from the engine (bun missing
+    /// on the engine's side, etc.) also trigger fallback so the user isn't
+    /// blocked by an engine misconfiguration.
     func load() async throws -> AppConfig {
+        // Try the engine first.
+        if let config = try? await loadFromEngine() {
+            self.lastConfig = config
+            self.lastError = nil
+            self.lastSource = .engine
+            return config
+        }
+        // Fall back to local bun.
+        let config = try await loadLocally()
+        self.lastSource = .local
+        return config
+    }
+
+    /// Ask the engine for the raw bun JSON and decode it.
+    private func loadFromEngine() async throws -> AppConfig {
+        let data: Data
+        do {
+            data = try await EngineClient.shared.callRaw("config.get")
+        } catch {
+            throw error
+        }
+        let raw: RawConfig
+        do {
+            raw = try JSONDecoder().decode(RawConfig.self, from: data)
+        } catch {
+            throw ConfigError.parseFailed("engine returned undecodable config: \(error)")
+        }
+        return try AppConfig.from(raw)
+    }
+
+    /// Original direct-bun path. Used when the engine is unreachable.
+    private func loadLocally() async throws -> AppConfig {
         let url = Paths.configFile
 
         guard FileManager.default.fileExists(atPath: url.path) else {

@@ -39,6 +39,14 @@ final class MethodDispatcher {
         }
     }
 
+    /// Register a method that produces already-formed JSON bytes. Use for
+    /// pass-through of a downstream tool's JSON output (e.g. `config.get`
+    /// returning the bun eval result verbatim) where Codable round-tripping
+    /// adds cost and risks shape drift.
+    func registerRaw(_ method: String, _ handler: @escaping () throws -> Data) {
+        handlers[method] = { _ in try handler() }
+    }
+
     func dispatch(method: String, params: Data?) throws -> Data {
         guard let handler = handlers[method] else {
             throw RPCError.methodNotFound(method)
