@@ -131,27 +131,30 @@ final class ServiceStore {
             return
         }
 
-        // Daemon probe — gates docker discovery and the System panel indicator.
-        // Skipped while a start is in flight so the spinner doesn't flicker,
-        // and while a previous start has failed so the user has a chance to
-        // see the error before the indicator snaps back to plain `.stopped`.
-        // The user clears `.startFailed` explicitly via the System panel.
+        // Discovery — phase 2b.1: prefer one engine round-trip over five
+        // sequential local probes; fall back to local on engine-unreachable.
+        // The engine-side cache (1s TTL) means concurrent app refreshes share
+        // a single set of underlying shell-outs.
+        let inputs = await gatherDiscovery()
+
+        // Daemon-state machine: only let probe results override the indicator
+        // when we're not in a deliberate UI state (`.starting`, `.startFailed`).
+        // Same logic as before — the inputs.dockerDaemonRunning bool just
+        // replaces the await DockerProbe.daemonRunning() calls.
         if !dockerSystem.isStarting && !dockerSystem.isStartFailed {
-            dockerSystem = await DockerProbe.daemonRunning() ? .running : .stopped
+            dockerSystem = inputs.dockerDaemonRunning ? .running : .stopped
         } else if dockerSystem.isStartFailed {
             // Daemon may have come up some other way (user opened Docker
             // Desktop manually) — let that override the stale failure label.
-            // Otherwise leave `.startFailed` sticky so the user sees it.
-            if await DockerProbe.daemonRunning() {
+            if inputs.dockerDaemonRunning {
                 dockerSystem = .running
             }
         }
 
-        // Discovery
-        let ports = (try? await Lsof.listening()) ?? []
-        let containers = dockerSystem.isRunning ? await DockerProbe.listContainers() : []
-        let composeStacks = dockerSystem.isRunning ? await DockerProbe.listComposeStacks() : []
-        let brew = await BrewServices.list()
+        let ports = inputs.ports
+        let containers = dockerSystem.isRunning ? inputs.containers : []
+        let composeStacks = dockerSystem.isRunning ? inputs.composeStacks : []
+        let brew = inputs.brewServices
         let persisted = StatePersistence.load()
 
         var built: [Service] = []
@@ -339,6 +342,35 @@ final class ServiceStore {
         self.unmanaged = unmanagedBuilt.sorted { lhs, rhs in
             (lhs.spec.exposedPorts.first?.port ?? 0) < (rhs.spec.exposedPorts.first?.port ?? 0)
         }
+    }
+
+    /// Phase 2b.1: gather all discovery probe results in one call. Tries the
+    /// engine first; on any transport failure (engine not running, decode
+    /// error, etc.) falls back to running the probes locally — the same
+    /// async path the app used pre-2b.
+    private func gatherDiscovery() async -> DiscoverySnapshot {
+        if let snap = try? await EngineClient.shared.call(
+            "discovery.snapshot",
+            as: DiscoverySnapshot.self
+        ) {
+            return snap
+        }
+        // Local fallback. Same sequence as the original refresh() body —
+        // the daemon probe gates docker/compose to skip a docker-ps that
+        // would just time out when Docker is down.
+        let dockerUp = await DockerProbe.daemonRunning()
+        let ports = (try? await Lsof.listening()) ?? []
+        let containers = dockerUp ? await DockerProbe.listContainers() : []
+        let composeStacks = dockerUp ? await DockerProbe.listComposeStacks() : []
+        let brew = await BrewServices.list()
+        return DiscoverySnapshot(
+            ports: ports,
+            containers: containers,
+            composeStacks: composeStacks,
+            brewServices: brew,
+            dockerDaemonRunning: dockerUp,
+            takenAt: Date()
+        )
     }
 
     /// Parse the first host port from docker's `Ports` string, e.g.

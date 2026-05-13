@@ -1,5 +1,6 @@
 import XCTest
 @testable import Matisa
+import MatisaCore
 
 final class LsofParserTests: XCTestCase {
     func testParsesProcessesAndAddresses() throws {

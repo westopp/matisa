@@ -1,16 +1,18 @@
 import Foundation
+import MatisaCore
 
 /// Top-level engine. Owns the socket server and the method dispatcher.
 /// Method registration happens once at init time; the dispatcher is read-only
 /// after that, so worker threads can read it without synchronization.
 final class Engine {
 
-    static let version = "0.2.0-phase2a"
+    static let version = "0.3.0-phase2b"
 
     private let socketPath: String
     private let dispatcher = MethodDispatcher()
     private let server: UnixSocketServer
     private let configService = ConfigService()
+    private let discoveryService = DiscoveryService()
     private let startedAt = Date()
 
     init() {
@@ -69,11 +71,22 @@ final class Engine {
             try configService.get()
         }
 
-        // projects.list / services.list — placeholder. Phase 2b will replace
-        // this with the real merged spec+state list once discovery moves into
-        // the engine. Returning empty for now so clients don't see stub data.
+        // projects.list / services.list — placeholder. Phase 2b.2 will replace
+        // this with the real merged spec+state list once the merge logic
+        // moves out of the app's ServiceStore and into the engine. Returning
+        // empty for now so clients don't see stub data.
         dispatcher.register("services.list") { () -> ServiceList in
             ServiceList(services: [])
+        }
+
+        // discovery.snapshot — phase 2b.1. Single-call merge of all four
+        // probes (lsof, docker ps, docker compose ls, brew services list)
+        // plus the docker daemon-running flag. Server-side TTL cache means
+        // multiple clients during the same refresh tick share one round of
+        // shell-outs. App's ServiceStore.refresh() reads this and runs its
+        // existing merge logic against the result.
+        dispatcher.register("discovery.snapshot") { [discoveryService] () -> DiscoverySnapshot in
+            discoveryService.snapshot()
         }
     }
 

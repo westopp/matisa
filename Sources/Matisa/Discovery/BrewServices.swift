@@ -1,15 +1,6 @@
 import Foundation
 import MatisaCore
 
-struct BrewService: Hashable, Sendable {
-    let name: String
-    let status: String  // "started", "stopped", "error"
-    let user: String
-    let plist: String
-
-    var isRunning: Bool { status.lowercased() == "started" }
-}
-
 enum BrewServices {
     static var brewPath: String {
         Shell.which("brew") ?? "/opt/homebrew/bin/brew"
@@ -20,20 +11,7 @@ enum BrewServices {
             executable: brewPath,
             arguments: ["services", "list", "--json"]
         ) else { return [] }
-        return parse(output)
-    }
-
-    static func parse(_ raw: String) -> [BrewService] {
-        guard let data = raw.data(using: .utf8) else { return [] }
-        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
-        return arr.map { dict in
-            BrewService(
-                name: (dict["name"] as? String) ?? "",
-                status: (dict["status"] as? String) ?? "",
-                user: (dict["user"] as? String) ?? "",
-                plist: (dict["file"] as? String) ?? ""
-            )
-        }
+        return BrewJSONParser.parse(output)
     }
 
     static func find(_ name: String) async -> BrewService? {

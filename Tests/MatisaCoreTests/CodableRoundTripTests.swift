@@ -229,4 +229,70 @@ final class CodableRoundTripTests: XCTestCase {
         try roundTrip(ServiceKind.compose)
         try roundTrip(ServiceKind.unmanaged)
     }
+
+    // MARK: - Discovery types (phase 2b.1 wire format)
+
+    func testListeningPort_roundTrip() throws {
+        try roundTrip(ListeningPort(
+            pid: 1234, command: "node", address: "*:5478", port: 5478
+        ))
+    }
+
+    func testDockerContainer_roundTrip() throws {
+        try roundTrip(DockerContainer(
+            id: "abc123", name: "matisa.redis", image: "redis:7",
+            state: "running", status: "Up 2 hours",
+            ports: "0.0.0.0:6379->6379/tcp"
+        ))
+    }
+
+    func testDockerComposeStack_roundTrip() throws {
+        try roundTrip(DockerComposeStack(
+            name: "obs", status: "running(3)",
+            configFiles: "/Users/test/infra/compose.yml"
+        ))
+    }
+
+    func testBrewService_roundTrip() throws {
+        try roundTrip(BrewService(
+            name: "caddy", status: "started", user: "thulane",
+            plist: "/Users/thulane/Library/LaunchAgents/homebrew.mxcl.caddy.plist"
+        ))
+    }
+
+    func testDiscoverySnapshot_roundTrip() throws {
+        // Trip the full composite — this is what rides the wire from the
+        // engine's discovery.snapshot to the app's gatherDiscovery().
+        let snap = DiscoverySnapshot(
+            ports: [
+                ListeningPort(pid: 1, command: "node", address: "*:3000", port: 3000),
+                ListeningPort(pid: 2, command: "vite", address: "[::1]:5173", port: 5173),
+            ],
+            containers: [
+                DockerContainer(id: "x", name: "matisa.x", image: "redis:7",
+                                state: "running", status: "Up", ports: ""),
+            ],
+            composeStacks: [
+                DockerComposeStack(name: "obs", status: "running(2)",
+                                   configFiles: "/tmp/compose.yml"),
+            ],
+            brewServices: [
+                BrewService(name: "caddy", status: "started", user: "u", plist: "/p"),
+            ],
+            dockerDaemonRunning: true,
+            // Truncated to seconds — Foundation's default Date encoding can
+            // shed sub-second precision in some round-trip paths; equality
+            // here checks shape, not microsecond fidelity.
+            takenAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        try roundTrip(snap)
+    }
+
+    func testDiscoverySnapshot_emptyShape() throws {
+        try roundTrip(DiscoverySnapshot(
+            ports: [], containers: [], composeStacks: [], brewServices: [],
+            dockerDaemonRunning: false,
+            takenAt: Date(timeIntervalSince1970: 0)
+        ))
+    }
 }

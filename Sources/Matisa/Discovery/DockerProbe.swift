@@ -1,21 +1,5 @@
 import Foundation
-
-struct DockerContainer: Hashable, Sendable {
-    let id: String
-    let name: String
-    let image: String
-    let state: String
-    let status: String
-    let ports: String
-
-    var isRunning: Bool { state == "running" }
-}
-
-struct DockerComposeStack: Hashable, Sendable {
-    let name: String
-    let status: String
-    let configFiles: String
-}
+import MatisaCore
 
 enum DockerProbe {
     static var dockerPath: String {
@@ -90,31 +74,14 @@ enum DockerProbe {
         return parseComposeStacks(output)
     }
 
+    /// Re-exports of the MatisaCore parsers, kept here so existing call sites
+    /// inside the app don't need to switch imports. These are pure passthroughs.
     static func parseContainers(_ raw: String) -> [DockerContainer] {
-        raw.split(separator: "\n", omittingEmptySubsequences: true).compactMap { line in
-            guard let data = String(line).data(using: .utf8) else { return nil }
-            guard let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-            return DockerContainer(
-                id: (dict["ID"] as? String) ?? "",
-                name: (dict["Names"] as? String) ?? "",
-                image: (dict["Image"] as? String) ?? "",
-                state: ((dict["State"] as? String) ?? "").lowercased(),
-                status: (dict["Status"] as? String) ?? "",
-                ports: (dict["Ports"] as? String) ?? ""
-            )
-        }
+        DockerJSONParser.parseContainers(raw)
     }
 
     static func parseComposeStacks(_ raw: String) -> [DockerComposeStack] {
-        guard let data = raw.data(using: .utf8) else { return [] }
-        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
-        return arr.map { dict in
-            DockerComposeStack(
-                name: (dict["Name"] as? String) ?? "",
-                status: (dict["Status"] as? String) ?? "",
-                configFiles: (dict["ConfigFiles"] as? String) ?? ""
-            )
-        }
+        DockerJSONParser.parseComposeStacks(raw)
     }
 
     // MARK: - Compose actions (whole-stack only)

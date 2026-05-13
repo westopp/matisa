@@ -1,67 +1,26 @@
 import Foundation
-
-/// One listening socket discovered by `lsof`.
-struct ListeningPort: Hashable, Sendable {
-    let pid: Int32
-    let command: String      // process name as lsof reports it
-    let address: String      // raw address string e.g. "*:5478", "127.0.0.1:5478", "[::1]:5478"
-    let port: Int
-
-    var isLocalhost: Bool {
-        address.hasPrefix("127.") || address.hasPrefix("[::1]") || address.hasPrefix("*")
-    }
-}
+import MatisaCore
 
 enum Lsof {
     /// Run `lsof -iTCP -sTCP:LISTEN -nP -F pcn` and parse the result.
+    /// The shape and parsing live in MatisaCore so the engine can use the
+    /// same code; this remains the app's async wrapper around it.
     static func listening() async throws -> [ListeningPort] {
         let output = try await Shell.runCapturing(
             executable: "/usr/sbin/lsof",
             arguments: ["-iTCP", "-sTCP:LISTEN", "-nP", "-F", "pcn"]
         )
-        return parse(output)
+        return LsofParser.parse(output)
     }
 
-    /// Parse `-F pcn`-formatted lsof output. Each process record is a `p<pid>`
-    /// line, optionally a `c<command>` line, and one or more `n<addr:port>` lines.
+    /// Re-export of the MatisaCore parser so the existing test still finds it.
+    /// Will go away once the test moves to MatisaCoreTests.
     static func parse(_ raw: String) -> [ListeningPort] {
-        var results: [ListeningPort] = []
-
-        var currentPID: Int32?
-        var currentCmd: String = ""
-
-        for line in raw.split(separator: "\n", omittingEmptySubsequences: true) {
-            guard let first = line.first else { continue }
-            let body = String(line.dropFirst())
-
-            switch first {
-            case "p":
-                currentPID = Int32(body)
-                currentCmd = ""
-            case "c":
-                currentCmd = body
-            case "n":
-                guard let pid = currentPID else { continue }
-                guard let port = portFromAddress(body) else { continue }
-                results.append(ListeningPort(
-                    pid: pid,
-                    command: currentCmd,
-                    address: body,
-                    port: port
-                ))
-            default:
-                continue
-            }
-        }
-        return results
+        LsofParser.parse(raw)
     }
 
-    /// Extract the trailing port number from addresses like `*:5478`,
-    /// `127.0.0.1:5478`, or `[::1]:5478`.
     static func portFromAddress(_ address: String) -> Int? {
-        guard let colonIdx = address.lastIndex(of: ":") else { return nil }
-        let portPart = address[address.index(after: colonIdx)...]
-        return Int(portPart)
+        LsofParser.portFromAddress(address)
     }
 }
 
