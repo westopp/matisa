@@ -148,7 +148,19 @@ final class ServiceStore {
             managed = snap.managed
             unmanagedList = snap.unmanaged
             dockerDaemonRunning = snap.dockerDaemonRunning
+            // Engine is the authority on launch failures when reachable —
+            // replace the local map wholesale. Best-effort: on transport
+            // failure for this call alone, leave the existing map intact
+            // (next tick will retry).
+            if let failures = try? await EngineClient.shared.call(
+                "launch_failures.list",
+                as: LaunchFailuresList.self
+            ) {
+                self.launchFailures = failures.failures
+            }
         } else {
+            // Local-fallback path: don't touch `launchFailures` — the local
+            // watcher's writes are the authority here.
             let result = await localMerge(config: config, snapshot: inputs)
             managed = result.managed
             unmanagedList = result.unmanaged
@@ -372,23 +384,10 @@ final class ServiceStore {
     }
 
     func perform(_ action: ServiceAction, on service: Service) async {
-        // Gate docker/compose actions on daemon availability. If the daemon
-        // is down we surface the prompt and bail — the alert flow will retry
-        // the action via `confirmDockerStart` once the daemon is up.
-        if Self.actionNeedsDocker(action, service: service) {
-            if dockerSystem.isStarting { return }
-            if !(await DockerProbe.daemonRunning()) {
-                dockerSystem = .stopped
-                pendingDockerPrompt = PendingDockerPrompt(
-                    serviceID: service.id,
-                    serviceName: service.name,
-                    action: action
-                )
-                return
-            }
-            dockerSystem = .running
-        }
-
+        // The pre-emptive daemon probe used to live here; now the engine's
+        // -32001 (dockerDaemonRequired) drives the prompt when the engine is
+        // reachable, and the *Local fallback path runs its own probe when
+        // the engine is unreachable.
         switch action {
         case .start:           await start(service)
         case .stop:            await stop(service)
@@ -409,7 +408,176 @@ final class ServiceStore {
         await refresh()
     }
 
+    // MARK: - Lifecycle dispatchers (engine-first, local fallback)
+
+    /// Engine-first lifecycle dispatch. On success, the engine owns the
+    /// spawn record, the launch watcher, and the launch-failure tracker —
+    /// the next `refresh()` pulls the new state via `services.snapshot`.
+    /// On transport failure (engine unreachable), falls through to the local
+    /// implementation in `*Local`. On a deliberate engine-side error
+    /// (-32001 dockerDaemonRequired, -32002 serviceNotFound, etc.) we honour
+    /// the engine's "no" rather than retry locally — same UI prompt for the
+    /// docker case, an error state for the rest.
+    private func start(_ service: Service) async {
+        do {
+            _ = try await EngineClient.shared.call(
+                "services.start",
+                params: ServiceIDParams(id: service.id),
+                as: EmptyResponse.self
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(let code, _) where code == -32001 {
+            dockerSystem = .stopped
+            pendingDockerPrompt = PendingDockerPrompt(
+                serviceID: service.id,
+                serviceName: service.name,
+                action: .start
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(_, let msg) {
+            markState(service.id, .error("engine: \(msg)"))
+            return
+        } catch {
+            // Transport / decode failure → engine isn't usable, fall through.
+        }
+        await startLocal(service)
+    }
+
+    private func stop(_ service: Service) async {
+        do {
+            _ = try await EngineClient.shared.call(
+                "services.stop",
+                params: ServiceIDParams(id: service.id),
+                as: EmptyResponse.self
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(let code, _) where code == -32001 {
+            dockerSystem = .stopped
+            pendingDockerPrompt = PendingDockerPrompt(
+                serviceID: service.id,
+                serviceName: service.name,
+                action: .stop
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(_, let msg) {
+            markState(service.id, .error("engine: \(msg)"))
+            return
+        } catch {
+            // Fall through to local.
+        }
+        await stopLocal(service)
+    }
+
     private func kill(_ service: Service) async {
+        do {
+            _ = try await EngineClient.shared.call(
+                "services.kill",
+                params: ServiceIDParams(id: service.id),
+                as: EmptyResponse.self
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(let code, _) where code == -32001 {
+            dockerSystem = .stopped
+            pendingDockerPrompt = PendingDockerPrompt(
+                serviceID: service.id,
+                serviceName: service.name,
+                action: .kill
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(_, let msg) {
+            markState(service.id, .error("engine: \(msg)"))
+            return
+        } catch {
+            // Fall through to local.
+        }
+        await killLocal(service)
+    }
+
+    private func restart(_ service: Service) async {
+        do {
+            _ = try await EngineClient.shared.call(
+                "services.restart",
+                params: ServiceIDParams(id: service.id),
+                as: EmptyResponse.self
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(let code, _) where code == -32001 {
+            dockerSystem = .stopped
+            pendingDockerPrompt = PendingDockerPrompt(
+                serviceID: service.id,
+                serviceName: service.name,
+                action: .restart
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(_, let msg) {
+            markState(service.id, .error("engine: \(msg)"))
+            return
+        } catch {
+            // Fall through to local.
+        }
+        await restartLocal(service)
+    }
+
+    private func takeOver(_ service: Service) async {
+        do {
+            _ = try await EngineClient.shared.call(
+                "services.take_over",
+                params: ServiceIDParams(id: service.id),
+                as: EmptyResponse.self
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(let code, _) where code == -32001 {
+            dockerSystem = .stopped
+            pendingDockerPrompt = PendingDockerPrompt(
+                serviceID: service.id,
+                serviceName: service.name,
+                action: .takeOver
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(_, let msg) {
+            markState(service.id, .error("engine: \(msg)"))
+            return
+        } catch {
+            // Fall through to local.
+        }
+        await takeOverLocal(service)
+    }
+
+    private func pull(_ service: Service) async {
+        do {
+            _ = try await EngineClient.shared.call(
+                "services.pull",
+                params: ServiceIDParams(id: service.id),
+                as: EmptyResponse.self
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(let code, _) where code == -32001 {
+            dockerSystem = .stopped
+            pendingDockerPrompt = PendingDockerPrompt(
+                serviceID: service.id,
+                serviceName: service.name,
+                action: .pull
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(_, let msg) {
+            markState(service.id, .error("engine: \(msg)"))
+            return
+        } catch {
+            // Fall through to local.
+        }
+        await pullLocal(service)
+    }
+
+    // MARK: - Local fallback implementations
+    //
+    // These are the exact bodies of the pre-2c.3 `start/stop/kill/...`
+    // methods. They run when the engine isn't reachable; on engine-reachable
+    // success the wrappers above return early without touching these. Each
+    // method that previously relied on `perform`'s pre-check now does its
+    // own docker-daemon gate so the fallback path keeps the same UX.
+
+    private func killLocal(_ service: Service) async {
+        if !(await ensureDockerForLocal(action: .kill, service: service)) { return }
         switch service.spec {
         case .project:
             if let pid = service.state.pid, pid > 0 {
@@ -433,6 +601,27 @@ final class ServiceStore {
                 try? await DockerProbe.unmanagedKill(name: name)
             }
         }
+    }
+
+    /// Shared docker pre-gate for the local-fallback path. Returns true when
+    /// the action is OK to proceed; returns false (and sets the UI prompt /
+    /// state) when it isn't. Project actions skip the gate. Mirrors the
+    /// previous `perform()`-level pre-check so the engine-down UX is
+    /// indistinguishable from before 2c.3.
+    private func ensureDockerForLocal(action: ServiceAction, service: Service) async -> Bool {
+        guard Self.actionNeedsDocker(action, service: service) else { return true }
+        if dockerSystem.isStarting { return false }
+        if !(await DockerProbe.daemonRunning()) {
+            dockerSystem = .stopped
+            pendingDockerPrompt = PendingDockerPrompt(
+                serviceID: service.id,
+                serviceName: service.name,
+                action: action
+            )
+            return false
+        }
+        dockerSystem = .running
+        return true
     }
 
     // MARK: - Build / scripts
@@ -601,9 +790,10 @@ final class ServiceStore {
         await refresh()
     }
 
-    // MARK: - Lifecycle
+    // MARK: - Lifecycle (local fallback)
 
-    private func start(_ service: Service) async {
+    private func startLocal(_ service: Service) async {
+        if !(await ensureDockerForLocal(action: .start, service: service)) { return }
         switch service.spec {
         case .project(let f):
             // Fresh attempt — drop any prior crash-on-launch capture for this
@@ -748,8 +938,18 @@ final class ServiceStore {
 
     /// Drop the launch-failure capture for a service — invoked when the user
     /// dismisses the detail-view banner. Doesn't change the service state.
+    /// Best-effort engine clear so the next refresh doesn't reanimate the
+    /// banner from `launch_failures.list`; the local entry is dropped
+    /// regardless so the UI hides immediately.
     func clearLaunchFailure(for serviceID: String) {
         launchFailures.removeValue(forKey: serviceID)
+        Task {
+            try? await EngineClient.shared.call(
+                "launch_failures.clear",
+                params: ServiceIDParams(id: serviceID),
+                as: EmptyResponse.self
+            )
+        }
     }
 
     /// Build a `LaunchFailure` from a thrown `ShellError` (or any other
@@ -839,7 +1039,8 @@ final class ServiceStore {
         return "exited after \(timeStr) — no output"
     }
 
-    private func stop(_ service: Service) async {
+    private func stopLocal(_ service: Service) async {
+        if !(await ensureDockerForLocal(action: .stop, service: service)) { return }
         switch service.spec {
         case .project:
             switch service.state {
@@ -876,13 +1077,18 @@ final class ServiceStore {
         }
     }
 
-    private func restart(_ service: Service) async {
+    private func restartLocal(_ service: Service) async {
+        if !(await ensureDockerForLocal(action: .restart, service: service)) { return }
         switch service.spec {
         case .project:
-            await stop(service)
+            // Stay on the local path: calling the engine-first `stop`/`start`
+            // wrappers here would recurse into RPC attempts we already know
+            // are going to fail (this branch only runs because the engine
+            // wasn't reachable for `restart`).
+            await stopLocal(service)
             try? await Task.sleep(nanoseconds: 500_000_000)
             if let updated = self.service(id: service.id) {
-                await start(updated)
+                await startLocal(updated)
             }
         case .docker(let f):
             try? await DockerProbe.inlineRestart(name: f.name)
@@ -895,7 +1101,8 @@ final class ServiceStore {
 
     /// Take over a managed service that's currently running unmanaged.
     /// Stop the rogue PID, then spawn under our supervisor.
-    private func takeOver(_ service: Service) async {
+    private func takeOverLocal(_ service: Service) async {
+        if !(await ensureDockerForLocal(action: .takeOver, service: service)) { return }
         guard case let .unmanaged(pid) = service.state else { return }
         guard case .project = service.spec else {
             // For docker/compose, the "running unmanaged" case means something
@@ -906,10 +1113,11 @@ final class ServiceStore {
         markState(service.id, .stopping)
         await ProcessSupervisor.stopWithEscalation(pid: pid, foreign: true)
         try? await Task.sleep(nanoseconds: 400_000_000)
-        await start(service)
+        await startLocal(service)
     }
 
-    private func pull(_ service: Service) async {
+    private func pullLocal(_ service: Service) async {
+        if !(await ensureDockerForLocal(action: .pull, service: service)) { return }
         switch service.spec {
         case .docker(let f):
             try? await DockerProbe.inlinePull(image: f.image)

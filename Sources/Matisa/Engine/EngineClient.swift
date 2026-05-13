@@ -220,3 +220,16 @@ private struct AnyEncodable: Encodable {
     }
     func encode(to encoder: Encoder) throws { try _encode(encoder) }
 }
+
+// MARK: - Shared RPC param/response shapes
+//
+// Mirror images of the engine's `ServiceIDParams: Decodable` /
+// `EmptyResponse: Encodable`. The engine decodes what the app encodes here,
+// and the app decodes what the engine encodes there. Tiny enough to keep
+// out of MatisaCore — they're shape-only and don't escape the JSON-RPC seam.
+
+struct ServiceIDParams: Encodable {
+    let id: String
+}
+
+struct EmptyResponse: Decodable {}
