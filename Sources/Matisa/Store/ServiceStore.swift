@@ -61,6 +61,7 @@ final class ServiceStore {
     private var lastSeenStateByID: [String: ServiceState] = [:]
 
     private let configLoader = ConfigLoader()
+    private let engineMirror = EngineMirror()
     private var refreshTask: Task<Void, Never>?
     private var rotateTask: Task<Void, Never>?
     private var caddyReloadTask: Task<Void, Never>?
@@ -136,29 +137,31 @@ final class ServiceStore {
         // engine's cached snapshot when reachable.
         let inputs = await gatherDiscovery()
 
-        // Phase 2b.2: prefer the engine's merged snapshot; fall back to the
-        // same merge run locally on engine-unreachable.
+        // Phase 3: refresh-time RPC polling is consolidated in EngineMirror.
+        // The mirror returns an optional-per-field Snapshot — `services` nil
+        // means engine-unreachable and we run the local merge fallback; other
+        // nil fields mean "engine answered services but failed this slice;
+        // leave the local mirror untouched".
+        let paneVisibleIDs = paneVisibleTaskServiceIDs()
+        let mirror = await engineMirror.pull(
+            paneVisibleTaskServiceIDs: paneVisibleIDs
+        )
+
         let managed: [Service]
         let unmanagedList: [Service]
         let dockerDaemonRunning: Bool
         let engineReachable: Bool
-        if let snap = try? await EngineClient.shared.call(
-            "services.snapshot",
-            as: ServicesSnapshot.self
-        ) {
+        if let snap = mirror.services {
             managed = snap.managed
             unmanagedList = snap.unmanaged
             dockerDaemonRunning = snap.dockerDaemonRunning
             engineReachable = true
             // Engine is the authority on launch failures when reachable —
             // replace the local map wholesale. Best-effort: on transport
-            // failure for this call alone, leave the existing map intact
+            // failure for this slice alone, leave the existing map intact
             // (next tick will retry).
-            if let failures = try? await EngineClient.shared.call(
-                "launch_failures.list",
-                as: LaunchFailuresList.self
-            ) {
-                self.launchFailures = failures.failures
+            if let failures = mirror.launchFailures {
+                self.launchFailures = failures
             }
         } else {
             // Local-fallback path: don't touch `launchFailures` — the local
@@ -176,11 +179,7 @@ final class ServiceStore {
         // When the engine isn't reachable, fall back to the pre-2f
         // local state machine: only let the probe override the indicator
         // when we're not in a deliberate UI state.
-        if engineReachable,
-           let engineState = try? await EngineClient.shared.call(
-               "docker.daemon.status",
-               as: DockerSystemState.self
-           ) {
+        if engineReachable, let engineState = mirror.dockerSystem {
             // Guard against a click-then-refresh race: if the user just
             // pressed Start (locally marking `.starting`) while a refresh
             // tick had already read `.stopped` from the engine pre-click,
@@ -207,11 +206,7 @@ final class ServiceStore {
         // Phase 2d: the engine owns the Caddy status snapshot when reachable.
         // Fall back to deriving it from brewServices + config on the local
         // path so a missing engine doesn't blank the indicator.
-        if engineReachable,
-           let info = try? await EngineClient.shared.call(
-               "caddy.status",
-               as: CaddyServiceInfo.self
-           ) {
+        if engineReachable, let info = mirror.caddy {
             self.caddyService = info
         } else {
             let caddy = inputs.brewServices.first(where: { $0.name == "caddy" })
@@ -227,30 +222,12 @@ final class ServiceStore {
         self.services = managed
         self.unmanaged = unmanagedList
 
-        // Phase 2e.3: engine owns the ad-hoc task slots. Poll `tasks.list`
-        // for services that already have a visible pane (i.e. the user is
-        // looking at a build or script output). Gating on pane visibility
-        // keeps the per-service RPC out of the 4s tick for the common case
-        // where no panes are open. When `startTask` writes a placeholder
-        // `.running` slot on engine-success, `isPaneVisible` flips to true
-        // immediately so the next refresh picks the slot up.
-        //
-        // On engine-unreachable, the local TaskRunner is authoritative and
-        // we leave its state alone. No-op for unmanaged services — they have
-        // no build/script affordances.
-        if engineReachable {
-            for svc in managed {
-                let buildVisible = tasks.isPaneVisible(svc.id, .build)
-                let scriptVisible = tasks.isPaneVisible(svc.id, .script)
-                guard buildVisible || scriptVisible else { continue }
-                if let list = try? await EngineClient.shared.call(
-                    "tasks.list",
-                    params: ServiceIDParams(id: svc.id),
-                    as: TaskList.self
-                ) {
-                    tasks.replaceSlotsFromEngine(serviceID: svc.id, wire: list.slots)
-                }
-            }
+        // Phase 2e.3: engine owns the ad-hoc task slots. The mirror has
+        // already fetched `tasks.list` for every pane-visible service id;
+        // apply the per-id results. On engine-unreachable the mirror returns
+        // an empty map and the local TaskRunner remains authoritative.
+        for (id, slots) in mirror.tasksByServiceID {
+            tasks.replaceSlotsFromEngine(serviceID: id, wire: slots)
         }
 
         // Phase 2e.1: mirror tunnel statuses from the engine when reachable.
@@ -258,12 +235,8 @@ final class ServiceStore {
         // services that just stopped (inside `services.snapshot` before the
         // response was built), so the auto-teardown block below only runs in
         // the local-fallback path.
-        if engineReachable,
-           let list = try? await EngineClient.shared.call(
-               "exposure.public_tunnel.list",
-               as: PublicTunnelStatusList.self
-           ) {
-            tunnels.replaceStatusesFromEngine(list.statuses)
+        if engineReachable, let statuses = mirror.publicTunnels {
+            tunnels.replaceStatusesFromEngine(statuses)
         }
 
         // Phase 2e.2: mirror same-network (mDNS) statuses from the engine.
@@ -272,12 +245,8 @@ final class ServiceStore {
         // engine-unreachable window survive. Engine doesn't auto-teardown on
         // service stop (visitors get a Caddy 502 rather than a DNS error),
         // so there's no equivalent of the tunnel teardown block to skip.
-        if engineReachable,
-           let list = try? await EngineClient.shared.call(
-               "exposure.same_network.list",
-               as: SameNetworkStatusList.self
-           ) {
-            mdns.replaceStatusesFromEngine(list.statuses)
+        if engineReachable, let statuses = mirror.sameNetwork {
+            mdns.replaceStatusesFromEngine(statuses)
         }
 
         // After the new states are committed, look at lifecycle transitions
@@ -300,6 +269,23 @@ final class ServiceStore {
                 lastSeenStateByID[svc.id] = svc.state
             }
         }
+    }
+
+    /// Set of service ids whose build or script pane is currently visible —
+    /// fed to `EngineMirror.pull` so it only fetches `tasks.list` for those.
+    /// Iterating the previous `services` (rather than the new managed list)
+    /// is fine: visibility is keyed by service id and persists across
+    /// refreshes; if a brand-new id has a visible pane this tick, the next
+    /// 4s tick picks it up. Matches the pre-3 behaviour where the task
+    /// fetch ran after `self.services` was already replaced.
+    private func paneVisibleTaskServiceIDs() -> Set<String> {
+        var out: Set<String> = []
+        for svc in services {
+            if tasks.isPaneVisible(svc.id, .build) || tasks.isPaneVisible(svc.id, .script) {
+                out.insert(svc.id)
+            }
+        }
+        return out
     }
 
     /// Local-fallback merge. Runs the same `ServiceMerge.merge` the engine
