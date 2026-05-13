@@ -130,9 +130,13 @@ Sources/
                                  # CaddyService.scheduleRegenAndReload on
                                  # state change
   Matisa/                 # The macOS UI app (executable target)
-    App.swift, Window/, Store/, Supervisor/, Discovery/, Engine/EngineClient.swift, ...
+    App.swift, Window/, Store/, Supervisor/, Discovery/,
+    Engine/EngineClient.swift, Engine/EngineLauncher.swift,
+    Engine/EngineMirror.swift, Window/EngineDetailView.swift, ...
                           # Supervisor + Discovery now power the local-fallback
-                          # path when the engine is unreachable.
+                          # path when the engine is unreachable. EngineLauncher
+                          # spawns / locates the engine binary; the app calls it
+                          # at launch and on every engineUnreachable retry.
 Tests/
   MatisaCoreTests/        # Codable round-trips + parser tests + ServiceMerge tests
   MatisaEngineTests/      # JSONRPCEnvelopeTests, LineReaderTests,
@@ -151,6 +155,7 @@ In the order it landed (most recent at top):
 
 | Commit | Slice | Summary |
 |---|---|---|
+| `316ac5d` | **Phase 3 engine-lifecycle slice** | Engine is now a first-class peer of the app, not a dev-only sidecar. New `engine.shutdown` RPC raises SIGTERM on a 100ms delay so callers can stop the engine cleanly over the wire. `build-app.sh` bundles `matisa-engine` into `Matisa.app/Contents/MacOS/` alongside `Matisa`. New `EngineLauncher` (app-side) resolves the binary path (env override → bundle sibling → `.build/<config>` for dev), polls the socket for readiness, and `posix_spawn`s the engine with `POSIX_SPAWN_SETSID` so it survives the app — stdout/stderr go to `~/Library/Logs/Matisa/engine.log`. App auto-calls `EngineLauncher.ensureRunning` at launch; `EngineClient.callEnsuringEngine` retries any RPC once if the socket is unreachable. `EngineMirror` polls `engine.status` per refresh; `ServiceStore.engineStatus` exposes it to the UI. New Engine row in the System group of the sidebar (Caddy / Docker / Engine), with start/stop controls and `EngineDetailView` (version, uptime, socket path) modeled on the sibling system-row detail views. Stop wait-loops on `isReachable` to avoid the Stopped→Running→Stopped flicker between shutdown-ack and SIGTERM. |
 | `b7a6a14` | **Phase 2e.2** | Same-network (mDNS) moves to the engine. New `MDNSService` ports `MDNSPublisher` (`dns-sd -P` per active hostname, `NWPathMonitor` for Wi-Fi / sleep-wake, the same `sanitisedHostname` / `primaryLANIPv4` algorithms). State changes fire `onStateChanged` which the engine wires to `CaddyService.scheduleRegenAndReload` — the dormant 2d debouncer finally has callers. `CaddyService.loadExposures` is now a settable closure that combines `TunnelService.list()` + `MDNSService.list()` into a `[String: ServiceExposure]` map; `regenerate` passes it to `CaddyfileGenerator.write`, so the engine-rendered Caddyfile finally carries the runtime `<service>.matisa.local` and tunnel blocks. New `exposure.same_network.toggle/status/list` RPCs and `SameNetworkStatusList` wire type. App's `toggleSameNetwork` and `regenerateCaddyfile` switch to engine-first; the local-fallback `scheduleCaddyRegenLocal` keeps the 150ms debounce for the engine-unreachable branch. |
 | `6a9823b` | **Phase 2e.1** | Public tunnels (sish) move to the engine. New `TunnelService` ports `TunnelManager` (one `Foundation.Process` per active tunnel, banner-parsed hostnames from sish's stderr, the same SSH arg vector + `-o` flags + pipe wiring). All toggle gating (running, ssh key present, port available) runs engine-side. `ServicesService.postSnapshotHook` is the lifecycle-transition detector — `TunnelService.reconcileAfterSnapshot` SIGTERMs active tunnels for services that just stopped, inside the same `services.snapshot` tick so clients never see "service stopped, tunnel still live". New `exposure.public_tunnel.toggle/status/list` RPCs + `PublicTunnelStatusList` wire type. App's `togglePublicTunnel` routes through the engine; `refresh()` feeds `exposure.public_tunnel.list` into `TunnelManager.replaceStatusesFromEngine`, which preserves locally-spawned tunnels by Process liveness. The app's pre-2e.1 in-line auto-teardown runs only on the engine-unreachable fallback. |
 | `c084cf7` | **Phase 2e.3** follow-up | `replaceSlotsFromEngine` was wiping the local slot map for any service the engine reported `{}` for — including locally-spawned tasks whose pid was tracked only in that slot. Preserve slots with `pid > 0` during the engine-mirror (they're app-owned, not engine-owned). Engine-owned slots always have `pid == 0`. Also fix `TaskService.clear` materialising ghost `.idle` entries when called for an unknown `(serviceID, kind)`. |
@@ -175,7 +180,7 @@ In the order it landed (most recent at top):
 | `417ef9b` | Phase 0/1 + hardening | Engine skeleton: UDS listener, JSON-RPC envelope, NDJSON framing, `engine.status` + stub `projects.list`. Plus the F-001..F-009 hardening pass: SIGPIPE ignore, JSON-RPC notification semantics, lockfile against stolen-socket, umask before bind, id type validation, batch-punt comment. 26 envelope/reader unit tests. |
 | `4acb033` | App env masking | Replaced per-key sensitive heuristic with mask-everything-by-default + single "show all" toggle. (Aligns with the "names yes, values no" engine policy.) |
 
-**Test count today: 183 passing.**
+**Test count today: 189 passing.**
 
 ---
 
@@ -188,7 +193,7 @@ In the order it landed (most recent at top):
 - **Each slice is one commit**. Each commit ends in a runnable app, verified by `swift test` (full suite) and a manual `nc -U` probe of any new method.
 - **No FSEvents yet** — engine uses mtime polling for config. FSEvents lands with streaming in Phase 5.
 - **No streaming yet** — clients poll. Engine has request/response only. Phase 5 adds server-pushed notifications.
-- **No engine spawn-on-demand from app yet** — for development, run `swift run matisa-engine` in a separate terminal. SMAppService in Phase 8.
+- **Engine spawn-on-demand from the app** — the app `posix_spawn`s the engine binary detached at launch and on every `engineUnreachable` retry; `SMAppService` in Phase 8 will hand supervision to launchd (start-at-login, respawn-on-crash) but the lifecycle plumbing is in place.
 
 ---
 
@@ -198,25 +203,32 @@ In the order it landed (most recent at top):
 tunnels, same-network mDNS, tasks, and Docker daemon control. App is the UI
 shell + local-fallback path for every subsystem.
 
+**Phase 3 is complete.** Engine is bundled in the `.app`, auto-spawned at
+launch, and stoppable via `engine.shutdown`. `EngineLauncher` is the
+reusable spawn primitive (future CLI/MCP/widget will share it). Engine row
+in the System group exposes status and controls. `ServiceStore` is no
+longer a 1100-line monolith — Phase 3 refactors carved it into per-subsystem
+clients (`CaddyClient`, `DockerDaemonClient`, `LifecycleClient`, `TaskClient`,
+`ExposureClient`) and an `EngineMirror`/`EngineDispatchResult` consolidation
+of the refresh-time poll path.
+
 ---
 
 ## Beyond Phase 2
 
 Rough sketch — flesh out later.
 
-- **Phase 3** — Cleanup: shrink `ServiceStore` to its remaining UI responsibilities (search, collapsed sections, `groupRunIndicatorBinary`). App.swift becomes thin. Maybe rename it to `EngineClientStore` or `ViewState`.
 - **Phase 4** — CLI binary. Thin RPC client. `matisa list`, `matisa start <id>`, `matisa logs <id> -f`. Stateless. Distributed inside the .app bundle with an "Install command-line tool" button (Docker Desktop / VS Code pattern).
 - **Phase 5** — Streaming events. JSON-RPC server-pushed notifications on the same connection. Methods: `subscribe.services_changed`, `subscribe.logs(id)`, etc. Replaces polling. Adds FSEvents for the config file. Adds proper SSE-shaped log streaming.
 - **Phase 6** — MCP server binary. Stdio JSON-RPC. Thin wrapper that maps MCP tool calls to engine RPC. Per-method exposure decisions (e.g., `get_env_value` deliberately omitted).
 - **Phase 7** — Widget extension. App Group container for snapshot writes. Widget reads snapshot when engine is down; calls engine via App Intents otherwise. Tap-to-start/stop on the widget.
-- **Phase 8** — `SMAppService` registration. Engine becomes a launchd-managed background helper, registered/unregistered from the app's settings. App becomes a true client (no auto-spawn needed because engine is always up at login).
+- **Phase 8** — `SMAppService` registration. Engine spawn already works via Phase 3's `EngineLauncher`; Phase 8 hands supervision to launchd: start-at-login, respawn-on-crash, System Settings → Login Items integration, and a "Run engine at login" toggle in the app's settings.
 
 ---
 
 ## Open decisions
 
 - **Wire date format** — Currently using Foundation's default Date encoding (Swift reference-date numeric). Both engine and app are Swift so it round-trips. **But** if/when CLI or MCP are written in non-Swift later, this breaks. Decision: convert to ISO8601 strings before Phase 4 (CLI). Not urgent.
-- **`engine.shutdown` method** — Doesn't exist yet. Was originally tied to 2c; still deferred. Add before Phase 4 (CLI needs `matisa engine stop`).
 - **Log file ownership** — `~/Library/Logs/Matisa/<id>.log` — engine writes them now (2c). Phase 5 adds `services.logs.tail(id, n)` and `services.logs.subscribe(id)`.
 - **MCP confirmation gates** — Some destructive methods (`docker.daemon.stop`, `services.kill`) probably want confirmation prompts when called via MCP. Decide policy in Phase 6.
 - **Engine action errors aren't user-visible** *(2c.3 gap)* — When the engine returns a non-(-32001) RPC error (e.g. -32002 serviceNotFound, -32603 internalError) from a lifecycle call, the app currently just logs to stderr. The cleanest fix is a `engineActionErrors: [String: String]` map on `ServiceStore` (parallel to `launchFailures`) that the UI renders alongside the row, cleared on the next successful action. Pending Phase 3 (UI cleanup).
