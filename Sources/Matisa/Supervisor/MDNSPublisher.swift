@@ -74,6 +74,38 @@ final class MDNSPublisher {
         statuses[serviceID] = .idle
     }
 
+    /// Replace the status map with the engine's view, wholesale — **except**
+    /// for service ids whose local Process is still live. Those advertisements
+    /// were spawned by the local-fallback path during an engine-unreachable
+    /// window; the engine has no record of them, and wiping their status
+    /// would orphan the dns-sd child. Same shape as
+    /// `TunnelManager.replaceStatusesFromEngine`.
+    func replaceStatusesFromEngine(_ engineStatuses: [String: SameNetworkStatus]) {
+        var nextStatuses: [String: SameNetworkStatus] = [:]
+        var nextHostnames: [String: String] = [:]
+        // Preserve locally-spawned (and still alive) advertisements. Their
+        // hostnames live in the local `hostnames` map so refresh-on-IP-change
+        // continues to work for them.
+        for (id, status) in statuses {
+            if let proc = processes[id], proc.isRunning {
+                nextStatuses[id] = status
+                if let h = hostnames[id] { nextHostnames[id] = h }
+            }
+        }
+        // Overlay the engine's view. The engine owns its own advertisements
+        // and doesn't see app-spawned ones, so collisions only happen on
+        // engine-recovery — the engine's view wins in that rare case. We
+        // also lift the hostname out of the status payload so the local
+        // refresh-on-IP-change path has it if the user ever crosses back
+        // into a local-fallback session for the same service.
+        for (id, status) in engineStatuses {
+            nextStatuses[id] = status
+            if let h = status.hostname { nextHostnames[id] = h }
+        }
+        statuses = nextStatuses
+        hostnames = nextHostnames
+    }
+
     /// Re-spawn dns-sd processes after a network change, pointing at the new IP.
     /// No-op for services not currently advertising.
     func refreshAdvertisements() {

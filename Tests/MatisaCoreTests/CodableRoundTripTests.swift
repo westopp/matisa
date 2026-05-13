@@ -154,6 +154,27 @@ final class CodableRoundTripTests: XCTestCase {
         try roundTrip(SameNetworkStatus.error("no LAN interface"))
     }
 
+    // MARK: - SameNetworkStatusList (phase 2e.2 wire format)
+
+    func testSameNetworkStatusList_roundTrip() throws {
+        let list = SameNetworkStatusList(statuses: [
+            "project:web": .active(hostname: "web.matisa.local"),
+            "project:api": .advertising(hostname: "api.matisa.local"),
+            "docker:redis": .idle,
+            "project:broken": .error("no LAN interface available"),
+        ])
+        let data = try encoder.encode(list)
+        let decoded = try decoder.decode(SameNetworkStatusList.self, from: data)
+        XCTAssertEqual(decoded.statuses, list.statuses)
+    }
+
+    func testSameNetworkStatusList_empty_roundTrip() throws {
+        let list = SameNetworkStatusList(statuses: [:])
+        let data = try encoder.encode(list)
+        let decoded = try decoder.decode(SameNetworkStatusList.self, from: data)
+        XCTAssertEqual(decoded.statuses, list.statuses)
+    }
+
     // MARK: - ServiceExposure (composite — exercises both inner enums)
 
     func testServiceExposure_composite() throws {

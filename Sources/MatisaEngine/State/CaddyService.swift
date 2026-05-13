@@ -16,9 +16,10 @@ import MatisaCore
 ///     engine itself calls this (2e.2 hooks it up to mDNS toggles).
 ///
 /// Caddyfile rendering uses `CaddyfileGenerator` from MatisaCore. Exposures
-/// are passed in empty for 2d — Phase 2e.2 will route the engine's
-/// `MDNSPublisher` state through here so `<service>.matisa.local` blocks
-/// appear in the rendered output.
+/// come from the settable `loadExposures` closure — `Engine.init` wires
+/// it to a `TunnelService` + `MDNSService` merge so `<service>.matisa.local`
+/// and public-tunnel blocks appear in the rendered output. Defaults to an
+/// empty map for tests that don't care.
 ///
 /// Closure-injection on every collaborator keeps the tests self-contained —
 /// they don't need a real `ConfigService` round-tripping through bun or a
@@ -44,6 +45,18 @@ final class CaddyService: @unchecked Sendable {
     /// the queue so reads-and-writes can't race.
     private let queue = DispatchQueue(label: "engine.caddy")
     private var pendingRegen: Task<Void, Never>?
+
+    /// Closure that produces the exposures map fed into `CaddyfileGenerator`.
+    /// Backed by `queue` so writes from `Engine.init` (which runs after
+    /// CaddyService is constructed but before any RPC fires) can't race
+    /// reads from `regenerate`. Defaults to an empty map — the convenience
+    /// init leaves it empty until `Engine` wires `TunnelService` and
+    /// `MDNSService` in. Phase 2e.2 plumbing.
+    private var _loadExposures: @Sendable () -> [String: ServiceExposure] = { [:] }
+    var loadExposures: @Sendable () -> [String: ServiceExposure] {
+        get { queue.sync { _loadExposures } }
+        set { queue.sync { _loadExposures = newValue } }
+    }
 
     /// Debounce window for `scheduleRegenAndReload`. Same value the app used.
     private let debounceNS: UInt64
@@ -175,16 +188,20 @@ final class CaddyService: @unchecked Sendable {
     // MARK: - Regenerate
 
     /// Render the Caddyfile from current config + managed services and write
-    /// it atomically. Exposures are empty for 2d — 2e wires them in.
-    /// Returns the destination URL, or nil if no caddyfile is configured.
+    /// it atomically. Exposures come from the settable `loadExposures`
+    /// closure — `Engine.init` wires this to a `TunnelService.list` +
+    /// `MDNSService.list` merge in 2e.2 so `<service>.matisa.local` and
+    /// public-tunnel blocks land in the rendered file. Returns the
+    /// destination URL, or nil if no caddyfile is configured.
     @discardableResult
     func regenerate() async throws -> URL? {
         let config = try loadConfig()
         let snapshot = try loadServicesSnapshot()
+        let exposures = loadExposures()
         return try CaddyfileGenerator.write(
             config,
             services: snapshot.managed,
-            exposures: [:]
+            exposures: exposures
         )
     }
 

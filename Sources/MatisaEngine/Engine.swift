@@ -19,6 +19,7 @@ final class Engine {
     private let caddyService: CaddyService
     private let taskService = TaskService()
     private let tunnelService: TunnelService
+    private let mdnsService: MDNSService
     private let startedAt = Date()
 
     init() {
@@ -72,6 +73,51 @@ final class Engine {
         let tunnelService = self.tunnelService
         servicesService.postSnapshotHook = { managed in
             tunnelService.reconcileAfterSnapshot(managed)
+        }
+
+        // Phase 2e.2: same-network (mDNS). Constructed after CaddyService so
+        // `onStateChanged` can capture it weakly — every toggle / refresh /
+        // markActive transition fires the debounced regen+reload that's been
+        // dormant since Phase 2d. Unlike TunnelService there's no
+        // post-snapshot teardown hook: same-network registrations stay up
+        // even after the backing service stops (visitors get a Caddy 502
+        // rather than a DNS error, which is more diagnosable).
+        let caddyService = self.caddyService
+        self.mdnsService = MDNSService(
+            lookupService: { id in try servicesService.lookup(serviceID: id) },
+            loadLocalNetworkConfig: {
+                let bytes = try configService.get()
+                do {
+                    let raw = try JSONDecoder().decode(RawConfig.self, from: bytes)
+                    let app = try AppConfig.from(raw)
+                    return app.localNetwork
+                } catch {
+                    throw RPCError.internalError("config decode failed: \(error)")
+                }
+            },
+            onStateChanged: { [weak caddyService] in
+                caddyService?.scheduleRegenAndReload()
+            }
+        )
+
+        // Now that both exposure services exist, wire CaddyService's
+        // exposures source. Captures both services weakly so the closure
+        // doesn't extend their lifetime past Engine's. The filter mirrors
+        // the app's `activeExposuresByServiceID` — only services with at
+        // least one active leg show up in the Caddyfile.
+        let mdnsService = self.mdnsService
+        caddyService.loadExposures = { [weak tunnelService, weak mdnsService] in
+            let tunnels = tunnelService?.list() ?? [:]
+            let mdns = mdnsService?.list() ?? [:]
+            var out: [String: ServiceExposure] = [:]
+            let ids = Set(tunnels.keys).union(mdns.keys)
+            for id in ids {
+                out[id] = ServiceExposure(
+                    publicTunnel: tunnels[id] ?? .idle,
+                    sameNetwork: mdns[id] ?? .idle
+                )
+            }
+            return out.filter { $0.value.hasAnyActive }
         }
 
         // Capture dispatcher locally so the closure doesn't need self.
@@ -300,6 +346,24 @@ final class Engine {
         }
         dispatcher.register("exposure.public_tunnel.list") { [tunnelService] () -> PublicTunnelStatusList in
             PublicTunnelStatusList(statuses: tunnelService.list())
+        }
+
+        // Same-network (mDNS) — phase 2e.2. Engine spawns one `dns-sd -P`
+        // child per active hostname, watches for Wi-Fi switches / sleep-wake
+        // via NWPathMonitor, and fires CaddyService.scheduleRegenAndReload
+        // after every state mutation so the rendered Caddyfile picks up
+        // `<service>.matisa.local` blocks within the 150ms debounce window.
+        // Unlike public tunnels there's no auto-teardown when the backing
+        // service stops — same-network registrations stay up by design.
+        dispatcher.register("exposure.same_network.toggle") { [mdnsService] (p: ServiceIDParams) -> EmptyResponse in
+            mdnsService.toggle(serviceID: p.id)
+            return EmptyResponse()
+        }
+        dispatcher.register("exposure.same_network.status") { [mdnsService] (p: ServiceIDParams) -> SameNetworkStatus in
+            mdnsService.status(serviceID: p.id)
+        }
+        dispatcher.register("exposure.same_network.list") { [mdnsService] () -> SameNetworkStatusList in
+            SameNetworkStatusList(statuses: mdnsService.list())
         }
     }
 

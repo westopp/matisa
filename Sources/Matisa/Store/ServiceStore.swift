@@ -266,6 +266,20 @@ final class ServiceStore {
             tunnels.replaceStatusesFromEngine(list.statuses)
         }
 
+        // Phase 2e.2: mirror same-network (mDNS) statuses from the engine.
+        // Same preserve-locally-spawned-by-Process-liveness shape as the
+        // tunnel mirror — entries the local fallback created during an
+        // engine-unreachable window survive. Engine doesn't auto-teardown on
+        // service stop (visitors get a Caddy 502 rather than a DNS error),
+        // so there's no equivalent of the tunnel teardown block to skip.
+        if engineReachable,
+           let list = try? await EngineClient.shared.call(
+               "exposure.same_network.list",
+               as: SameNetworkStatusList.self
+           ) {
+            mdns.replaceStatusesFromEngine(list.statuses)
+        }
+
         // After the new states are committed, look at lifecycle transitions
         // to auto-tear-down public tunnels for services that just stopped.
         // Same-network registrations stay up — visitors get a Caddy 502
@@ -427,9 +441,33 @@ final class ServiceStore {
         )
     }
 
-    /// Toggle same-network exposure for a service. Adds / removes a
-    /// `<name>.matisa.local` mDNS advertisement and a matching Caddyfile block.
+    /// Toggle same-network exposure for a service. Engine-first; the
+    /// engine's `exposure.same_network.toggle` handles the dns-sd lifecycle
+    /// and fires its own internal Caddy regen+reload. On engine-unreachable,
+    /// runs the local MDNSPublisher path with an app-side debounce so we
+    /// still pick up the Caddyfile change.
     func toggleSameNetwork(_ service: Service) {
+        Task {
+            do {
+                _ = try await EngineClient.shared.call(
+                    "exposure.same_network.toggle",
+                    params: ServiceIDParams(id: service.id),
+                    as: EmptyResponse.self
+                )
+                return
+            } catch EngineClient.ClientError.rpcError(_, let msg) {
+                FileHandle.standardError.write(
+                    Data("ServiceStore: engine rpcError on exposure.same_network.toggle: \(msg)\n".utf8)
+                )
+                return
+            } catch {
+                // Transport / decode failure → fall through to local.
+            }
+            toggleSameNetworkLocal(service)
+        }
+    }
+
+    private func toggleSameNetworkLocal(_ service: Service) {
         let status = mdns.status(for: service.id)
         if status.isActive {
             mdns.unpublish(serviceID: service.id)
@@ -441,18 +479,22 @@ final class ServiceStore {
                 domain: localNetworkConfig.domain
             )
         }
-        scheduleCaddyRegen()
+        scheduleCaddyRegenLocal()
     }
 
-    /// Coalesce repeated regen+reload calls — the user toggling both modes for
-    /// one service should still result in one Caddy regen+reload, not two.
-    private func scheduleCaddyRegen() {
+    /// Local-fallback Caddy regen+reload debounce. The user toggling both
+    /// exposure modes for one service should still result in one regen and
+    /// one reload, not two. The engine handles its own debounce
+    /// internally (CaddyService.scheduleRegenAndReload, 150ms) — this
+    /// path only runs when the engine is unreachable and the local
+    /// MDNSPublisher / TunnelManager toggled state app-side.
+    private func scheduleCaddyRegenLocal() {
         caddyReloadTask?.cancel()
         caddyReloadTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
-            await self?.regenerateCaddyfile()
-            await self?.reloadCaddy()
+            await self?.regenerateCaddyfileLocal()
+            await self?.reloadCaddyLocal()
         }
     }
 
@@ -1749,15 +1791,26 @@ final class ServiceStore {
     }
 
     private func regenerateCaddyfile() async {
-        // Phase 2d note: the engine's caddy.regenerate renders with an empty
-        // exposures map because TunnelManager / MDNSPublisher still live
-        // app-side until 2e.1/2e.2. Routing through the engine here would
-        // wipe out `<service>.matisa.local` blocks the moment the user
-        // toggled same-network (scheduleCaddyRegen → here). Until 2e moves
-        // exposures into CaddyService.regenerate, always render locally —
-        // we already hold the authoritative exposures map. The engine's
-        // caddy.regenerate RPC stays registered for CLI / 2e use; the app
-        // just doesn't call it yet.
+        // Phase 2e.2: the engine's CaddyService.loadExposures now combines
+        // TunnelService.list() and MDNSService.list(), so engine-rendered
+        // Caddyfiles contain the runtime exposure blocks. Route through the
+        // engine first; fall back to the local renderer when the engine is
+        // unreachable (we still hold the authoritative exposures map in
+        // that branch).
+        do {
+            _ = try await EngineClient.shared.call(
+                "caddy.regenerate",
+                as: EmptyResponse.self
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(_, let msg) {
+            FileHandle.standardError.write(
+                Data("ServiceStore: engine rpcError on caddy.regenerate: \(msg)\n".utf8)
+            )
+            return
+        } catch {
+            // Fall through to local.
+        }
         await regenerateCaddyfileLocal()
     }
 

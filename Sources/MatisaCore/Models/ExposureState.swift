@@ -87,6 +87,20 @@ public enum SameNetworkStatus: Hashable, Sendable {
     }
 }
 
+/// Wire shape for `exposure.same_network.list` — wraps the service id →
+/// status map so the JSON-RPC `result` is always an object. Mirrors
+/// `PublicTunnelStatusList`. The engine returns the full per-service map
+/// (including idle entries that were ever active and haven't been
+/// cleared); the app's local MDNSPublisher mirrors the contents while
+/// preserving locally-spawned entries.
+public struct SameNetworkStatusList: Codable, Sendable {
+    public let statuses: [String: SameNetworkStatus]
+
+    public init(statuses: [String: SameNetworkStatus]) {
+        self.statuses = statuses
+    }
+}
+
 extension SameNetworkStatus: Codable {
     private enum Tag: String, Codable { case idle, advertising, active, error }
     private enum CodingKeys: String, CodingKey { case type, hostname, message }
