@@ -108,4 +108,122 @@ final class PersistedSpawnStoreTests: XCTestCase {
         let state = store.load()
         XCTAssertEqual(state.spawns, [], "non-iso8601 dates must fail to decode")
     }
+
+    // MARK: - Writes (upsert / remove / atomic / concurrent)
+
+    private func sampleSpawn(_ id: String, pid: Int32 = 100, port: Int? = nil) -> PersistedSpawn {
+        PersistedSpawn(
+            serviceID: id,
+            pid: pid,
+            port: port,
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            logPath: "/Users/u/Library/Logs/Matisa/\(id).log"
+        )
+    }
+
+    func testUpsert_onEmptyStore_appendsSpawn() {
+        let url = tempStateFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = PersistedSpawnStore(stateFile: url)
+
+        let spawn = sampleSpawn("project:web", pid: 4242, port: 5173)
+        store.upsert(spawn)
+
+        let reloaded = PersistedSpawnStore(stateFile: url).load()
+        XCTAssertEqual(reloaded.version, 1)
+        XCTAssertEqual(reloaded.spawns, [spawn])
+    }
+
+    func testUpsert_replacingExistingSpawn_byServiceID() {
+        let url = tempStateFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = PersistedSpawnStore(stateFile: url)
+
+        store.upsert(sampleSpawn("project:web", pid: 1, port: 5173))
+        store.upsert(sampleSpawn("project:web", pid: 9999, port: 6000))
+
+        let state = store.load()
+        XCTAssertEqual(state.spawns.count, 1)
+        XCTAssertEqual(state.spawns.first?.pid, 9999)
+        XCTAssertEqual(state.spawns.first?.port, 6000)
+    }
+
+    func testUpsert_appendingDistinctServiceIDs() {
+        let url = tempStateFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = PersistedSpawnStore(stateFile: url)
+
+        store.upsert(sampleSpawn("project:web", pid: 1))
+        store.upsert(sampleSpawn("project:api", pid: 2))
+        store.upsert(sampleSpawn("project:worker", pid: 3))
+
+        let ids = Set(store.spawns().map(\.serviceID))
+        XCTAssertEqual(ids, ["project:web", "project:api", "project:worker"])
+    }
+
+    func testRemove_existingServiceID() {
+        let url = tempStateFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = PersistedSpawnStore(stateFile: url)
+        store.upsert(sampleSpawn("project:web", pid: 1))
+        store.upsert(sampleSpawn("project:api", pid: 2))
+
+        store.remove(serviceID: "project:web")
+
+        XCTAssertEqual(store.spawns().map(\.serviceID), ["project:api"])
+    }
+
+    func testRemove_unknownServiceID_isNoOp() {
+        let url = tempStateFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = PersistedSpawnStore(stateFile: url)
+        store.upsert(sampleSpawn("project:web", pid: 1))
+
+        store.remove(serviceID: "does-not-exist")
+
+        XCTAssertEqual(store.spawns().count, 1)
+        XCTAssertEqual(store.spawns().first?.serviceID, "project:web")
+    }
+
+    func testAtomicReplace_lastWriteWinsAcrossInstances() {
+        let url = tempStateFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        // First instance writes initial state.
+        let writer = PersistedSpawnStore(stateFile: url)
+        writer.upsert(sampleSpawn("project:web", pid: 1, port: 5173))
+
+        // Fresh instance overwrites the same serviceID with new content.
+        let writer2 = PersistedSpawnStore(stateFile: url)
+        writer2.upsert(sampleSpawn("project:web", pid: 42, port: 5174))
+
+        // A reader that came after both writes sees only the latest payload.
+        let reader = PersistedSpawnStore(stateFile: url)
+        let final = reader.load()
+        XCTAssertEqual(final.spawns.count, 1)
+        XCTAssertEqual(final.spawns.first?.pid, 42)
+        XCTAssertEqual(final.spawns.first?.port, 5174)
+
+        // No leftover `.tmp` from the atomic rename.
+        let tmp = url.path + ".tmp"
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tmp), "stray .tmp file should not survive rename")
+    }
+
+    func testConcurrentUpserts_finalStateHasAll() {
+        let url = tempStateFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = PersistedSpawnStore(stateFile: url)
+
+        let n = 100
+        DispatchQueue.concurrentPerform(iterations: n) { i in
+            store.upsert(sampleSpawn("svc:\(i)", pid: Int32(i + 1)))
+        }
+
+        let state = store.load()
+        XCTAssertEqual(state.spawns.count, n)
+        let ids = Set(state.spawns.map(\.serviceID))
+        for i in 0..<n {
+            XCTAssertTrue(ids.contains("svc:\(i)"), "missing svc:\(i)")
+        }
+    }
 }
