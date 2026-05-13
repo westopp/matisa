@@ -1,18 +1,11 @@
 import Foundation
+import MatisaCore
 
-struct PersistedSpawn: Codable, Hashable, Sendable {
-    let serviceID: String
-    let pid: Int32
-    let port: Int?
-    let startedAt: Date
-    let logPath: String
-}
-
-struct PersistedState: Codable, Sendable {
-    var version: Int = 1
-    var spawns: [PersistedSpawn] = []
-}
-
+/// App-side reader/writer for `state.json`. The on-disk shape lives in
+/// `MatisaCore.PersistedSpawn` / `PersistedState` so the engine can read the
+/// same file. Today the app still owns writes; once Phase 2c moves lifecycle
+/// into the engine, the writers move with it and this file becomes read-only
+/// (used only by the local-fallback path).
 enum StatePersistence {
     static func load() -> PersistedState {
         let url = Paths.stateFile

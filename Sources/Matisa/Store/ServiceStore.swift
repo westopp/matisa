@@ -8,7 +8,6 @@ import AppKit
 final class ServiceStore {
     var services: [Service] = []
     var unmanaged: [Service] = []
-    var lastRefresh: Date?
     var isRefreshing: Bool = false
     var configError: ConfigError?
     var caddyService: CaddyServiceInfo = CaddyServiceInfo(running: false, configFile: nil)
@@ -112,9 +111,10 @@ final class ServiceStore {
     func refresh() async {
         if isRefreshing { return }
         isRefreshing = true
-        defer { isRefreshing = false; lastRefresh = Date() }
+        defer { isRefreshing = false }
 
-        // Config
+        // Config — still loaded app-side for caddy/tunnel/local-network UI
+        // state, which the engine doesn't own until Phases 2d/2e.
         let config: AppConfig
         do {
             config = try await configLoader.load()
@@ -131,141 +131,59 @@ final class ServiceStore {
             return
         }
 
-        // Discovery — phase 2b.1: prefer one engine round-trip over five
-        // sequential local probes; fall back to local on engine-unreachable.
-        // The engine-side cache (1s TTL) means concurrent app refreshes share
-        // a single set of underlying shell-outs.
+        // Discovery — still gathered for brewServices (the caddy indicator)
+        // and as the input for the local-merge fallback path below. Hits the
+        // engine's cached snapshot when reachable.
         let inputs = await gatherDiscovery()
 
-        // Daemon-state machine: only let probe results override the indicator
+        // Phase 2b.2: prefer the engine's merged snapshot; fall back to the
+        // same merge run locally on engine-unreachable.
+        let managed: [Service]
+        let unmanagedList: [Service]
+        let dockerDaemonRunning: Bool
+        if let snap = try? await EngineClient.shared.call(
+            "services.snapshot",
+            as: ServicesSnapshot.self
+        ) {
+            managed = snap.managed
+            unmanagedList = snap.unmanaged
+            dockerDaemonRunning = snap.dockerDaemonRunning
+        } else {
+            let result = await localMerge(config: config, snapshot: inputs)
+            managed = result.managed
+            unmanagedList = result.unmanaged
+            dockerDaemonRunning = inputs.dockerDaemonRunning
+        }
+
+        // Daemon-state machine: only let the probe override the indicator
         // when we're not in a deliberate UI state (`.starting`, `.startFailed`).
-        // Same logic as before — the inputs.dockerDaemonRunning bool just
-        // replaces the await DockerProbe.daemonRunning() calls.
         if !dockerSystem.isStarting && !dockerSystem.isStartFailed {
-            dockerSystem = inputs.dockerDaemonRunning ? .running : .stopped
+            dockerSystem = dockerDaemonRunning ? .running : .stopped
         } else if dockerSystem.isStartFailed {
             // Daemon may have come up some other way (user opened Docker
             // Desktop manually) — let that override the stale failure label.
-            if inputs.dockerDaemonRunning {
+            if dockerDaemonRunning {
                 dockerSystem = .running
             }
         }
 
-        let ports = inputs.ports
-        let containers = dockerSystem.isRunning ? inputs.containers : []
-        let composeStacks = dockerSystem.isRunning ? inputs.composeStacks : []
-        let brew = inputs.brewServices
-        let persisted = StatePersistence.load()
-
-        var built: [Service] = []
-        var matchedPIDs: Set<Int32> = []
-        var matchedManagedPorts: Set<Int> = []
-
-        for spec in config.services {
-            switch spec {
-            case .project(let f):
-                let listening = ports.first(where: { $0.port == f.port })
-                let id = "project:\(f.name)"
-                let ourSpawn = persisted.spawns.first(where: { $0.serviceID == id })
-                let ourSpawnAlive: PersistedSpawn? = ourSpawn.flatMap {
-                    ProcessSupervisor.isAlive(pid: $0.pid) ? $0 : nil
-                }
-
-                // If we have a live spawn for this service, it's ours regardless
-                // of whether lsof has caught up yet (vite takes a few seconds to
-                // bind) and regardless of whether the listening PID matches ours
-                // (npm spawns vite as a child, so PIDs differ).
-                let state: ServiceState
-                if let alive = ourSpawnAlive {
-                    if let lp = listening {
-                        matchedPIDs.insert(lp.pid)
-                        matchedManagedPorts.insert(lp.port)
-                    }
-                    state = .running(pid: alive.pid, since: alive.startedAt)
-                } else if let lp = listening {
-                    // Something else is on our port.
-                    matchedPIDs.insert(lp.pid)
-                    matchedManagedPorts.insert(lp.port)
-                    if ourSpawn != nil { StatePersistence.remove(serviceID: id) }
-                    state = .unmanaged(pid: lp.pid)
-                } else {
-                    if ourSpawn != nil { StatePersistence.remove(serviceID: id) }
-                    state = .stopped
-                }
-
-                built.append(Service(
-                    spec: spec,
-                    state: state,
-                    logsPath: Paths.logFile(for: id)
-                ))
-
-            case .docker(let f):
-                let cname = DockerProbe.inlineContainerName(f.name)
-                let container = containers.first(where: { $0.name == cname })
-                let listening = ports.first(where: { $0.port == f.port })
-                let state: ServiceState
-                if let container, container.isRunning {
-                    if let lp = listening { matchedPIDs.insert(lp.pid); matchedManagedPorts.insert(lp.port) }
-                    state = .running(pid: 0, since: lastRefresh ?? Date())
-                } else if let lp = listening {
-                    // Something else is on this port.
-                    matchedPIDs.insert(lp.pid)
-                    matchedManagedPorts.insert(lp.port)
-                    state = .unmanaged(pid: lp.pid)
-                } else {
-                    state = .stopped
-                }
-                built.append(Service(
-                    spec: spec,
-                    state: state,
-                    logsPath: Paths.logFile(for: "docker:\(f.name)")
-                ))
-
-            case .compose(let f):
-                // Match by file path, not by name: the compose file may set
-                // its own project name via the top-level `name:` directive,
-                // which docker uses regardless of what matisa's config calls
-                // the service. The file path is the most reliable correlation.
-                let stack = composeStacks.first(where: { Self.stackMatches($0, file: f.file) })
-                let isRunning = stack.map { $0.status.lowercased().contains("running") } ?? false
-                if isRunning {
-                    for cp in f.ports {
-                        if let lp = ports.first(where: { $0.port == cp.host }) {
-                            matchedPIDs.insert(lp.pid); matchedManagedPorts.insert(lp.port)
-                        }
-                    }
-                }
-                let state: ServiceState = isRunning
-                    ? .running(pid: 0, since: lastRefresh ?? Date())
-                    : .stopped
-                built.append(Service(
-                    spec: spec,
-                    state: state,
-                    logsPath: Paths.logFile(for: "compose:\(f.name)")
-                ))
-
-            case .unmanaged:
-                continue
-            }
-        }
-
-        // Caddy info
-        let caddy = brew.first(where: { $0.name == "caddy" })
+        // Caddy / tunnel / local-network — app-owned until Phases 2d/2e.
+        let caddy = inputs.brewServices.first(where: { $0.name == "caddy" })
         self.caddyService = CaddyServiceInfo(
             running: caddy?.isRunning ?? false,
             configFile: config.caddyfile
         )
-
         self.tunnelConfig = config.tunnel
         self.localNetworkConfig = config.localNetwork
 
-        self.services = built.sorted(by: managedSortKey)
+        self.services = managed
+        self.unmanaged = unmanagedList
 
         // After the new states are committed, look at lifecycle transitions
         // to auto-tear-down public tunnels for services that just stopped.
         // Same-network registrations stay up — visitors get a Caddy 502
         // rather than a DNS error, which is more diagnosable.
-        for svc in built {
+        for svc in managed {
             let prev = lastSeenStateByID[svc.id]
             let nowRunning = svc.state.isRunning
             let wasRunning = prev?.isRunning ?? false
@@ -276,72 +194,43 @@ final class ServiceStore {
             }
             lastSeenStateByID[svc.id] = svc.state
         }
+    }
 
-        // Unmanaged processes: dev-y listening ports we haven't matched.
-        var unmanagedBuilt: [Service] = []
+    /// Local-fallback merge. Runs the same `ServiceMerge.merge` the engine
+    /// uses, against locally-gathered inputs. Also cleans up dead persisted
+    /// spawns the merge identifies — the engine ignores `deadSpawnIDs` in
+    /// Phase 2b.2 since the file is app-owned.
+    private func localMerge(
+        config: AppConfig,
+        snapshot: DiscoverySnapshot
+    ) async -> ServiceMerge.Result {
+        let spawns = StatePersistence.load().spawns
+        let liveSpawnPIDs = Set(
+            spawns.filter { ProcessSupervisor.isAlive(pid: $0.pid) }.map(\.pid)
+        )
+
+        var candidates: [Int32] = []
         var seenPIDs: Set<Int32> = []
-        var pidsToResolve: [Int32] = []
-        var processCommandByPID: [Int32: (command: String, port: Int)] = [:]
-        for lp in ports where !matchedPIDs.contains(lp.pid) && !matchedManagedPorts.contains(lp.port) {
-            guard UnmanagedHeuristics.looksLikeDevServer(lp) else { continue }
-            if lp.pid <= 1 { continue }
-            if seenPIDs.contains(lp.pid) { continue }
-            seenPIDs.insert(lp.pid)
-            pidsToResolve.append(lp.pid)
-            processCommandByPID[lp.pid] = (lp.command, lp.port)
+        for lp in snapshot.ports
+        where UnmanagedHeuristics.looksLikeDevServer(lp)
+            && lp.pid > 1
+            && seenPIDs.insert(lp.pid).inserted {
+            candidates.append(lp.pid)
         }
+        let appNames = await ProcessIntrospect.resolveAppNames(for: candidates)
 
-        let appNames = await ProcessIntrospect.resolveAppNames(for: pidsToResolve)
-        for pid in pidsToResolve {
-            guard let info = processCommandByPID[pid] else { continue }
-            unmanagedBuilt.append(Service(
-                spec: .unmanaged(UnmanagedFields(
-                    kind: .process(
-                        pid: pid,
-                        command: info.command,
-                        port: info.port,
-                        appName: appNames[pid]
-                    )
-                )),
-                state: .unmanaged(pid: pid),
-                logsPath: nil
-            ))
-        }
+        let result = ServiceMerge.merge(
+            config: config,
+            snapshot: snapshot,
+            spawns: spawns,
+            liveSpawnPIDs: liveSpawnPIDs,
+            appNamesByPID: appNames
+        )
 
-        // Unmanaged containers: every container we don't own, running or
-        // stopped, so the user can flip them on/off from one place. Use the
-        // *actual* docker project name (resolved via file-path match) when
-        // available — falls back to the matisa-config name when the stack
-        // hasn't been brought up yet (in which case there's no container to
-        // claim against this entry anyway).
-        let knownComposeNames = Set(config.services.compactMap { spec -> String? in
-            guard case .compose(let f) = spec else { return nil }
-            if let stack = composeStacks.first(where: { Self.stackMatches($0, file: f.file) }) {
-                return stack.name
-            }
-            return f.name
-        })
-        for c in containers {
-            if c.name.hasPrefix("matisa.") { continue }
-            if knownComposeNames.contains(where: {
-                c.name.hasPrefix("\($0)-") || c.name.hasPrefix("\($0)_") || c.name == $0
-            }) { continue }
-            let port = parseFirstHostPort(c.ports)
-            let cstate: ServiceState = c.isRunning
-                ? .running(pid: 0, since: lastRefresh ?? Date())
-                : .stopped
-            unmanagedBuilt.append(Service(
-                spec: .unmanaged(UnmanagedFields(
-                    kind: .container(name: c.name, image: c.image, port: port)
-                )),
-                state: cstate,
-                logsPath: nil
-            ))
+        for id in result.deadSpawnIDs {
+            StatePersistence.remove(serviceID: id)
         }
-
-        self.unmanaged = unmanagedBuilt.sorted { lhs, rhs in
-            (lhs.spec.exposedPorts.first?.port ?? 0) < (rhs.spec.exposedPorts.first?.port ?? 0)
-        }
+        return result
     }
 
     /// Phase 2b.1: gather all discovery probe results in one call. Tries the
@@ -371,40 +260,6 @@ final class ServiceStore {
             dockerDaemonRunning: dockerUp,
             takenAt: Date()
         )
-    }
-
-    /// Parse the first host port from docker's `Ports` string, e.g.
-    /// "0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp" → 5432.
-    private func parseFirstHostPort(_ raw: String) -> Int? {
-        // Look for "<addr>:<port>->" patterns, return the first <port>.
-        for chunk in raw.split(separator: ",") {
-            let s = chunk.trimmingCharacters(in: .whitespaces)
-            guard let arrow = s.range(of: "->") else { continue }
-            let left = s[..<arrow.lowerBound]
-            guard let colon = left.lastIndex(of: ":") else { continue }
-            let portStr = left[left.index(after: colon)...]
-            if let p = Int(portStr) { return p }
-        }
-        return nil
-    }
-
-    /// True when `stack`'s `ConfigFiles` list (comma-separated) contains the
-    /// given matisa compose-file URL. Path comparison is plain string equality
-    /// against the URL's `.path` — symlinked compose files may not match, but
-    /// that's not a practical concern in dev setups.
-    static func stackMatches(_ stack: DockerComposeStack, file: URL) -> Bool {
-        let target = file.path
-        return stack.configFiles.split(separator: ",").contains { chunk in
-            chunk.trimmingCharacters(in: .whitespaces) == target
-        }
-    }
-
-    private func managedSortKey(_ a: Service, _ b: Service) -> Bool {
-        let order: [ServiceKind: Int] = [.project: 0, .docker: 1, .compose: 2, .unmanaged: 99]
-        let ak = order[a.kind] ?? 99
-        let bk = order[b.kind] ?? 99
-        if ak != bk { return ak < bk }
-        return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
     }
 
     // MARK: - Public actions

@@ -126,7 +126,11 @@ enum DockerProbe {
 
     /// Container name we use for an inline docker service. Prefixed so we can
     /// recognise our own and avoid collisions with the user's manual containers.
-    static func inlineContainerName(_ name: String) -> String { "matisa.\(name)" }
+    /// Naming convention lives in `MatisaCore.MatisaContainer` so the engine
+    /// merge sees the same prefix.
+    static func inlineContainerName(_ name: String) -> String {
+        MatisaContainer.name(for: name)
+    }
 
     /// Start an inline container. If a container with the same managed name
     /// exists (stopped), reuse it via `start`; otherwise `run -d`.

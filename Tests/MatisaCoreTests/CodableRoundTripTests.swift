@@ -295,4 +295,96 @@ final class CodableRoundTripTests: XCTestCase {
             takenAt: Date(timeIntervalSince1970: 0)
         ))
     }
+
+    // MARK: - Service / ServicesSnapshot / PersistedSpawn (phase 2b.2)
+
+    func testService_roundTrip() throws {
+        let svc = Service(
+            spec: .project(ProjectFields(
+                name: "web", path: URL(fileURLWithPath: "/tmp/web"),
+                port: 5173, url: nil, command: "npm run dev",
+                build: nil, scripts: [], group: nil, env: nil
+            )),
+            state: .running(pid: 4242, since: Date(timeIntervalSince1970: 1_700_000_000)),
+            logsPath: URL(fileURLWithPath: "/tmp/Logs/project-web.log")
+        )
+        try roundTrip(svc)
+    }
+
+    func testService_logsPathNil_roundTrips() throws {
+        let svc = Service(
+            spec: .unmanaged(UnmanagedFields(
+                kind: .process(pid: 1234, command: "node", port: 3001, appName: nil)
+            )),
+            state: .unmanaged(pid: 1234),
+            logsPath: nil
+        )
+        try roundTrip(svc)
+    }
+
+    func testServicesSnapshot_roundTrip() throws {
+        let snap = ServicesSnapshot(
+            managed: [
+                Service(
+                    spec: .docker(DockerFields(
+                        name: "redis", image: "redis:7", port: 6379,
+                        url: nil, scripts: [], group: nil
+                    )),
+                    state: .running(pid: 0, since: Date(timeIntervalSince1970: 1_700_000_000)),
+                    logsPath: URL(fileURLWithPath: "/tmp/Logs/docker-redis.log")
+                )
+            ],
+            unmanaged: [
+                Service(
+                    spec: .unmanaged(UnmanagedFields(
+                        kind: .container(name: "rogue", image: "alpine:3.19", port: 8080)
+                    )),
+                    state: .running(pid: 0, since: Date(timeIntervalSince1970: 1_700_000_000)),
+                    logsPath: nil
+                )
+            ],
+            dockerDaemonRunning: true,
+            takenAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        try roundTrip(snap)
+    }
+
+    func testServicesSnapshot_emptyLists_roundTrips() throws {
+        try roundTrip(ServicesSnapshot(
+            managed: [], unmanaged: [],
+            dockerDaemonRunning: false,
+            takenAt: Date(timeIntervalSince1970: 0)
+        ))
+    }
+
+    func testPersistedSpawn_roundTrip() throws {
+        try roundTrip(PersistedSpawn(
+            serviceID: "project:web", pid: 4242, port: 5173,
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            logPath: "/tmp/Logs/project-web.log"
+        ))
+    }
+
+    func testPersistedSpawn_portNil_roundTrips() throws {
+        try roundTrip(PersistedSpawn(
+            serviceID: "project:cron", pid: 99, port: nil,
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            logPath: "/tmp/Logs/project-cron.log"
+        ))
+    }
+
+    func testPersistedState_roundTrip() throws {
+        try roundTrip(PersistedState(version: 1, spawns: [
+            PersistedSpawn(
+                serviceID: "project:web", pid: 1, port: 3000,
+                startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+                logPath: "/a.log"
+            ),
+            PersistedSpawn(
+                serviceID: "project:api", pid: 2, port: 4000,
+                startedAt: Date(timeIntervalSince1970: 1_700_000_001),
+                logPath: "/b.log"
+            ),
+        ]))
+    }
 }

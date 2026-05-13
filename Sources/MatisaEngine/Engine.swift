@@ -13,10 +13,15 @@ final class Engine {
     private let server: UnixSocketServer
     private let configService = ConfigService()
     private let discoveryService = DiscoveryService()
+    private let servicesService: ServicesService
     private let startedAt = Date()
 
     init() {
         self.socketPath = Engine.resolveSocketPath()
+        self.servicesService = ServicesService(
+            configService: configService,
+            discoveryService: discoveryService
+        )
 
         // Capture dispatcher locally so the closure doesn't need self.
         let dispatcher = self.dispatcher
@@ -71,20 +76,20 @@ final class Engine {
             try configService.get()
         }
 
-        // projects.list / services.list — placeholder. Phase 2b.2 will replace
-        // this with the real merged spec+state list once the merge logic
-        // moves out of the app's ServiceStore and into the engine. Returning
-        // empty for now so clients don't see stub data.
-        dispatcher.register("services.list") { () -> ServiceList in
-            ServiceList(services: [])
+        // services.snapshot — phase 2b.2. The merged service list: config
+        // services with their current ServiceState, plus synthesised
+        // unmanaged entries for foreign dev processes and containers. One
+        // round-trip replaces the app's previous config + discovery + merge
+        // loop. App's ServiceStore consumes this directly; falls back to
+        // running the same merge locally when the engine is unreachable.
+        dispatcher.register("services.snapshot") { [servicesService] () -> ServicesSnapshot in
+            try servicesService.snapshot()
         }
 
-        // discovery.snapshot — phase 2b.1. Single-call merge of all four
-        // probes (lsof, docker ps, docker compose ls, brew services list)
-        // plus the docker daemon-running flag. Server-side TTL cache means
-        // multiple clients during the same refresh tick share one round of
-        // shell-outs. App's ServiceStore.refresh() reads this and runs its
-        // existing merge logic against the result.
+        // discovery.snapshot — phase 2b.1. Raw probe results. The app's
+        // local-fallback path still uses this when services.snapshot fails,
+        // so the merge can run against engine-cached discovery even if the
+        // engine's services.snapshot itself failed (e.g. config error).
         dispatcher.register("discovery.snapshot") { [discoveryService] () -> DiscoverySnapshot in
             discoveryService.snapshot()
         }
