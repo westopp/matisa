@@ -24,6 +24,7 @@ final class EngineMirror {
     struct Snapshot {
         let services: ServicesSnapshot?
         let launchFailures: [String: LaunchFailure]?
+        let engine: EngineStatusInfo?
         let dockerSystem: DockerSystemState?
         let caddy: CaddyServiceInfo?
         let publicTunnels: [String: PublicTunnelStatus]?
@@ -60,6 +61,7 @@ final class EngineMirror {
             return Snapshot(
                 services: nil,
                 launchFailures: nil,
+                engine: nil,
                 dockerSystem: nil,
                 caddy: nil,
                 publicTunnels: nil,
@@ -67,6 +69,13 @@ final class EngineMirror {
                 tasksByServiceID: [:]
             )
         }
+
+        // Engine status — version, uptime, ok flag. Cheap; pulled every
+        // refresh so the System group's Engine row reflects current state.
+        let engineStatus = try? await EngineClient.shared.call(
+            "engine.status",
+            as: EngineStatusInfo.self
+        )
 
         // Engine is the authority on launch failures when reachable —
         // replace the local map wholesale. Best-effort: on transport
@@ -134,6 +143,7 @@ final class EngineMirror {
         return Snapshot(
             services: snap,
             launchFailures: failures,
+            engine: engineStatus,
             dockerSystem: dockerState,
             caddy: caddy,
             publicTunnels: tunnels,

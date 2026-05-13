@@ -12,6 +12,8 @@ final class ServiceStore {
     var configError: ConfigError?
     var caddyService: CaddyServiceInfo = CaddyServiceInfo(running: false, configFile: nil)
 
+    var engineStatus: EngineStatusInfo? = nil
+
     /// Docker daemon (Docker Desktop or any compatible provider) lifecycle
     /// state. Drives the System panel indicator and gates docker/compose
     /// actions — when the daemon is down, the user is prompted to start it.
@@ -223,6 +225,15 @@ final class ServiceStore {
                     dockerSystem = .running
                 }
             }
+        }
+
+        // Engine status — mirrored verbatim from engine.status when the
+        // engine is reachable, cleared when it isn't (Engine row in the
+        // System group reads this to decide running/stopped UI).
+        if engineReachable {
+            self.engineStatus = mirror.engine
+        } else {
+            self.engineStatus = nil
         }
 
         // Phase 2d: the engine owns the Caddy status snapshot when reachable.

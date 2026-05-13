@@ -277,3 +277,12 @@ struct TaskCancelClientParams: Encodable {
     let id: String
     let kind: MatisaCore.TaskKind
 }
+
+/// Mirror of the engine's `EngineStatus`. Decoded from `engine.status` RPC
+/// responses. Kept in lock-step with the engine-side type in
+/// `Sources/MatisaEngine/Methods.swift`.
+struct EngineStatusInfo: Decodable {
+    let status: String
+    let version: String
+    let uptimeSeconds: Int
+}
