@@ -95,4 +95,97 @@ enum EngineLauncher {
         }
         return result == 0
     }
+
+    enum LaunchError: Error, CustomStringConvertible {
+        case binaryNotFound
+        case spawnFailed(Int32, String)
+        case didNotComeUp(String)
+
+        var description: String {
+            switch self {
+            case .binaryNotFound:
+                return "matisa-engine binary not found (set MATISA_ENGINE_BINARY or build the app bundle)"
+            case .spawnFailed(let code, let msg):
+                return "posix_spawn failed rc=\(code): \(msg)"
+            case .didNotComeUp(let path):
+                return "engine spawned but socket at \(path) never became reachable"
+            }
+        }
+    }
+
+    struct LaunchResult {
+        let alreadyRunning: Bool
+        let didSpawn: Bool
+    }
+
+    /// Ensures the engine is reachable at `socketPath`. If it's not, locates
+    /// the binary, spawns it detached, and polls the socket up to `timeout`
+    /// seconds for readiness.
+    ///
+    /// Safe to call concurrently or repeatedly: over-spawn is harmless because
+    /// the engine's `flock` on `<sock>.lock` rejects duplicate instances.
+    static func ensureRunning(
+        socketPath: String,
+        timeout: TimeInterval = 5.0
+    ) async throws -> LaunchResult {
+        if probeConnect(path: socketPath) {
+            return LaunchResult(alreadyRunning: true, didSpawn: false)
+        }
+
+        guard let binary = resolveBinaryURL() else {
+            throw LaunchError.binaryNotFound
+        }
+
+        try spawnDetached(binary: binary)
+
+        if await waitForSocketReady(path: socketPath, timeout: timeout) {
+            return LaunchResult(alreadyRunning: false, didSpawn: true)
+        }
+        throw LaunchError.didNotComeUp(socketPath)
+    }
+
+    /// posix_spawn the engine in its own session so it survives the app.
+    /// stdout/stderr redirected to /dev/null — the engine writes its own
+    /// log file via the OS_LOG / FileHandle.standardError path it already
+    /// uses; we don't need its noise in the app's console.
+    private static func spawnDetached(binary: URL) throws {
+        var fileActions: posix_spawn_file_actions_t? = nil
+        posix_spawn_file_actions_init(&fileActions)
+        defer { posix_spawn_file_actions_destroy(&fileActions) }
+        posix_spawn_file_actions_addopen(&fileActions, 0, "/dev/null", O_RDONLY, 0)
+        posix_spawn_file_actions_addopen(&fileActions, 1, "/dev/null", O_WRONLY, 0)
+        posix_spawn_file_actions_addopen(&fileActions, 2, "/dev/null", O_WRONLY, 0)
+
+        var attr: posix_spawnattr_t? = nil
+        posix_spawnattr_init(&attr)
+        defer { posix_spawnattr_destroy(&attr) }
+        // SETSID: new session, detached from app's controlling terminal /
+        // process group. When the app quits, the engine survives and is
+        // reparented to launchd.
+        posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID))
+
+        // Inherit the user's environment so the engine sees PATH etc.
+        let env = ProcessInfo.processInfo.environment
+        let envStrings: [String] = env.map { "\($0.key)=\($0.value)" }
+        let envCArray = envStrings.map { strdup($0) }
+        defer { envCArray.forEach { free($0) } }
+        var envPtrs: [UnsafeMutablePointer<CChar>?] = envCArray + [nil]
+
+        let argv: [UnsafeMutablePointer<CChar>?] = [
+            strdup(binary.path),
+            nil
+        ]
+        defer { argv.forEach { if let p = $0 { free(p) } } }
+
+        var pid: pid_t = 0
+        let rc = posix_spawn(&pid, binary.path, &fileActions, &attr,
+                             argv, &envPtrs)
+        if rc != 0 {
+            throw LaunchError.spawnFailed(
+                rc,
+                String(cString: strerror(rc))
+            )
+        }
+        // Deliberately don't wait — the engine is meant to outlive us.
+    }
 }

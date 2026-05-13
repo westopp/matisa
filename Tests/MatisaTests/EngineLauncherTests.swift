@@ -92,4 +92,58 @@ final class EngineLauncherTests: XCTestCase {
         // Defers: close(listenerFD) runs first → accept returns -1 → detached
         // task exits. Then unlink(sockPath) cleans up the inode.
     }
+
+    /// Integration test: locate the actual built engine binary, spawn it
+    /// with a temp socket path, verify it comes up, then SIGTERM it.
+    func testEnsureRunningSpawnsTheEngine() async throws {
+        guard let binary = locateBuiltEngineBinary() else {
+            throw XCTSkip("matisa-engine binary not built; run `swift build`")
+        }
+
+        let sockPath = NSTemporaryDirectory()
+            + "lt-\(UUID().uuidString).sock"
+        defer {
+            unlink(sockPath)
+            unlink(sockPath + ".lock")
+        }
+
+        setenv("MATISA_ENGINE_BINARY", binary.path, 1)
+        setenv("MATISA_SOCKET", sockPath, 1)
+        defer {
+            unsetenv("MATISA_ENGINE_BINARY")
+            unsetenv("MATISA_SOCKET")
+        }
+
+        let result = try await EngineLauncher.ensureRunning(
+            socketPath: sockPath,
+            timeout: 5.0
+        )
+        XCTAssertTrue(result.didSpawn || result.alreadyRunning)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sockPath))
+
+        // Tear down: SIGTERM the engine via its pidfile contents. The
+        // .lock file holds the engine's PID.
+        if let pidStr = try? String(contentsOfFile: sockPath + ".lock"),
+           let pid = pid_t(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            kill(pid, SIGTERM)
+            // Best-effort wait for shutdown.
+            for _ in 0..<40 where kill(pid, 0) == 0 {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+    }
+
+    private func locateBuiltEngineBinary() -> URL? {
+        let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        for config in ["debug", "release"] {
+            let candidate = cwd
+                .appendingPathComponent(".build")
+                .appendingPathComponent(config)
+                .appendingPathComponent("matisa-engine")
+            if FileManager.default.isExecutableFile(atPath: candidate.path) {
+                return candidate
+            }
+        }
+        return nil
+    }
 }
