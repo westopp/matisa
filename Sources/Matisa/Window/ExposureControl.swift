@@ -1,4 +1,5 @@
 import SwiftUI
+import MatisaCore
 import AppKit
 import CoreImage
 import CoreImage.CIFilterBuiltins

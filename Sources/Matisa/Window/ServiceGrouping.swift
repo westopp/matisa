@@ -1,4 +1,5 @@
 import Foundation
+import MatisaCore
 
 /// A bucket of services that share the same group name (after
 /// trim+lowercase comparison). `displayName` is the first-seen casing.

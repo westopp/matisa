@@ -1,4 +1,5 @@
 import SwiftUI
+import MatisaCore
 import AppKit
 
 enum SidebarSelection: Hashable {

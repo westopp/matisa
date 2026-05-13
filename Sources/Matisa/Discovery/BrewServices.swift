@@ -1,4 +1,5 @@
 import Foundation
+import MatisaCore
 
 struct BrewService: Hashable, Sendable {
     let name: String

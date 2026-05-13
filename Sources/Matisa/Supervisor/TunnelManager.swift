@@ -1,4 +1,5 @@
 import Foundation
+import MatisaCore
 import Observation
 
 /// Manages one in-process `Foundation.Process` per active public tunnel

@@ -1,4 +1,5 @@
 import SwiftUI
+import MatisaCore
 
 struct CaddyDetailView: View {
     @Environment(ServiceStore.self) private var store

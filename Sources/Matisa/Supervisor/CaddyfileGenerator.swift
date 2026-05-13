@@ -1,4 +1,5 @@
 import Foundation
+import MatisaCore
 
 /// Builds a Caddyfile from the URL-bearing entries in the config plus any
 /// runtime same-network exposures. The output matches the user's existing

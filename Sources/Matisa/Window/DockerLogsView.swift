@@ -1,4 +1,5 @@
 import SwiftUI
+import MatisaCore
 import Foundation
 
 /// Tails `docker logs -f <container>` (or `docker compose logs -f`) into a

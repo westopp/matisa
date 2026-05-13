@@ -1,4 +1,5 @@
 import Foundation
+import MatisaCore
 import Observation
 import Network
 import Darwin

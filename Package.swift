@@ -9,23 +9,29 @@ let package = Package(
         .executable(name: "matisa-engine", targets: ["MatisaEngine"])
     ],
     targets: [
+        .target(
+            name: "MatisaCore",
+            path: "Sources/MatisaCore"
+        ),
         .executableTarget(
             name: "Matisa",
+            dependencies: ["MatisaCore"],
             path: "Sources/Matisa"
         ),
         .executableTarget(
             name: "MatisaEngine",
+            dependencies: ["MatisaCore"],
             path: "Sources/MatisaEngine"
         ),
         .testTarget(
             name: "MatisaTests",
-            dependencies: ["Matisa"],
+            dependencies: ["Matisa", "MatisaCore"],
             path: "Tests/MatisaTests",
             resources: [.copy("Fixtures")]
         ),
         .testTarget(
             name: "MatisaEngineTests",
-            dependencies: ["MatisaEngine"],
+            dependencies: ["MatisaEngine", "MatisaCore"],
             path: "Tests/MatisaEngineTests"
         )
     ]

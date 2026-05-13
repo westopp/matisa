@@ -1,4 +1,5 @@
 import SwiftUI
+import MatisaCore
 
 /// Compact menu-style picker that selects the globally active env context.
 /// Shows the active context (or "default" when none) and is shared by the

@@ -1,4 +1,5 @@
 import XCTest
+import MatisaCore
 @testable import Matisa
 
 final class ConfigTests: XCTestCase {

@@ -2,22 +2,41 @@ import Foundation
 
 /// In-memory representation of `~/.config/matisa/services.ts` after
 /// evaluation. All paths have been expanded (no `~`) and resolved to URLs.
-struct AppConfig: Sendable {
-    let caddyfile: URL?
-    let services: [ServiceSpec]
-    let tunnel: TunnelConfig
-    let localNetwork: LocalNetworkConfig
+public struct AppConfig: Sendable {
+    public let caddyfile: URL?
+    public let services: [ServiceSpec]
+    public let tunnel: TunnelConfig
+    public let localNetwork: LocalNetworkConfig
+
+    public init(
+        caddyfile: URL?,
+        services: [ServiceSpec],
+        tunnel: TunnelConfig,
+        localNetwork: LocalNetworkConfig
+    ) {
+        self.caddyfile = caddyfile
+        self.services = services
+        self.tunnel = tunnel
+        self.localNetwork = localNetwork
+    }
 }
 
 /// Public-tunnel (sish) settings. Defaults are baked in so users don't have
 /// to declare anything to use the feature.
-struct TunnelConfig: Hashable, Sendable {
-    let sshKeyPath: URL
-    let server: String
-    let port: Int
-    let user: String
+public struct TunnelConfig: Hashable, Sendable {
+    public let sshKeyPath: URL
+    public let server: String
+    public let port: Int
+    public let user: String
 
-    static let defaults = TunnelConfig(
+    public init(sshKeyPath: URL, server: String, port: Int, user: String) {
+        self.sshKeyPath = sshKeyPath
+        self.server = server
+        self.port = port
+        self.user = user
+    }
+
+    public static let defaults = TunnelConfig(
         sshKeyPath: URL(fileURLWithPath: NSString(string: "~/.ssh/sish_tunnel").expandingTildeInPath),
         server: "tunnel.westopp.com",
         port: 2222,
@@ -27,88 +46,92 @@ struct TunnelConfig: Hashable, Sendable {
 
 /// Same-network advertisement settings. Services are exposed as
 /// `<service>.<domain>` over mDNS.
-struct LocalNetworkConfig: Hashable, Sendable {
-    let domain: String
+public struct LocalNetworkConfig: Hashable, Sendable {
+    public let domain: String
 
-    static let defaults = LocalNetworkConfig(domain: "matisa.local")
+    public init(domain: String) { self.domain = domain }
+
+    public static let defaults = LocalNetworkConfig(domain: "matisa.local")
 }
 
 /// Raw schema as decoded from the bun-evaluated JSON. Path strings are still
 /// `~`-prefixed at this stage; `AppConfig.from(_:)` expands them.
-struct RawConfig: Decodable {
-    var caddyfile: String?
-    var services: [RawService] = []
-    var tunnel: RawTunnel?
-    var localNetwork: RawLocalNetwork?
+public struct RawConfig: Decodable {
+    public var caddyfile: String?
+    public var services: [RawService] = []
+    public var tunnel: RawTunnel?
+    public var localNetwork: RawLocalNetwork?
+
+    public init() {}
 }
 
-struct RawTunnel: Decodable {
-    let sshKeyPath: String?
-    let server: String?
-    let port: Int?
-    let user: String?
+public struct RawTunnel: Decodable {
+    public let sshKeyPath: String?
+    public let server: String?
+    public let port: Int?
+    public let user: String?
 }
 
-struct RawLocalNetwork: Decodable {
-    let domain: String?
+public struct RawLocalNetwork: Decodable {
+    public let domain: String?
 }
 
-struct RawService: Decodable {
-    let type: String
+public struct RawService: Decodable {
+    public let type: String
     // project
-    let name: String?
-    let path: String?
-    let port: Int?
-    let url: String?
-    let command: String?
+    public let name: String?
+    public let path: String?
+    public let port: Int?
+    public let url: String?
+    public let command: String?
     // docker
-    let image: String?
+    public let image: String?
     // compose
-    let file: String?
-    let ports: [RawComposePort]?
+    public let file: String?
+    public let ports: [RawComposePort]?
     // common
-    let build: RawBuild?
-    let scripts: [RawNamedCommand]?
-    let group: String?
-    let env: RawEnv?
+    public let build: RawBuild?
+    public let scripts: [RawNamedCommand]?
+    public let group: String?
+    public let env: RawEnv?
 }
 
-struct RawEnvVar: Decodable, Hashable {
-    let name: String
-    let value: String
+public struct RawEnvVar: Decodable, Hashable {
+    public let name: String
+    public let value: String
 }
 
-struct RawEnvContext: Decodable, Hashable {
-    let name: String
-    let vars: [RawEnvVar]
+public struct RawEnvContext: Decodable, Hashable {
+    public let name: String
+    public let vars: [RawEnvVar]
 }
 
 /// `env` is normalised by the bun eval into ordered arrays before reaching
 /// Swift, since JSONSerialization on Apple platforms doesn't preserve
 /// object key order. Same trick we use for `build` / `scripts`.
-struct RawEnv: Decodable {
-    let vars: [RawEnvVar]
-    let contexts: [RawEnvContext]
+public struct RawEnv: Decodable {
+    public let vars: [RawEnvVar]
+    public let contexts: [RawEnvContext]
 }
 
-struct RawComposePort: Decodable {
-    let host: Int
-    let url: String?
+public struct RawComposePort: Decodable {
+    public let host: Int
+    public let url: String?
 }
 
-struct RawNamedCommand: Decodable, Hashable {
-    let name: String
-    let command: String
+public struct RawNamedCommand: Decodable, Hashable {
+    public let name: String
+    public let command: String
 }
 
 /// `build:` accepts either a string (single direct-run command) or an array
 /// of `{ name, command }` objects (the bun eval normalises `Record<string, string>`
 /// to that shape, preserving JS object key order).
-enum RawBuild: Decodable {
+public enum RawBuild: Decodable {
     case single(String)
     case multi([RawNamedCommand])
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
         if let s = try? c.decode(String.self) {
             self = .single(s)
@@ -122,14 +145,14 @@ enum RawBuild: Decodable {
     }
 }
 
-enum ConfigError: Error, CustomStringConvertible {
+public enum ConfigError: Error, CustomStringConvertible {
     case bunMissing
     case configMissing(URL)
     case evalFailed(stderr: String)
     case parseFailed(String)
     case invalidEntry(String)
 
-    var description: String {
+    public var description: String {
         switch self {
         case .bunMissing:
             "bun is not installed or not in PATH"
@@ -145,7 +168,7 @@ enum ConfigError: Error, CustomStringConvertible {
     }
 }
 
-extension AppConfig {
+public extension AppConfig {
     static func from(_ raw: RawConfig) throws -> AppConfig {
         let caddyfile = raw.caddyfile.map { Self.expand($0) }
 

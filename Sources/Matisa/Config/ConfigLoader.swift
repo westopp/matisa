@@ -1,4 +1,5 @@
 import Foundation
+import MatisaCore
 
 /// Loads and evaluates `~/.config/matisa/services.ts`.
 ///

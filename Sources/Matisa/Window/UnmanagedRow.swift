@@ -1,4 +1,5 @@
 import SwiftUI
+import MatisaCore
 
 /// Minimal row for the Unmanaged section. Non-selectable — only the stop
 /// button is interactive. Unmanaged things have no detail view.

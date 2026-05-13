@@ -1,4 +1,5 @@
 import SwiftUI
+import MatisaCore
 import AppKit
 
 /// Popover content for a captured `LaunchFailure`. Anchored from the small

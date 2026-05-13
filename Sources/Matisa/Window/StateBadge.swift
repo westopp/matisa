@@ -1,4 +1,5 @@
 import SwiftUI
+import MatisaCore
 
 struct StateBadge: View {
     let state: ServiceState
