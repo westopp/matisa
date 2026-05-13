@@ -97,6 +97,32 @@ actor EngineClient {
         }
     }
 
+    /// Request a clean engine shutdown over the wire. Returns when the
+    /// engine has acked the request — the engine then exits ~100ms later.
+    /// Callers that want to confirm the process actually exited can poll
+    /// `isReachable()` afterwards.
+    func shutdown() throws {
+        _ = try callRaw("engine.shutdown")
+    }
+
+    /// Like `call(_:params:as:)` but if the engine is unreachable, attempts
+    /// to spawn it once via `EngineLauncher.ensureRunning` and retries.
+    /// Use this for caller code paths where the engine is expected to be
+    /// running — the app's lifecycle methods.
+    func callEnsuringEngine<R: Decodable>(
+        _ method: String,
+        params: Encodable? = nil,
+        as: R.Type = R.self
+    ) async throws -> R {
+        do {
+            return try call(method, params: params, as: R.self)
+        } catch ClientError.engineUnreachable {
+            let path = socketPath
+            _ = try await EngineLauncher.ensureRunning(socketPath: path)
+            return try call(method, params: params, as: R.self)
+        }
+    }
+
     // MARK: - Wire
 
     private func buildRequest(method: String, params: Encodable?, id: Int) throws -> Data {
