@@ -70,19 +70,11 @@ final class PersistedSpawnStore {
             withIntermediateDirectories: true
         )
 
-        // Atomic replace: write to <stateFile>.tmp then rename. `rename(2)`
-        // is atomic within a filesystem, so readers either see the old file
-        // or the new one — never a partial write.
-        let tmpURL = URL(fileURLWithPath: stateFile.path + ".tmp")
-        do {
-            try data.write(to: tmpURL, options: .atomic)
-        } catch {
-            return
-        }
-        let renameRC = Darwin.rename(tmpURL.path, stateFile.path)
-        if renameRC != 0 {
-            // Best-effort cleanup so we don't leave a `.tmp` lying around.
-            try? FileManager.default.removeItem(at: tmpURL)
-        }
+        // `Data.write(.atomic)` writes to a Foundation-managed unique temp
+        // file and renames it into place — atomic at the filesystem level,
+        // and the temp name is unique-per-write so concurrent writers can't
+        // collide on the path. Matches the app-side `StatePersistence.save`
+        // shape so the two writers stay symmetric pre-2c.3.
+        try? data.write(to: stateFile, options: .atomic)
     }
 }

@@ -133,6 +133,13 @@ enum LifecycleSupervisor {
     /// True when `pid` exists (or exists but we lack permission to signal it).
     /// Delegates to `SyncProcess.isAlive` so engine code has one liveness
     /// helper rather than two.
+    ///
+    /// **Caveat: zombies report alive.** The engine never `waitpid`s on its
+    /// spawned children (no SIGCHLD handler / reaper loop yet), so once a
+    /// child exits its PID lingers as a zombie and `kill(pid, 0)` still
+    /// returns 0. Lifecycle handlers landing in 2c.2 should be aware: a
+    /// freshly-killed process may keep reporting alive for a while. If a
+    /// future state-machine relies on "truly dead", add a reaper here.
     static func isAlive(pid: pid_t) -> Bool {
         SyncProcess.isAlive(pid: pid)
     }
