@@ -43,7 +43,8 @@ final class Engine {
         )
         self.caddyService = CaddyService(
             configService: configService,
-            servicesService: servicesService
+            servicesService: servicesService,
+            discoveryService: discoveryService
         )
 
         // Capture dispatcher locally so the closure doesn't need self.

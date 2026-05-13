@@ -1547,22 +1547,15 @@ final class ServiceStore {
     }
 
     private func regenerateCaddyfile() async {
-        do {
-            _ = try await EngineClient.shared.call(
-                "caddy.regenerate",
-                as: EmptyResponse.self
-            )
-            return
-        } catch EngineClient.ClientError.rpcError(_, let msg) {
-            FileHandle.standardError.write(
-                Data("ServiceStore: engine rpcError on caddy.regenerate: \(msg)\n".utf8)
-            )
-            return
-        } catch {
-            // Fall through to local. Note: the engine renders without
-            // exposures for 2d; locally we still include `activeExposuresByServiceID`
-            // so the app's same-network blocks survive engine-down regen.
-        }
+        // Phase 2d note: the engine's caddy.regenerate renders with an empty
+        // exposures map because TunnelManager / MDNSPublisher still live
+        // app-side until 2e.1/2e.2. Routing through the engine here would
+        // wipe out `<service>.matisa.local` blocks the moment the user
+        // toggled same-network (scheduleCaddyRegen → here). Until 2e moves
+        // exposures into CaddyService.regenerate, always render locally —
+        // we already hold the authoritative exposures map. The engine's
+        // caddy.regenerate RPC stays registered for CLI / 2e use; the app
+        // just doesn't call it yet.
         await regenerateCaddyfileLocal()
     }
 

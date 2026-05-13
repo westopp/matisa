@@ -48,17 +48,26 @@ final class CaddyService: @unchecked Sendable {
     /// Debounce window for `scheduleRegenAndReload`. Same value the app used.
     private let debounceNS: UInt64
 
-    /// Production initialiser — wires the real config / services / brew /
-    /// shell collaborators. Tests use `init(loadConfig:loadServicesSnapshot:…)`
+    /// Production initialiser — wires the real config / services / discovery
+    /// collaborators. Tests use `init(loadConfig:loadServicesSnapshot:…)`
     /// directly so they can drive the service without a real engine stack.
+    ///
+    /// Note: `brewProbe` reads from `DiscoveryService` (the cached TTL view
+    /// that powers `services.snapshot`) rather than re-shelling out to
+    /// `brew services list` on every `caddy.status` call. That would double
+    /// the brew CLI traffic each refresh tick — the app fetches services.snapshot
+    /// (one brew probe) and then caddy.status (a second probe). Sharing the
+    /// cache lets both reads ride one shell-out.
     convenience init(
         configService: ConfigService,
-        servicesService: ServicesService
+        servicesService: ServicesService,
+        discoveryService: DiscoveryService
     ) {
         // Capture references so the closures don't retain `self` if this
         // service is ever held weakly elsewhere.
         let cfg = configService
         let svc = servicesService
+        let disc = discoveryService
         self.init(
             loadConfig: {
                 let bytes = try cfg.get()
@@ -69,7 +78,8 @@ final class CaddyService: @unchecked Sendable {
                     throw RPCError.internalError("config decode failed: \(error)")
                 }
             },
-            loadServicesSnapshot: { try svc.snapshot() }
+            loadServicesSnapshot: { try svc.snapshot() },
+            brewProbe: { disc.snapshot().brewServices }
         )
     }
 
