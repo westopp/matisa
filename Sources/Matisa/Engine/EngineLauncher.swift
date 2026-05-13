@@ -53,4 +53,42 @@ enum EngineLauncher {
 
         return nil
     }
+
+    /// Polls `path` every 50ms for up to `timeout` seconds. Returns true as
+    /// soon as a UDS `connect()` to the path succeeds, false on timeout.
+    /// Cheap: opens and immediately closes a probe socket per attempt.
+    static func waitForSocketReady(path: String, timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if probeConnect(path: path) {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return false
+    }
+
+    private static func probeConnect(path: String) -> Bool {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let bytes = Array(path.utf8)
+        let cap = MemoryLayout.size(ofValue: addr.sun_path)
+        guard bytes.count < cap else { return false }
+        withUnsafeMutablePointer(to: &addr.sun_path) { tup in
+            tup.withMemoryRebound(to: UInt8.self, capacity: cap) { bp in
+                for (i, b) in bytes.enumerated() { bp[i] = b }
+                bp[bytes.count] = 0
+            }
+        }
+        let result = withUnsafePointer(to: &addr) { p -> Int32 in
+            p.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                Darwin.connect(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        return result == 0
+    }
 }
