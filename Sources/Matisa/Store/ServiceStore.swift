@@ -62,6 +62,11 @@ final class ServiceStore {
 
     private let configLoader = ConfigLoader()
     private let engineMirror = EngineMirror()
+    private let lifecycleClient = LifecycleClient()
+    private let dockerDaemonClient = DockerDaemonClient()
+    private let caddyClient = CaddyClient()
+    private let exposureClient = ExposureClient()
+    private let taskClient = TaskClient()
     private var refreshTask: Task<Void, Never>?
     private var rotateTask: Task<Void, Never>?
     private var caddyReloadTask: Task<Void, Never>?
@@ -69,6 +74,15 @@ final class ServiceStore {
     /// dismiss — see `cancelDockerStartInFlight()`.
     private var dockerStartTask: Task<Void, Never>?
     private var pasteboard: NSPasteboard { .general }
+
+    /// Centralised stderr log for engine rpcError responses on a named
+    /// action. Same format the inlined catches used pre-3 so log scrapes
+    /// stay valid. A dedicated `engineActionErrors` UI surface is pending.
+    private static func logEngineRpcError(_ method: String, _ message: String) {
+        FileHandle.standardError.write(
+            Data("ServiceStore: engine rpcError on \(method): \(message)\n".utf8)
+        )
+    }
 
     init() {}
 
@@ -388,22 +402,20 @@ final class ServiceStore {
     /// local TunnelManager calls as pre-2e.1.
     func togglePublicTunnel(_ service: Service) {
         Task {
-            do {
-                _ = try await EngineClient.shared.call(
-                    "exposure.public_tunnel.toggle",
-                    params: ServiceIDParams(id: service.id),
-                    as: EmptyResponse.self
-                )
+            switch await exposureClient.togglePublicTunnel(serviceID: service.id) {
+            case .ok:
                 return
-            } catch EngineClient.ClientError.rpcError(_, let msg) {
-                FileHandle.standardError.write(
-                    Data("ServiceStore: engine rpcError on exposure.public_tunnel.toggle: \(msg)\n".utf8)
-                )
+            case .dockerDaemonRequired:
+                // Exposure RPCs don't currently surface -32001; treat the
+                // same as an unexpected rpcError so behaviour stays
+                // identical to pre-3.
                 return
-            } catch {
-                // Transport / decode failure → fall through to local.
+            case .rpcError(let msg):
+                Self.logEngineRpcError("exposure.public_tunnel.toggle", msg)
+                return
+            case .engineUnreachable:
+                togglePublicTunnelLocal(service)
             }
-            togglePublicTunnelLocal(service)
         }
     }
 
@@ -434,22 +446,20 @@ final class ServiceStore {
     /// still pick up the Caddyfile change.
     func toggleSameNetwork(_ service: Service) {
         Task {
-            do {
-                _ = try await EngineClient.shared.call(
-                    "exposure.same_network.toggle",
-                    params: ServiceIDParams(id: service.id),
-                    as: EmptyResponse.self
-                )
+            switch await exposureClient.toggleSameNetwork(serviceID: service.id) {
+            case .ok:
                 return
-            } catch EngineClient.ClientError.rpcError(_, let msg) {
-                FileHandle.standardError.write(
-                    Data("ServiceStore: engine rpcError on exposure.same_network.toggle: \(msg)\n".utf8)
-                )
+            case .dockerDaemonRequired:
+                // Exposure RPCs don't currently surface -32001; treat the
+                // same as an unexpected rpcError so behaviour stays
+                // identical to pre-3.
                 return
-            } catch {
-                // Transport / decode failure → fall through to local.
+            case .rpcError(let msg):
+                Self.logEngineRpcError("exposure.same_network.toggle", msg)
+                return
+            case .engineUnreachable:
+                toggleSameNetworkLocal(service)
             }
-            toggleSameNetworkLocal(service)
         }
     }
 
@@ -562,201 +572,92 @@ final class ServiceStore {
     /// the engine's "no" rather than retry locally — same UI prompt for the
     /// docker case, an error state for the rest.
     private func start(_ service: Service) async {
-        do {
-            _ = try await EngineClient.shared.call(
-                "services.start",
-                params: ServiceIDParams(id: service.id),
-                as: EmptyResponse.self
-            )
-            return
-        } catch EngineClient.ClientError.rpcError(let code, _) where code == -32001 {
-            dockerSystem = .stopped
-            pendingDockerPrompt = PendingDockerPrompt(
-                serviceID: service.id,
-                serviceName: service.name,
-                action: .start
-            )
-            return
-        } catch EngineClient.ClientError.rpcError(_, let msg) {
-            // Engine deliberately said no (e.g. -32002 serviceNotFound,
-            // -32603 internal). Don't write a transient `.error` state —
-            // the trailing refresh() would overwrite it within milliseconds
-            // with the engine's actual snapshot value, so the user only
-            // sees a flicker. Log for now; a dedicated `engineActionErrors`
-            // surface for the UI is pending (tracked in plan.md).
-            FileHandle.standardError.write(
-                Data("ServiceStore: engine rpcError on action: \(msg)\n".utf8)
-            )
-            return
-        } catch {
-            // Transport / decode failure → engine isn't usable, fall through.
-        }
-        await startLocal(service)
+        await dispatchLifecycle(
+            service: service,
+            action: .start,
+            engineCall: { await self.lifecycleClient.start(serviceID: service.id) },
+            local: { await self.startLocal(service) }
+        )
     }
 
     private func stop(_ service: Service) async {
-        do {
-            _ = try await EngineClient.shared.call(
-                "services.stop",
-                params: ServiceIDParams(id: service.id),
-                as: EmptyResponse.self
-            )
-            return
-        } catch EngineClient.ClientError.rpcError(let code, _) where code == -32001 {
-            dockerSystem = .stopped
-            pendingDockerPrompt = PendingDockerPrompt(
-                serviceID: service.id,
-                serviceName: service.name,
-                action: .stop
-            )
-            return
-        } catch EngineClient.ClientError.rpcError(_, let msg) {
-            // Engine deliberately said no (e.g. -32002 serviceNotFound,
-            // -32603 internal). Don't write a transient `.error` state —
-            // the trailing refresh() would overwrite it within milliseconds
-            // with the engine's actual snapshot value, so the user only
-            // sees a flicker. Log for now; a dedicated `engineActionErrors`
-            // surface for the UI is pending (tracked in plan.md).
-            FileHandle.standardError.write(
-                Data("ServiceStore: engine rpcError on action: \(msg)\n".utf8)
-            )
-            return
-        } catch {
-            // Fall through to local.
-        }
-        await stopLocal(service)
+        await dispatchLifecycle(
+            service: service,
+            action: .stop,
+            engineCall: { await self.lifecycleClient.stop(serviceID: service.id) },
+            local: { await self.stopLocal(service) }
+        )
     }
 
     private func kill(_ service: Service) async {
-        do {
-            _ = try await EngineClient.shared.call(
-                "services.kill",
-                params: ServiceIDParams(id: service.id),
-                as: EmptyResponse.self
-            )
-            return
-        } catch EngineClient.ClientError.rpcError(let code, _) where code == -32001 {
-            dockerSystem = .stopped
-            pendingDockerPrompt = PendingDockerPrompt(
-                serviceID: service.id,
-                serviceName: service.name,
-                action: .kill
-            )
-            return
-        } catch EngineClient.ClientError.rpcError(_, let msg) {
-            // Engine deliberately said no (e.g. -32002 serviceNotFound,
-            // -32603 internal). Don't write a transient `.error` state —
-            // the trailing refresh() would overwrite it within milliseconds
-            // with the engine's actual snapshot value, so the user only
-            // sees a flicker. Log for now; a dedicated `engineActionErrors`
-            // surface for the UI is pending (tracked in plan.md).
-            FileHandle.standardError.write(
-                Data("ServiceStore: engine rpcError on action: \(msg)\n".utf8)
-            )
-            return
-        } catch {
-            // Fall through to local.
-        }
-        await killLocal(service)
+        await dispatchLifecycle(
+            service: service,
+            action: .kill,
+            engineCall: { await self.lifecycleClient.kill(serviceID: service.id) },
+            local: { await self.killLocal(service) }
+        )
     }
 
     private func restart(_ service: Service) async {
-        do {
-            _ = try await EngineClient.shared.call(
-                "services.restart",
-                params: ServiceIDParams(id: service.id),
-                as: EmptyResponse.self
-            )
-            return
-        } catch EngineClient.ClientError.rpcError(let code, _) where code == -32001 {
-            dockerSystem = .stopped
-            pendingDockerPrompt = PendingDockerPrompt(
-                serviceID: service.id,
-                serviceName: service.name,
-                action: .restart
-            )
-            return
-        } catch EngineClient.ClientError.rpcError(_, let msg) {
-            // Engine deliberately said no (e.g. -32002 serviceNotFound,
-            // -32603 internal). Don't write a transient `.error` state —
-            // the trailing refresh() would overwrite it within milliseconds
-            // with the engine's actual snapshot value, so the user only
-            // sees a flicker. Log for now; a dedicated `engineActionErrors`
-            // surface for the UI is pending (tracked in plan.md).
-            FileHandle.standardError.write(
-                Data("ServiceStore: engine rpcError on action: \(msg)\n".utf8)
-            )
-            return
-        } catch {
-            // Fall through to local.
-        }
-        await restartLocal(service)
+        await dispatchLifecycle(
+            service: service,
+            action: .restart,
+            engineCall: { await self.lifecycleClient.restart(serviceID: service.id) },
+            local: { await self.restartLocal(service) }
+        )
     }
 
     private func takeOver(_ service: Service) async {
-        do {
-            _ = try await EngineClient.shared.call(
-                "services.take_over",
-                params: ServiceIDParams(id: service.id),
-                as: EmptyResponse.self
-            )
-            return
-        } catch EngineClient.ClientError.rpcError(let code, _) where code == -32001 {
-            dockerSystem = .stopped
-            pendingDockerPrompt = PendingDockerPrompt(
-                serviceID: service.id,
-                serviceName: service.name,
-                action: .takeOver
-            )
-            return
-        } catch EngineClient.ClientError.rpcError(_, let msg) {
-            // Engine deliberately said no (e.g. -32002 serviceNotFound,
-            // -32603 internal). Don't write a transient `.error` state —
-            // the trailing refresh() would overwrite it within milliseconds
-            // with the engine's actual snapshot value, so the user only
-            // sees a flicker. Log for now; a dedicated `engineActionErrors`
-            // surface for the UI is pending (tracked in plan.md).
-            FileHandle.standardError.write(
-                Data("ServiceStore: engine rpcError on action: \(msg)\n".utf8)
-            )
-            return
-        } catch {
-            // Fall through to local.
-        }
-        await takeOverLocal(service)
+        await dispatchLifecycle(
+            service: service,
+            action: .takeOver,
+            engineCall: { await self.lifecycleClient.takeOver(serviceID: service.id) },
+            local: { await self.takeOverLocal(service) }
+        )
     }
 
     private func pull(_ service: Service) async {
-        do {
-            _ = try await EngineClient.shared.call(
-                "services.pull",
-                params: ServiceIDParams(id: service.id),
-                as: EmptyResponse.self
-            )
+        await dispatchLifecycle(
+            service: service,
+            action: .pull,
+            engineCall: { await self.lifecycleClient.pull(serviceID: service.id) },
+            local: { await self.pullLocal(service) }
+        )
+    }
+
+    /// Shared four-arm switch for every lifecycle action. The pre-3 inline
+    /// shape was: try the RPC → on -32001 surface a docker prompt and bail
+    /// → on any other rpcError log to stderr and bail (the trailing
+    /// `refresh()` would overwrite a transient `.error` flash before the
+    /// user could see it) → on transport failure fall through to local.
+    /// Centralising it here keeps the per-action wrappers a one-liner.
+    private func dispatchLifecycle(
+        service: Service,
+        action: ServiceAction,
+        engineCall: () async -> EngineDispatchResult,
+        local: () async -> Void
+    ) async {
+        switch await engineCall() {
+        case .ok:
             return
-        } catch EngineClient.ClientError.rpcError(let code, _) where code == -32001 {
+        case .dockerDaemonRequired:
             dockerSystem = .stopped
             pendingDockerPrompt = PendingDockerPrompt(
                 serviceID: service.id,
                 serviceName: service.name,
-                action: .pull
+                action: action
             )
-            return
-        } catch EngineClient.ClientError.rpcError(_, let msg) {
+        case .rpcError(let msg):
             // Engine deliberately said no (e.g. -32002 serviceNotFound,
             // -32603 internal). Don't write a transient `.error` state —
             // the trailing refresh() would overwrite it within milliseconds
             // with the engine's actual snapshot value, so the user only
             // sees a flicker. Log for now; a dedicated `engineActionErrors`
             // surface for the UI is pending (tracked in plan.md).
-            FileHandle.standardError.write(
-                Data("ServiceStore: engine rpcError on action: \(msg)\n".utf8)
-            )
-            return
-        } catch {
-            // Fall through to local.
+            Self.logEngineRpcError("services.\(action)", msg)
+        case .engineUnreachable:
+            await local()
         }
-        await pullLocal(service)
     }
 
     // MARK: - Local fallback implementations
@@ -869,20 +770,15 @@ final class ServiceStore {
     func stopTask(_ service: Service, kind: TaskRunner.TaskKind) {
         let wireKind = Self.wireKind(kind)
         Task {
-            do {
-                _ = try await EngineClient.shared.call(
-                    "tasks.cancel",
-                    params: TaskCancelClientParams(id: service.id, kind: wireKind),
-                    as: EmptyResponse.self
-                )
+            switch await taskClient.cancel(serviceID: service.id, kind: wireKind) {
+            case .ok, .rpcError, .dockerDaemonRequired:
+                // Engine handled it (success) or deliberately refused
+                // (rpcError). Either way there's nothing to fall back to.
+                // tasks.* don't surface -32001; treat as a refusal.
                 return
-            } catch EngineClient.ClientError.rpcError {
-                // Deliberate engine-side refusal; nothing to fall back to.
-                return
-            } catch {
-                // Transport failure — fall through to local.
+            case .engineUnreachable:
+                tasks.stop(serviceID: service.id, kind: kind)
             }
-            tasks.stop(serviceID: service.id, kind: kind)
         }
     }
 
@@ -896,15 +792,7 @@ final class ServiceStore {
         // app's pre-2e.3 latency.
         tasks.clear(serviceID: service.id, kind: kind)
         Task {
-            do {
-                _ = try await EngineClient.shared.call(
-                    "tasks.clear",
-                    params: TaskCancelClientParams(id: service.id, kind: wireKind),
-                    as: EmptyResponse.self
-                )
-            } catch {
-                // Local clear already happened; nothing more to do.
-            }
+            await taskClient.clear(serviceID: service.id, kind: wireKind)
         }
     }
 
@@ -917,15 +805,7 @@ final class ServiceStore {
         // bring back the running slot.
         tasks.closePane(serviceID: service.id, kind: kind)
         Task {
-            do {
-                _ = try await EngineClient.shared.call(
-                    "tasks.close_pane",
-                    params: TaskCancelClientParams(id: service.id, kind: wireKind),
-                    as: EmptyResponse.self
-                )
-            } catch {
-                // Local close already happened.
-            }
+            await taskClient.closePane(serviceID: service.id, kind: wireKind)
         }
     }
 
@@ -945,22 +825,18 @@ final class ServiceStore {
 
         let cwd = service.spec.workingDirectory
         let env = service.spec.env?.effective(activeContext: activeEnvContext) ?? [:]
-        let params = TaskStartClientParams(
-            id: service.id,
-            kind: kind,
-            name: chosen.name,
-            command: chosen.command,
-            cwd: cwd,
-            extraEnv: env
-        )
         let chosenName = chosen.name
         Task { @MainActor in
-            do {
-                _ = try await EngineClient.shared.call(
-                    "tasks.start",
-                    params: params,
-                    as: EmptyResponse.self
-                )
+            let result = await taskClient.start(
+                serviceID: service.id,
+                kind: kind,
+                name: chosen.name,
+                command: chosen.command,
+                cwd: cwd,
+                extraEnv: env
+            )
+            switch result {
+            case .ok:
                 // Engine accepted. Write a placeholder so the next refresh
                 // tick sees a visible pane and starts polling.
                 tasks.writeEnginePlaceholder(
@@ -968,21 +844,20 @@ final class ServiceStore {
                     kind: localKind,
                     name: chosenName
                 )
-                return
-            } catch EngineClient.ClientError.rpcError {
+            case .rpcError, .dockerDaemonRequired:
                 // Engine deliberately refused; nothing to fall back to.
+                // tasks.* don't surface -32001; treat as a refusal.
                 return
-            } catch {
-                // Transport failure — drop to local.
+            case .engineUnreachable:
+                tasks.start(
+                    serviceID: service.id,
+                    kind: localKind,
+                    name: chosen.name,
+                    command: chosen.command,
+                    cwd: cwd,
+                    extraEnv: env
+                )
             }
-            tasks.start(
-                serviceID: service.id,
-                kind: localKind,
-                name: chosen.name,
-                command: chosen.command,
-                cwd: cwd,
-                extraEnv: env
-            )
         }
     }
 
@@ -1025,26 +900,21 @@ final class ServiceStore {
     /// Quit Docker Desktop. The System panel calls this; doesn't tear down
     /// running services beyond what Docker itself does on quit.
     func performDockerStop() async {
-        do {
-            _ = try await EngineClient.shared.call(
-                "docker.daemon.stop",
-                as: EmptyResponse.self
-            )
+        switch await dockerDaemonClient.stop() {
+        case .ok:
             // Optimistic mirror — refresh() will reconcile from
             // docker.daemon.status. The engine sets `.stopped` once the
             // AppleScript returns.
             dockerSystem = .stopped
             await refresh()
+        case .rpcError(let msg):
+            Self.logEngineRpcError("docker.daemon.stop", msg)
+        case .dockerDaemonRequired:
+            // docker.daemon.* don't surface -32001; treat as a refusal.
             return
-        } catch EngineClient.ClientError.rpcError(_, let msg) {
-            FileHandle.standardError.write(
-                Data("ServiceStore: engine rpcError on docker.daemon.stop: \(msg)\n".utf8)
-            )
-            return
-        } catch {
-            // Transport failure → fall through to local.
+        case .engineUnreachable:
+            await performDockerStopLocal()
         }
-        await performDockerStopLocal()
     }
 
     /// Engine-unreachable path. Same behaviour as the pre-2f implementation:
@@ -1059,11 +929,8 @@ final class ServiceStore {
     /// the System panel start button; doesn't replay any pending action.
     func performDockerStart() async {
         guard !dockerSystem.isStarting else { return }
-        do {
-            _ = try await EngineClient.shared.call(
-                "docker.daemon.start",
-                as: EmptyResponse.self
-            )
+        switch await dockerDaemonClient.start() {
+        case .ok:
             // Optimistic mirror — refresh() and the periodic poll will
             // overwrite once the engine's state machine resolves. We set
             // `.starting` so the System panel indicator and the
@@ -1075,16 +942,13 @@ final class ServiceStore {
             // confidently.
             await awaitEngineDockerSettled()
             await refresh()
+        case .rpcError(let msg):
+            Self.logEngineRpcError("docker.daemon.start", msg)
+        case .dockerDaemonRequired:
             return
-        } catch EngineClient.ClientError.rpcError(_, let msg) {
-            FileHandle.standardError.write(
-                Data("ServiceStore: engine rpcError on docker.daemon.start: \(msg)\n".utf8)
-            )
-            return
-        } catch {
-            // Transport failure → fall through to local.
+        case .engineUnreachable:
+            await performDockerStartLocal()
         }
-        await performDockerStartLocal()
     }
 
     /// Engine-unreachable path. Identical to the pre-2f implementation —
@@ -1112,11 +976,8 @@ final class ServiceStore {
     func confirmDockerStart() async {
         guard let prompt = pendingDockerPrompt else { return }
         pendingDockerPrompt = nil
-        do {
-            _ = try await EngineClient.shared.call(
-                "docker.daemon.start",
-                as: EmptyResponse.self
-            )
+        switch await dockerDaemonClient.start() {
+        case .ok:
             dockerSystem = .starting
             await awaitEngineDockerSettled()
             // Replay only if the daemon actually came up. If the engine
@@ -1125,16 +986,13 @@ final class ServiceStore {
             guard case .running = dockerSystem else { return }
             guard let service = self.service(id: prompt.serviceID) else { return }
             await perform(prompt.action, on: service)
+        case .rpcError(let msg):
+            Self.logEngineRpcError("docker.daemon.start", msg)
+        case .dockerDaemonRequired:
             return
-        } catch EngineClient.ClientError.rpcError(_, let msg) {
-            FileHandle.standardError.write(
-                Data("ServiceStore: engine rpcError on docker.daemon.start: \(msg)\n".utf8)
-            )
-            return
-        } catch {
-            // Transport failure → fall through to local.
+        case .engineUnreachable:
+            await confirmDockerStartLocal(prompt: prompt)
         }
-        await confirmDockerStartLocal(prompt: prompt)
     }
 
     /// Engine-unreachable path. Same body as the pre-2f confirmDockerStart.
@@ -1173,12 +1031,7 @@ final class ServiceStore {
         // Best-effort engine cancel — fire-and-forget. Local cleanup runs
         // unconditionally; the engine's cancel_start is idempotent with it
         // (both transition to .stopped and quit Docker in the background).
-        Task {
-            _ = try? await EngineClient.shared.call(
-                "docker.daemon.cancel_start",
-                as: EmptyResponse.self
-            )
-        }
+        Task { _ = await dockerDaemonClient.cancelStart() }
         dockerStartTask?.cancel()
         dockerStartTask = nil
         pendingDockerPrompt = nil
@@ -1191,12 +1044,7 @@ final class ServiceStore {
     func clearDockerStartFailure() {
         // Best-effort engine clear — fire-and-forget. Local mirror update
         // runs unconditionally so the UI hides the failure label immediately.
-        Task {
-            _ = try? await EngineClient.shared.call(
-                "docker.daemon.clear_failure",
-                as: EmptyResponse.self
-            )
-        }
+        Task { _ = await dockerDaemonClient.clearFailure() }
         if case .startFailed = dockerSystem {
             dockerSystem = .stopped
         }
@@ -1212,16 +1060,12 @@ final class ServiceStore {
         let deadline = Date().addingTimeInterval(70)
         while Date() < deadline {
             try? await Task.sleep(nanoseconds: 500_000_000)
-            do {
-                let s = try await EngineClient.shared.call(
-                    "docker.daemon.status",
-                    as: DockerSystemState.self
-                )
-                dockerSystem = s
-                if !s.isStarting { return }
-            } catch {
+            guard let s = await dockerDaemonClient.status() else {
+                // Transport failure during the poll — bail rather than hang.
                 return
             }
+            dockerSystem = s
+            if !s.isStarting { return }
         }
     }
 
@@ -1247,57 +1091,37 @@ final class ServiceStore {
     /// deliberate RPC error we log and return — the trailing refresh will
     /// reconcile the indicator off `caddy.status`.
     private func caddyStart() async {
-        do {
-            _ = try await EngineClient.shared.call(
-                "caddy.start",
-                as: EmptyResponse.self
-            )
+        switch await caddyClient.start() {
+        case .ok, .dockerDaemonRequired:
+            // caddy.* don't surface -32001 today; treat as success.
             return
-        } catch EngineClient.ClientError.rpcError(_, let msg) {
-            FileHandle.standardError.write(
-                Data("ServiceStore: engine rpcError on caddy.start: \(msg)\n".utf8)
-            )
-            return
-        } catch {
-            // Transport failure → fall through to local.
+        case .rpcError(let msg):
+            Self.logEngineRpcError("caddy.start", msg)
+        case .engineUnreachable:
+            try? await BrewServices.start("caddy")
         }
-        try? await BrewServices.start("caddy")
     }
 
     private func caddyStop() async {
-        do {
-            _ = try await EngineClient.shared.call(
-                "caddy.stop",
-                as: EmptyResponse.self
-            )
+        switch await caddyClient.stop() {
+        case .ok, .dockerDaemonRequired:
             return
-        } catch EngineClient.ClientError.rpcError(_, let msg) {
-            FileHandle.standardError.write(
-                Data("ServiceStore: engine rpcError on caddy.stop: \(msg)\n".utf8)
-            )
-            return
-        } catch {
-            // Fall through to local.
+        case .rpcError(let msg):
+            Self.logEngineRpcError("caddy.stop", msg)
+        case .engineUnreachable:
+            try? await BrewServices.stop("caddy")
         }
-        try? await BrewServices.stop("caddy")
     }
 
     private func caddyRestart() async {
-        do {
-            _ = try await EngineClient.shared.call(
-                "caddy.restart",
-                as: EmptyResponse.self
-            )
+        switch await caddyClient.restart() {
+        case .ok, .dockerDaemonRequired:
             return
-        } catch EngineClient.ClientError.rpcError(_, let msg) {
-            FileHandle.standardError.write(
-                Data("ServiceStore: engine rpcError on caddy.restart: \(msg)\n".utf8)
-            )
-            return
-        } catch {
-            // Fall through to local.
+        case .rpcError(let msg):
+            Self.logEngineRpcError("caddy.restart", msg)
+        case .engineUnreachable:
+            try? await BrewServices.restart("caddy")
         }
-        try? await BrewServices.restart("caddy")
     }
 
     // MARK: - Lifecycle (local fallback)
@@ -1453,13 +1277,7 @@ final class ServiceStore {
     /// regardless so the UI hides immediately.
     func clearLaunchFailure(for serviceID: String) {
         launchFailures.removeValue(forKey: serviceID)
-        Task {
-            try? await EngineClient.shared.call(
-                "launch_failures.clear",
-                params: ServiceIDParams(id: serviceID),
-                as: EmptyResponse.self
-            )
-        }
+        Task { _ = await lifecycleClient.clearLaunchFailure(serviceID: serviceID) }
     }
 
     /// Build a `LaunchFailure` from a thrown `ShellError` (or any other
@@ -1728,21 +1546,14 @@ final class ServiceStore {
     }
 
     private func validateCaddy() async {
-        do {
-            _ = try await EngineClient.shared.call(
-                "caddy.validate",
-                as: CaddyValidationResult.self
-            )
+        switch await caddyClient.validate() {
+        case .ok, .dockerDaemonRequired:
             return
-        } catch EngineClient.ClientError.rpcError(_, let msg) {
-            FileHandle.standardError.write(
-                Data("ServiceStore: engine rpcError on caddy.validate: \(msg)\n".utf8)
-            )
-            return
-        } catch {
-            // Fall through to local.
+        case .rpcError(let msg):
+            Self.logEngineRpcError("caddy.validate", msg)
+        case .engineUnreachable:
+            await validateCaddyLocal()
         }
-        await validateCaddyLocal()
     }
 
     private func validateCaddyLocal() async {
@@ -1755,21 +1566,14 @@ final class ServiceStore {
     }
 
     private func reloadCaddy() async {
-        do {
-            _ = try await EngineClient.shared.call(
-                "caddy.reload",
-                as: EmptyResponse.self
-            )
+        switch await caddyClient.reload() {
+        case .ok, .dockerDaemonRequired:
             return
-        } catch EngineClient.ClientError.rpcError(_, let msg) {
-            FileHandle.standardError.write(
-                Data("ServiceStore: engine rpcError on caddy.reload: \(msg)\n".utf8)
-            )
-            return
-        } catch {
-            // Fall through to local.
+        case .rpcError(let msg):
+            Self.logEngineRpcError("caddy.reload", msg)
+        case .engineUnreachable:
+            await reloadCaddyLocal()
         }
-        await reloadCaddyLocal()
     }
 
     private func reloadCaddyLocal() async {
@@ -1783,21 +1587,14 @@ final class ServiceStore {
         // engine first; fall back to the local renderer when the engine is
         // unreachable (we still hold the authoritative exposures map in
         // that branch).
-        do {
-            _ = try await EngineClient.shared.call(
-                "caddy.regenerate",
-                as: EmptyResponse.self
-            )
+        switch await caddyClient.regenerate() {
+        case .ok, .dockerDaemonRequired:
             return
-        } catch EngineClient.ClientError.rpcError(_, let msg) {
-            FileHandle.standardError.write(
-                Data("ServiceStore: engine rpcError on caddy.regenerate: \(msg)\n".utf8)
-            )
-            return
-        } catch {
-            // Fall through to local.
+        case .rpcError(let msg):
+            Self.logEngineRpcError("caddy.regenerate", msg)
+        case .engineUnreachable:
+            await regenerateCaddyfileLocal()
         }
-        await regenerateCaddyfileLocal()
     }
 
     private func regenerateCaddyfileLocal() async {
