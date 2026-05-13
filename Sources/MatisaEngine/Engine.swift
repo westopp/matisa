@@ -16,6 +16,7 @@ final class Engine {
     private let servicesService: ServicesService
     private let lifecycleService: LifecycleService
     private let dockerDaemonService = DockerDaemonService()
+    private let caddyService: CaddyService
     private let startedAt = Date()
 
     init() {
@@ -39,6 +40,10 @@ final class Engine {
         self.lifecycleService = LifecycleService(
             lookupService: { id in try servicesService.lookup(serviceID: id) },
             spawnStore: spawnStore
+        )
+        self.caddyService = CaddyService(
+            configService: configService,
+            servicesService: servicesService
         )
 
         // Capture dispatcher locally so the closure doesn't need self.
@@ -181,6 +186,41 @@ final class Engine {
         }
         dispatcher.register("docker.daemon.clear_failure") { [dockerDaemonService] () -> EmptyResponse in
             dockerDaemonService.clearFailure()
+            return EmptyResponse()
+        }
+
+        // Caddy lifecycle + Caddyfile generation — phase 2d. The engine owns
+        // the brew-managed lifecycle, the rendered Caddyfile on disk, and the
+        // regen+reload debounce. The app mirrors `caddy.status` into
+        // `ServiceStore.caddyService` on refresh and routes user-facing
+        // actions through these methods with `*Local` fallbacks. `regenerate`
+        // writes the file only; the regen+reload combo lives on the engine
+        // as `scheduleRegenAndReload` and is reserved for the in-engine mDNS
+        // toggle flow landing in 2e.2.
+        dispatcher.register("caddy.status") { [caddyService] () -> CaddyServiceInfo in
+            caddyService.status()
+        }
+        dispatcher.register("caddy.start") { [caddyService] () -> EmptyResponse in
+            try await caddyService.start()
+            return EmptyResponse()
+        }
+        dispatcher.register("caddy.stop") { [caddyService] () -> EmptyResponse in
+            try await caddyService.stop()
+            return EmptyResponse()
+        }
+        dispatcher.register("caddy.restart") { [caddyService] () -> EmptyResponse in
+            try await caddyService.restart()
+            return EmptyResponse()
+        }
+        dispatcher.register("caddy.reload") { [caddyService] () -> EmptyResponse in
+            try await caddyService.reload()
+            return EmptyResponse()
+        }
+        dispatcher.register("caddy.validate") { [caddyService] () -> CaddyValidationResult in
+            try await caddyService.validate()
+        }
+        dispatcher.register("caddy.regenerate") { [caddyService] () -> EmptyResponse in
+            _ = try await caddyService.regenerate()
             return EmptyResponse()
         }
     }

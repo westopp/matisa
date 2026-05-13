@@ -204,12 +204,23 @@ final class ServiceStore {
             }
         }
 
-        // Caddy / tunnel / local-network — app-owned until Phases 2d/2e.
-        let caddy = inputs.brewServices.first(where: { $0.name == "caddy" })
-        self.caddyService = CaddyServiceInfo(
-            running: caddy?.isRunning ?? false,
-            configFile: config.caddyfile
-        )
+        // Phase 2d: the engine owns the Caddy status snapshot when reachable.
+        // Fall back to deriving it from brewServices + config on the local
+        // path so a missing engine doesn't blank the indicator.
+        if engineReachable,
+           let info = try? await EngineClient.shared.call(
+               "caddy.status",
+               as: CaddyServiceInfo.self
+           ) {
+            self.caddyService = info
+        } else {
+            let caddy = inputs.brewServices.first(where: { $0.name == "caddy" })
+            self.caddyService = CaddyServiceInfo(
+                running: caddy?.isRunning ?? false,
+                configFile: config.caddyfile
+            )
+        }
+        // Tunnel / local-network — app-owned until Phase 2e.
         self.tunnelConfig = config.tunnel
         self.localNetworkConfig = config.localNetwork
 
@@ -986,16 +997,77 @@ final class ServiceStore {
 
     func performCaddy(_ action: CaddyAction) async {
         switch action {
-        case .start:    try? await BrewServices.start("caddy")
-        case .stop:     try? await BrewServices.stop("caddy")
-        case .restart:  try? await BrewServices.restart("caddy")
-        case .reload:   await reloadCaddy()
-        case .validate: await validateCaddy()
-        case .openCaddyfile: openCaddyfile()
+        case .start:           await caddyStart()
+        case .stop:            await caddyStop()
+        case .restart:         await caddyRestart()
+        case .reload:          await reloadCaddy()
+        case .validate:        await validateCaddy()
+        case .openCaddyfile:   openCaddyfile()
         case .revealCaddyfile: revealCaddyfile()
-        case .regenerate: await regenerateCaddyfile()
+        case .regenerate:      await regenerateCaddyfile()
         }
         await refresh()
+    }
+
+    // MARK: - Caddy lifecycle (engine-first, local fallback)
+
+    /// Engine-first start/stop/restart for the brew-managed caddy service.
+    /// On transport failure (engine unreachable) falls back to the local
+    /// `BrewServices` path so the UI keeps working without the engine. On a
+    /// deliberate RPC error we log and return — the trailing refresh will
+    /// reconcile the indicator off `caddy.status`.
+    private func caddyStart() async {
+        do {
+            _ = try await EngineClient.shared.call(
+                "caddy.start",
+                as: EmptyResponse.self
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(_, let msg) {
+            FileHandle.standardError.write(
+                Data("ServiceStore: engine rpcError on caddy.start: \(msg)\n".utf8)
+            )
+            return
+        } catch {
+            // Transport failure → fall through to local.
+        }
+        try? await BrewServices.start("caddy")
+    }
+
+    private func caddyStop() async {
+        do {
+            _ = try await EngineClient.shared.call(
+                "caddy.stop",
+                as: EmptyResponse.self
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(_, let msg) {
+            FileHandle.standardError.write(
+                Data("ServiceStore: engine rpcError on caddy.stop: \(msg)\n".utf8)
+            )
+            return
+        } catch {
+            // Fall through to local.
+        }
+        try? await BrewServices.stop("caddy")
+    }
+
+    private func caddyRestart() async {
+        do {
+            _ = try await EngineClient.shared.call(
+                "caddy.restart",
+                as: EmptyResponse.self
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(_, let msg) {
+            FileHandle.standardError.write(
+                Data("ServiceStore: engine rpcError on caddy.restart: \(msg)\n".utf8)
+            )
+            return
+        } catch {
+            // Fall through to local.
+        }
+        try? await BrewServices.restart("caddy")
     }
 
     // MARK: - Lifecycle (local fallback)
@@ -1426,6 +1498,24 @@ final class ServiceStore {
     }
 
     private func validateCaddy() async {
+        do {
+            _ = try await EngineClient.shared.call(
+                "caddy.validate",
+                as: CaddyValidationResult.self
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(_, let msg) {
+            FileHandle.standardError.write(
+                Data("ServiceStore: engine rpcError on caddy.validate: \(msg)\n".utf8)
+            )
+            return
+        } catch {
+            // Fall through to local.
+        }
+        await validateCaddyLocal()
+    }
+
+    private func validateCaddyLocal() async {
         guard let path = caddyService.configFile else { return }
         guard let caddyBin = Shell.which("caddy") else { return }
         _ = try? await Shell.run(
@@ -1435,10 +1525,48 @@ final class ServiceStore {
     }
 
     private func reloadCaddy() async {
+        do {
+            _ = try await EngineClient.shared.call(
+                "caddy.reload",
+                as: EmptyResponse.self
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(_, let msg) {
+            FileHandle.standardError.write(
+                Data("ServiceStore: engine rpcError on caddy.reload: \(msg)\n".utf8)
+            )
+            return
+        } catch {
+            // Fall through to local.
+        }
+        await reloadCaddyLocal()
+    }
+
+    private func reloadCaddyLocal() async {
         try? await BrewServices.restart("caddy")
     }
 
     private func regenerateCaddyfile() async {
+        do {
+            _ = try await EngineClient.shared.call(
+                "caddy.regenerate",
+                as: EmptyResponse.self
+            )
+            return
+        } catch EngineClient.ClientError.rpcError(_, let msg) {
+            FileHandle.standardError.write(
+                Data("ServiceStore: engine rpcError on caddy.regenerate: \(msg)\n".utf8)
+            )
+            return
+        } catch {
+            // Fall through to local. Note: the engine renders without
+            // exposures for 2d; locally we still include `activeExposuresByServiceID`
+            // so the app's same-network blocks survive engine-down regen.
+        }
+        await regenerateCaddyfileLocal()
+    }
+
+    private func regenerateCaddyfileLocal() async {
         guard let config = configLoader.lastConfig else { return }
         _ = try? CaddyfileGenerator.write(
             config,
@@ -1461,11 +1589,6 @@ final class ServiceStore {
         task.arguments = ["-e", script]
         try? task.run()
     }
-}
-
-struct CaddyServiceInfo: Hashable, Sendable {
-    let running: Bool
-    let configFile: URL?
 }
 
 enum CaddyAction: Hashable, Sendable {

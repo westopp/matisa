@@ -1,16 +1,19 @@
 import Foundation
-import MatisaCore
 
 /// Builds a Caddyfile from the URL-bearing entries in the config plus any
 /// runtime same-network exposures. The output matches the user's existing
 /// style: a top `auto_https off` block, then one `http://<url>` reverse_proxy
 /// block per declared URL, then an extra block per active `<service>.matisa.local`
 /// exposure pointing at the same upstream.
-enum CaddyfileGenerator {
+///
+/// Shared by the app and the engine via MatisaCore — the engine renders the
+/// canonical file when exposures change, and the app reuses the same renderer
+/// in its local-fallback path.
+public enum CaddyfileGenerator {
     /// `exposures` maps service id → exposure state. Same-network blocks are
     /// emitted only for entries whose `sameNetwork` status carries a hostname
     /// (i.e. `.advertising` or `.active`).
-    static func render(
+    public static func render(
         from config: AppConfig,
         services: [Service] = [],
         exposures: [String: ServiceExposure] = [:]
@@ -43,7 +46,7 @@ enum CaddyfileGenerator {
     /// Write the rendered Caddyfile to the configured location, returning the
     /// destination URL. Does nothing if `config.caddyfile` is nil.
     @discardableResult
-    static func write(
+    public static func write(
         _ config: AppConfig,
         services: [Service] = [],
         exposures: [String: ServiceExposure] = [:]

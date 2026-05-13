@@ -373,6 +373,30 @@ final class CodableRoundTripTests: XCTestCase {
         ))
     }
 
+    // MARK: - CaddyServiceInfo / CaddyValidationResult (phase 2d wire format)
+
+    func testCaddyServiceInfo_running_withPath() throws {
+        try roundTrip(CaddyServiceInfo(
+            running: true,
+            configFile: URL(fileURLWithPath: "/opt/homebrew/etc/Caddyfile")
+        ))
+    }
+
+    func testCaddyServiceInfo_stopped_nilPath() throws {
+        try roundTrip(CaddyServiceInfo(running: false, configFile: nil))
+    }
+
+    func testCaddyValidationResult_ok() throws {
+        try roundTrip(CaddyValidationResult(ok: true, message: nil))
+    }
+
+    func testCaddyValidationResult_failure_withMessage() throws {
+        try roundTrip(CaddyValidationResult(
+            ok: false,
+            message: "adapter caddyfile not registered"
+        ))
+    }
+
     func testPersistedState_roundTrip() throws {
         try roundTrip(PersistedState(version: 1, spawns: [
             PersistedSpawn(
