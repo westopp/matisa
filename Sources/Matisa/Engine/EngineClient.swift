@@ -117,8 +117,7 @@ actor EngineClient {
         do {
             return try call(method, params: params, as: R.self)
         } catch ClientError.engineUnreachable {
-            let path = socketPath
-            _ = try await EngineLauncher.ensureRunning(socketPath: path)
+            _ = try await EngineLauncher.ensureRunning(socketPath: socketPath)
             return try call(method, params: params, as: R.self)
         }
     }
