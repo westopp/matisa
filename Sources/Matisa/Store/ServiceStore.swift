@@ -227,6 +227,32 @@ final class ServiceStore {
         self.services = managed
         self.unmanaged = unmanagedList
 
+        // Phase 2e.3: engine owns the ad-hoc task slots. Poll `tasks.list`
+        // for services that already have a visible pane (i.e. the user is
+        // looking at a build or script output). Gating on pane visibility
+        // keeps the per-service RPC out of the 4s tick for the common case
+        // where no panes are open. When `startTask` writes a placeholder
+        // `.running` slot on engine-success, `isPaneVisible` flips to true
+        // immediately so the next refresh picks the slot up.
+        //
+        // On engine-unreachable, the local TaskRunner is authoritative and
+        // we leave its state alone. No-op for unmanaged services — they have
+        // no build/script affordances.
+        if engineReachable {
+            for svc in managed {
+                let buildVisible = tasks.isPaneVisible(svc.id, .build)
+                let scriptVisible = tasks.isPaneVisible(svc.id, .script)
+                guard buildVisible || scriptVisible else { continue }
+                if let list = try? await EngineClient.shared.call(
+                    "tasks.list",
+                    params: ServiceIDParams(id: svc.id),
+                    as: TaskList.self
+                ) {
+                    tasks.replaceSlotsFromEngine(serviceID: svc.id, wire: list.slots)
+                }
+            }
+        }
+
         // After the new states are committed, look at lifecycle transitions
         // to auto-tear-down public tunnels for services that just stopped.
         // Same-network registrations stay up — visitors get a Caddy 502
@@ -720,6 +746,15 @@ final class ServiceStore {
     }
 
     // MARK: - Build / scripts
+    //
+    // Engine-first dispatch: `runBuild` and `runScript` route through
+    // `tasks.start` on the engine; on engine-unreachable they fall through
+    // to the local `TaskRunner`. The UI's stop / clear / closePane buttons
+    // call into `stopTask`, `clearTask`, and `closeTaskPane` below, which
+    // do the same engine-first dance. When the engine accepts a `tasks.start`,
+    // the wrapper writes a placeholder `.running` slot into the local runner
+    // so `isPaneVisible` returns true; the next `refresh()` tick polls
+    // `tasks.list(id)` and mirrors the engine's real state into the slot.
 
     /// Run the configured build for a service. `name` selects which build
     /// command when the spec is `BuildSpec.multi`; ignored for `.single`.
@@ -739,13 +774,11 @@ final class ServiceStore {
                 return
             }
         }
-        tasks.start(
-            serviceID: service.id,
+        startTask(
+            service: service,
             kind: .build,
-            name: chosen.name,
-            command: chosen.command,
-            cwd: service.spec.workingDirectory,
-            extraEnv: service.spec.env?.effective(activeContext: activeEnvContext) ?? [:]
+            localKind: .build,
+            chosen: chosen
         )
     }
 
@@ -753,14 +786,141 @@ final class ServiceStore {
     /// or a script is already running for this service.
     func runScript(_ service: Service, named name: String) {
         guard let match = service.spec.scripts.first(where: { $0.name == name }) else { return }
-        tasks.start(
-            serviceID: service.id,
+        startTask(
+            service: service,
             kind: .script,
-            name: match.name,
-            command: match.command,
-            cwd: service.spec.workingDirectory,
-            extraEnv: service.spec.env?.effective(activeContext: activeEnvContext) ?? [:]
+            localKind: .script,
+            chosen: match
         )
+    }
+
+    /// Cancel the running task in `(service, kind)`. Engine-first; falls back
+    /// to the local TaskRunner.stop on engine-unreachable.
+    func stopTask(_ service: Service, kind: TaskRunner.TaskKind) {
+        let wireKind = Self.wireKind(kind)
+        Task {
+            do {
+                _ = try await EngineClient.shared.call(
+                    "tasks.cancel",
+                    params: TaskCancelClientParams(id: service.id, kind: wireKind),
+                    as: EmptyResponse.self
+                )
+                return
+            } catch EngineClient.ClientError.rpcError {
+                // Deliberate engine-side refusal; nothing to fall back to.
+                return
+            } catch {
+                // Transport failure — fall through to local.
+            }
+            tasks.stop(serviceID: service.id, kind: kind)
+        }
+    }
+
+    /// Clear the output buffer for `(service, kind)` without stopping. Engine
+    /// returns success even when no slot exists, so we always issue the RPC
+    /// and only fall back on transport failure.
+    func clearTask(_ service: Service, kind: TaskRunner.TaskKind) {
+        let wireKind = Self.wireKind(kind)
+        // Optimistic local clear so the UI updates immediately; the next
+        // refresh will overwrite from the engine's view anyway. Matches the
+        // app's pre-2e.3 latency.
+        tasks.clear(serviceID: service.id, kind: kind)
+        Task {
+            do {
+                _ = try await EngineClient.shared.call(
+                    "tasks.clear",
+                    params: TaskCancelClientParams(id: service.id, kind: wireKind),
+                    as: EmptyResponse.self
+                )
+            } catch {
+                // Local clear already happened; nothing more to do.
+            }
+        }
+    }
+
+    /// Close the pane for `(service, kind)`. No-op while the task is still
+    /// running. Engine-first; falls back to local on engine-unreachable.
+    func closeTaskPane(_ service: Service, kind: TaskRunner.TaskKind) {
+        let wireKind = Self.wireKind(kind)
+        // Optimistic local close so the UI hides the pane immediately. If the
+        // engine still considers it running (race), the next refresh will
+        // bring back the running slot.
+        tasks.closePane(serviceID: service.id, kind: kind)
+        Task {
+            do {
+                _ = try await EngineClient.shared.call(
+                    "tasks.close_pane",
+                    params: TaskCancelClientParams(id: service.id, kind: wireKind),
+                    as: EmptyResponse.self
+                )
+            } catch {
+                // Local close already happened.
+            }
+        }
+    }
+
+    /// Shared engine-first start path. On engine acceptance, writes a
+    /// placeholder `.running` slot into the local runner so `isPaneVisible`
+    /// flips to true and the next refresh tick starts polling `tasks.list`.
+    /// On engine-unreachable, drives the local TaskRunner directly.
+    private func startTask(
+        service: Service,
+        kind: MatisaCore.TaskKind,
+        localKind: TaskRunner.TaskKind,
+        chosen: NamedCommand
+    ) {
+        // Skip if a task of the same kind is already running locally. Matches
+        // `TaskRunner.start`'s same-shape guard.
+        if tasks.slot(service.id, localKind).state.isRunning { return }
+
+        let cwd = service.spec.workingDirectory
+        let env = service.spec.env?.effective(activeContext: activeEnvContext) ?? [:]
+        let params = TaskStartClientParams(
+            id: service.id,
+            kind: kind,
+            name: chosen.name,
+            command: chosen.command,
+            cwd: cwd,
+            extraEnv: env
+        )
+        let chosenName = chosen.name
+        Task { @MainActor in
+            do {
+                _ = try await EngineClient.shared.call(
+                    "tasks.start",
+                    params: params,
+                    as: EmptyResponse.self
+                )
+                // Engine accepted. Write a placeholder so the next refresh
+                // tick sees a visible pane and starts polling.
+                tasks.writeEnginePlaceholder(
+                    serviceID: service.id,
+                    kind: localKind,
+                    name: chosenName
+                )
+                return
+            } catch EngineClient.ClientError.rpcError {
+                // Engine deliberately refused; nothing to fall back to.
+                return
+            } catch {
+                // Transport failure — drop to local.
+            }
+            tasks.start(
+                serviceID: service.id,
+                kind: localKind,
+                name: chosen.name,
+                command: chosen.command,
+                cwd: cwd,
+                extraEnv: env
+            )
+        }
+    }
+
+    private static func wireKind(_ k: TaskRunner.TaskKind) -> MatisaCore.TaskKind {
+        switch k {
+        case .build:  return .build
+        case .script: return .script
+        }
     }
 
     /// Lifecycle/state-changing actions that go through the docker CLI. Read

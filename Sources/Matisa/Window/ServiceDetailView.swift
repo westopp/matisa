@@ -303,7 +303,7 @@ struct ServiceDetailView: View {
             let running = store.tasks.slot(service.id, .build).state.isRunning
             if running {
                 IconButton("stop.fill", help: "Stop build", tint: .red) {
-                    store.tasks.stop(serviceID: service.id, kind: .build)
+                    store.stopTask(service, kind: .build)
                 }
             } else {
                 switch build {
@@ -338,7 +338,7 @@ struct ServiceDetailView: View {
             let running = store.tasks.slot(service.id, .script).state.isRunning
             if running {
                 IconButton("stop.fill", help: "Stop script", tint: .red) {
-                    store.tasks.stop(serviceID: service.id, kind: .script)
+                    store.stopTask(service, kind: .script)
                 }
             } else {
                 Menu {
@@ -519,9 +519,9 @@ struct ServiceDetailView: View {
             subtitle: paneSubtitle(slot.state),
             buffer: slot.buffer,
             isRunning: slot.state.isRunning,
-            onStop: { store.tasks.stop(serviceID: service.id, kind: .build) },
-            onClear: { store.tasks.clear(serviceID: service.id, kind: .build) },
-            onClose: { store.tasks.closePane(serviceID: service.id, kind: .build) }
+            onStop: { store.stopTask(service, kind: .build) },
+            onClear: { store.clearTask(service, kind: .build) },
+            onClose: { store.closeTaskPane(service, kind: .build) }
         )
     }
 
@@ -533,9 +533,9 @@ struct ServiceDetailView: View {
             subtitle: paneSubtitle(slot.state),
             buffer: slot.buffer,
             isRunning: slot.state.isRunning,
-            onStop: { store.tasks.stop(serviceID: service.id, kind: .script) },
-            onClear: { store.tasks.clear(serviceID: service.id, kind: .script) },
-            onClose: { store.tasks.closePane(serviceID: service.id, kind: .script) }
+            onStop: { store.stopTask(service, kind: .script) },
+            onClear: { store.clearTask(service, kind: .script) },
+            onClose: { store.closeTaskPane(service, kind: .script) }
         )
     }
 

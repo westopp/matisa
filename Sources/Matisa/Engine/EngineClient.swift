@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import MatisaCore
 
 /// Thin JSON-RPC 2.0 client over a Unix domain socket. One-shot semantics:
 /// each `call` opens a fresh connection, sends one request line, reads one
@@ -233,3 +234,21 @@ struct ServiceIDParams: Encodable {
 }
 
 struct EmptyResponse: Decodable {}
+
+/// Mirror of the engine's `TaskStartParams`. `TaskKind` rides as a string
+/// since it's `Codable` via its `String` RawValue.
+struct TaskStartClientParams: Encodable {
+    let id: String
+    let kind: MatisaCore.TaskKind
+    let name: String
+    let command: String
+    let cwd: URL
+    let extraEnv: [String: String]
+}
+
+/// Mirror of the engine's `TaskCancelParams`. Shared by `tasks.cancel`,
+/// `tasks.clear`, and `tasks.close_pane`.
+struct TaskCancelClientParams: Encodable {
+    let id: String
+    let kind: MatisaCore.TaskKind
+}

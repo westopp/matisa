@@ -1,4 +1,5 @@
 import Foundation
+import MatisaCore
 
 // Response shapes for engine RPC methods. Most wire types live in MatisaCore
 // so the app's client code shares the exact same Codable definitions; the
@@ -16,6 +17,28 @@ struct EngineStatus: Encodable {
 /// struct so the dispatcher's typed-params overload can decode it.
 struct ServiceIDParams: Decodable {
     let id: String
+}
+
+/// Params for `tasks.start`. The engine resolves the command in the
+/// caller-supplied `cwd` via `/bin/zsh -l -c "cd <cwd> && exec <command>"`;
+/// `extraEnv` overrides values inherited from the engine's environment.
+/// `cwd` is a `URL` because `Foundation.URL`'s default Codable serializes as
+/// a plain JSON string scalar, same shape `Service.logsPath` and
+/// `PersistedSpawn.logPath` already ride over the wire.
+struct TaskStartParams: Decodable {
+    let id: String
+    let kind: TaskKind
+    let name: String
+    let command: String
+    let cwd: URL
+    let extraEnv: [String: String]
+}
+
+/// Params for `tasks.cancel`, `tasks.clear`, and `tasks.close_pane` — all of
+/// which act on a single (serviceID, kind) slot.
+struct TaskCancelParams: Decodable {
+    let id: String
+    let kind: TaskKind
 }
 
 /// `{}` — for lifecycle methods whose success is signalled by the absence of

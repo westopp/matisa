@@ -411,4 +411,67 @@ final class CodableRoundTripTests: XCTestCase {
             ),
         ]))
     }
+
+    // MARK: - TaskSlot / TaskList (phase 2e.3 wire format)
+
+    func testTaskSlot_idle_roundTrip() throws {
+        try roundTrip(TaskSlot(state: .idle, buffer: ""))
+    }
+
+    func testTaskSlot_running_roundTrip() throws {
+        try roundTrip(TaskSlot(
+            state: .running(
+                name: "default",
+                since: Date(timeIntervalSince1970: 1_700_000_000)
+            ),
+            buffer: "compiling…\n"
+        ))
+    }
+
+    func testTaskSlot_exited_roundTrip() throws {
+        try roundTrip(TaskSlot(
+            state: .exited(
+                name: "default",
+                code: 0,
+                since: Date(timeIntervalSince1970: 1_700_000_000)
+            ),
+            buffer: "done\n"
+        ))
+    }
+
+    func testTaskList_multipleKinds_roundTrip() throws {
+        let list = TaskList(slots: [
+            .build: TaskSlot(
+                state: .running(
+                    name: "default",
+                    since: Date(timeIntervalSince1970: 1_700_000_000)
+                ),
+                buffer: "step 1\n"
+            ),
+            .script: TaskSlot(
+                state: .exited(
+                    name: "lint",
+                    code: 1,
+                    since: Date(timeIntervalSince1970: 1_700_000_001)
+                ),
+                buffer: "error: x\n"
+            ),
+        ])
+        let data = try encoder.encode(list)
+        let decoded = try decoder.decode(TaskList.self, from: data)
+        XCTAssertEqual(decoded.slots, list.slots)
+    }
+
+    /// Sanity-check the JSON shape: `TaskList` must encode as a keyed object
+    /// with string kinds, not the dictionary-of-pairs default Foundation uses
+    /// for `RawRepresentable<String>`-keyed dicts. App + engine read both
+    /// sides so a shape regression would silently break the wire.
+    func testTaskList_wireShapeIsKeyedObject() throws {
+        let list = TaskList(slots: [
+            .build: TaskSlot(state: .idle, buffer: ""),
+        ])
+        let data = try encoder.encode(list)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        XCTAssertNotNil(json?["build"], "expected `build` key at the top level, got \(String(describing: json))")
+    }
 }

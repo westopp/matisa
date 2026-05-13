@@ -17,6 +17,7 @@ final class Engine {
     private let lifecycleService: LifecycleService
     private let dockerDaemonService = DockerDaemonService()
     private let caddyService: CaddyService
+    private let taskService = TaskService()
     private let startedAt = Date()
 
     init() {
@@ -223,6 +224,39 @@ final class Engine {
         dispatcher.register("caddy.regenerate") { [caddyService] () -> EmptyResponse in
             _ = try await caddyService.regenerate()
             return EmptyResponse()
+        }
+
+        // Ad-hoc tasks (build / script invocations) — phase 2e.3. Engine owns
+        // the per-(serviceID, kind) slot map and the underlying Process
+        // lifecycle. App polls `tasks.list(id)` for services with a visible
+        // pane and mirrors the result into its local TaskRunner so the
+        // existing SwiftUI bindings keep working. Method names are snake_case
+        // for multi-word — `tasks.close_pane` not `tasks.closePane`.
+        dispatcher.register("tasks.start") { [taskService] (p: TaskStartParams) -> EmptyResponse in
+            taskService.start(
+                serviceID: p.id,
+                kind: p.kind,
+                name: p.name,
+                command: p.command,
+                cwd: p.cwd,
+                extraEnv: p.extraEnv
+            )
+            return EmptyResponse()
+        }
+        dispatcher.register("tasks.cancel") { [taskService] (p: TaskCancelParams) -> EmptyResponse in
+            taskService.cancel(serviceID: p.id, kind: p.kind)
+            return EmptyResponse()
+        }
+        dispatcher.register("tasks.clear") { [taskService] (p: TaskCancelParams) -> EmptyResponse in
+            taskService.clear(serviceID: p.id, kind: p.kind)
+            return EmptyResponse()
+        }
+        dispatcher.register("tasks.close_pane") { [taskService] (p: TaskCancelParams) -> EmptyResponse in
+            taskService.closePane(serviceID: p.id, kind: p.kind)
+            return EmptyResponse()
+        }
+        dispatcher.register("tasks.list") { [taskService] (p: ServiceIDParams) -> TaskList in
+            TaskList(slots: taskService.list(serviceID: p.id))
         }
     }
 

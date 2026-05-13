@@ -1,4 +1,5 @@
 import Foundation
+import MatisaCore
 import Observation
 import Darwin
 
@@ -9,6 +10,12 @@ import Darwin
 /// Tasks here intentionally do *not* persist across an app restart, unlike
 /// the long-lived project processes in `ProcessSupervisor`. That keeps the
 /// model simple: a build is a foreground activity tied to the running app.
+///
+/// From phase 2e.3 onwards this is the local-fallback path. The primary path
+/// runs in the engine's `TaskService`; `ServiceStore.refresh()` polls
+/// `tasks.list(id)` for services with a visible pane and mirrors the engine's
+/// view into our `slots` via `applyEngineSlot` so the SwiftUI bindings keep
+/// working without rewriting every view.
 @MainActor
 @Observable
 final class TaskRunner {
@@ -194,6 +201,73 @@ final class TaskRunner {
                 s.state = .exited(name: name, code: code, since: since)
             }
             s.pid = 0
+        }
+    }
+
+    // MARK: - Engine mirror (phase 2e.3)
+    //
+    // When the engine owns a task, the app polls `tasks.list(id)` during
+    // `refresh()` and pushes the result back here so the existing SwiftUI
+    // bindings keep working. The engine's wire slot has no PID (process
+    // management is engine-internal); we mirror in `pid: 0`. Cancellation,
+    // clear, and closePane on engine-driven slots all go through RPC and
+    // come back via the next poll — the local stop/clear/closePane paths
+    // are only invoked on the engine-unreachable fallback.
+
+    /// Map MatisaCore wire kinds to the runner's local enum. The two enums
+    /// are intentionally separate — keeping the local `TaskKind` in this
+    /// file means changing the wire type doesn't require updating every
+    /// SwiftUI call site.
+    private static func localKind(_ wire: MatisaCore.TaskKind) -> TaskKind {
+        switch wire {
+        case .build:  return .build
+        case .script: return .script
+        }
+    }
+
+    /// Map a MatisaCore wire slot to the runner's local slot, dropping the
+    /// engine-side PID detail.
+    private static func localSlot(_ wire: MatisaCore.TaskSlot) -> TaskSlot {
+        var s = TaskSlot()
+        s.buffer = wire.buffer
+        switch wire.state {
+        case .idle:
+            s.state = .idle
+        case let .running(name, since):
+            s.state = .running(name: name, since: since)
+        case let .exited(name, code, since):
+            s.state = .exited(name: name, code: code, since: since)
+        }
+        return s
+    }
+
+    /// Replace the slots for one service with the engine's view, wholesale.
+    /// Kinds present in `wire` overwrite local entries; kinds *absent* from
+    /// `wire` are dropped (the engine is the authority — if it doesn't have
+    /// a slot for `.build`, we shouldn't either).
+    func replaceSlotsFromEngine(serviceID: String, wire: [MatisaCore.TaskKind: MatisaCore.TaskSlot]) {
+        var inner: [TaskKind: TaskSlot] = [:]
+        for (k, v) in wire {
+            inner[Self.localKind(k)] = Self.localSlot(v)
+        }
+        if inner.isEmpty {
+            slots.removeValue(forKey: serviceID)
+        } else {
+            slots[serviceID] = inner
+        }
+    }
+
+    /// Write a placeholder `.running` slot for `(serviceID, kind)`. Called by
+    /// `ServiceStore.runBuild` / `runScript` right after the engine accepts
+    /// a `tasks.start` RPC, so `isPaneVisible` flips to `true` before the
+    /// next refresh tick mirrors the engine's real state in. Without this
+    /// bootstrap the next poll wouldn't fire — refresh only queries
+    /// `tasks.list` for slots whose pane is already visible.
+    func writeEnginePlaceholder(serviceID: String, kind: TaskKind, name: String) {
+        mutate(serviceID, kind) {
+            $0.state = .running(name: name, since: Date())
+            $0.buffer = ""
+            $0.pid = 0
         }
     }
 }
