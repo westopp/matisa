@@ -6,7 +6,7 @@ import MatisaCore
 /// after that, so worker threads can read it without synchronization.
 final class Engine {
 
-    static let version = "0.3.0-phase2b"
+    static let version = "0.4.0-phase2c"
 
     private let socketPath: String
     private let dispatcher = MethodDispatcher()
