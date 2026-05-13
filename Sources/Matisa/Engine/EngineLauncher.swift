@@ -57,14 +57,18 @@ enum EngineLauncher {
     /// Polls `path` every 50ms for up to `timeout` seconds. Returns true as
     /// soon as a UDS `connect()` to the path succeeds, false on timeout.
     /// Cheap: opens and immediately closes a probe socket per attempt.
+    ///
+    /// `timeout = 0` is treated as "one immediate probe" rather than "no
+    /// probe at all" — callers expecting `isReachableNow()` semantics get
+    /// what they expect.
     static func waitForSocketReady(path: String, timeout: TimeInterval) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
+        repeat {
             if probeConnect(path: path) {
                 return true
             }
             try? await Task.sleep(nanoseconds: 50_000_000)
-        }
+        } while Date() < deadline
         return false
     }
 

@@ -44,43 +44,52 @@ final class EngineLauncherTests: XCTestCase {
     func testWaitForSocketReturnsTrueWhenSocketBecomesAvailable() async throws {
         let sockPath = NSTemporaryDirectory()
             + "lt-\(UUID().uuidString).sock"
+        // Order matters: close the listener first (which makes accept return),
+        // then unlink the path. Defers run LIFO, so list them in this order.
         defer { unlink(sockPath) }
 
-        // Spawn a minimal listener in the background.
-        let listenerReady = expectation(description: "listener ready")
+        // Bind + listen on the main test thread so we own the fd and can
+        // close it deterministically below. The Task.detached below only
+        // runs the accept loop, which exits as soon as the fd is closed.
+        let listenerFD = socket(AF_UNIX, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(listenerFD, 0)
+        defer { close(listenerFD) }
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let bytes = Array(sockPath.utf8)
+        let cap = MemoryLayout.size(ofValue: addr.sun_path)
+        XCTAssertLessThan(bytes.count, cap, "socket path overflows sun_path; shorten the prefix")
+        withUnsafeMutablePointer(to: &addr.sun_path) { tup in
+            tup.withMemoryRebound(to: UInt8.self, capacity: cap) { bp in
+                for (i, b) in bytes.enumerated() { bp[i] = b }
+                bp[bytes.count] = 0
+            }
+        }
+        let bindResult = withUnsafePointer(to: &addr) { p -> Int32 in
+            p.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                Darwin.bind(listenerFD, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        XCTAssertEqual(bindResult, 0, "bind failed: \(String(cString: strerror(errno)))")
+        XCTAssertEqual(listen(listenerFD, 8), 0)
+
+        // Run the accept loop on a detached task. Exits when listenerFD is
+        // closed (accept returns -1 / EBADF).
         Task.detached {
-            let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-            defer { close(fd) }
-            var addr = sockaddr_un()
-            addr.sun_family = sa_family_t(AF_UNIX)
-            let bytes = Array(sockPath.utf8)
-            let cap = MemoryLayout.size(ofValue: addr.sun_path)
-            withUnsafeMutablePointer(to: &addr.sun_path) { tup in
-                tup.withMemoryRebound(to: UInt8.self, capacity: cap) { bp in
-                    for (i, b) in bytes.enumerated() { bp[i] = b }
-                    bp[bytes.count] = 0
-                }
-            }
-            _ = withUnsafePointer(to: &addr) { p in
-                p.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
-                    Darwin.bind(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
-                }
-            }
-            _ = listen(fd, 8)
-            listenerReady.fulfill()
-            // Keep listening until the test tears down — accept and close.
             while true {
-                let c = accept(fd, nil, nil)
+                let c = accept(listenerFD, nil, nil)
                 if c < 0 { break }
                 close(c)
             }
         }
-        await fulfillment(of: [listenerReady], timeout: 1.0)
 
         let result = await EngineLauncher.waitForSocketReady(
             path: sockPath,
             timeout: 1.0
         )
         XCTAssertTrue(result)
+        // Defers: close(listenerFD) runs first → accept returns -1 → detached
+        // task exits. Then unlink(sockPath) cleans up the inode.
     }
 }
