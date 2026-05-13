@@ -30,6 +30,12 @@ final class JSONRPCEnvelopeTests: XCTestCase {
         dispatcher.register("badparams") { () -> Pong in
             throw RPCError.invalidParams("bad")
         }
+        // `raw_passthrough` exercises the registerRaw path used by config.get
+        // — the handler returns pre-formed JSON bytes that should appear
+        // unchanged in the response's `result` field.
+        dispatcher.registerRaw("raw_passthrough") {
+            Data(#"{"already":"json","values":[1,2,3]}"#.utf8)
+        }
         return JSONRPCEnvelope(dispatcher: dispatcher)
     }
 
@@ -190,5 +196,19 @@ final class JSONRPCEnvelopeTests: XCTestCase {
             (responseDict(out)?["error"] as? [String: Any])?["code"] as? Int,
             -32602
         )
+    }
+
+    // MARK: - Raw pass-through (config.get's wire path)
+
+    func testRawHandler_resultIsParsedJSON() {
+        // The raw handler returns `{"already":"json","values":[1,2,3]}` bytes.
+        // The envelope must place those bytes verbatim under `result` —
+        // crucially, NOT wrap them in quotes as a string.
+        let out = makeEnvelope().handle(line(#"{"jsonrpc":"2.0","method":"raw_passthrough","id":1}"#))
+        let dict = responseDict(out)!
+        let result = dict["result"] as? [String: Any]
+        XCTAssertNotNil(result, "result should be a JSON object, not a string")
+        XCTAssertEqual(result?["already"] as? String, "json")
+        XCTAssertEqual(result?["values"] as? [Int], [1, 2, 3])
     }
 }

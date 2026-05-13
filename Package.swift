@@ -33,6 +33,11 @@ let package = Package(
             name: "MatisaEngineTests",
             dependencies: ["MatisaEngine", "MatisaCore"],
             path: "Tests/MatisaEngineTests"
+        ),
+        .testTarget(
+            name: "MatisaCoreTests",
+            dependencies: ["MatisaCore"],
+            path: "Tests/MatisaCoreTests"
         )
     ]
 )
