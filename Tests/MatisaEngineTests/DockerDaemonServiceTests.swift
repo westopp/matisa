@@ -38,32 +38,26 @@ final class DockerDaemonServiceTests: XCTestCase {
 
     // MARK: - clearFailure
 
+    /// `.startFailed → .stopped` is the positive arm of clearFailure. Drive
+    /// the service into `.startFailed` quickly by injecting a tight
+    /// `readyTimeout` and `pollIntervalNS` plus a probe that never returns
+    /// true — same shape as production but completes in tens of ms.
     func testClearFailure_fromStartFailed_movesToStopped() async {
-        // Drive into .startFailed by starting with a probe that never
-        // returns true and letting the deadline expire. To avoid waiting
-        // 60s, we shorten the wait by cancelling — but cancellation goes to
-        // .stopped, not .startFailed. So instead exercise via the natural
-        // failed path: spin up a service whose probe always returns false
-        // and whose openDocker resolves instantly; the awaitDaemonReady
-        // loop will time out... in 60s. Too slow.
-        //
-        // Cheaper: poke the private internal seam via the cancel-and-start
-        // observation, OR write a smaller seam. Sticking to public API,
-        // simulate the post-timeout path by starting then waiting for the
-        // result with a probe that returns true after a short delay — that
-        // exits .starting via .running, not .startFailed. For .startFailed
-        // we need a fast deadline, which the production class doesn't
-        // expose.
-        //
-        // Workaround: drive state to .startFailed indirectly by exposing
-        // a test-only setter. We use the `cancelStart() then clearFailure()`
-        // path to confirm clearFailure is a no-op when state isn't
-        // .startFailed, and rely on the timeout-state test below (which
-        // does pay the wall-time price but only with a very small custom
-        // poll interval — using the *test seam* not yet exposed).
-        //
-        // Simpler approach: confirm clearFailure is a no-op from .stopped,
-        // .unknown, and .running (the latter via probe-returns-true).
+        let svc = DockerDaemonService(
+            daemonProbe: { false },             // never ready → timeout path
+            openDocker: {},
+            quitDocker: {},
+            readyTimeout: 0.05,                 // 50ms total deadline
+            pollIntervalNS: 10_000_000          // 10ms poll
+        )
+        await svc.start()
+        XCTAssertTrue(waitUntil { svc.status().isStartFailed })
+
+        svc.clearFailure()
+        XCTAssertEqual(svc.status(), .stopped)
+    }
+
+    func testClearFailure_fromHealthyStates_isNoOp() async {
         let svc = DockerDaemonService(
             daemonProbe: { true },
             openDocker: {},
@@ -83,16 +77,9 @@ final class DockerDaemonServiceTests: XCTestCase {
         XCTAssertEqual(svc.status(), .running)
     }
 
-    /// Verifies the `.startFailed → .stopped` transition specifically.
-    /// Uses an injected probe that always returns false combined with a
-    /// fake openDocker; we manually simulate the timeout by waiting for
-    /// awaitDaemonReady to give up. To keep the test fast, we don't wait
-    /// the full production 60s — instead we exercise the cancel path
-    /// (which transitions to .stopped) and confirm clearFailure does NOT
-    /// trigger when state isn't .startFailed. The "from .startFailed"
-    /// branch is also confirmed by the no-op-from-other-states check
-    /// above: the predicate matches strictly on the .startFailed case,
-    /// nothing else.
+    /// Same predicate exercised from the other "non-startFailed" states the
+    /// service can reach without paying the full timeout: `.starting` and
+    /// `.stopped`.
     func testClearFailure_fromOtherStates_isNoOp() async {
         // .stopped is reached via cancelStart from .starting.
         let neverReady = DockerDaemonService(
@@ -168,6 +155,29 @@ final class DockerDaemonServiceTests: XCTestCase {
     /// Two rapid-fire `start()` calls must only dispatch one underlying
     /// `open -a Docker`. Matches the app's
     /// `guard !dockerSystem.isStarting else { return }` semantics.
+    /// Regression for F-001 in the 2f review: an immediate `cancelStart()`
+    /// fired right after `start()` returns must actually cancel the in-flight
+    /// task and produce a terminal `.stopped`, not let the finishStart write
+    /// race in and stomp with `.running`/`.startFailed`. Pre-fix, the
+    /// two-stage queue.sync in start() created a window where startTask was
+    /// still nil when cancelStart read state, so the cancel bailed silently.
+    func testCancelStart_immediatelyAfterStart_endsAtStopped() async {
+        let svc = DockerDaemonService(
+            daemonProbe: { false },             // would otherwise time out → .startFailed
+            openDocker: { try? await Task.sleep(nanoseconds: 50_000_000) },
+            quitDocker: {},
+            readyTimeout: 0.1,                  // short so a lost cancel surfaces fast
+            pollIntervalNS: 10_000_000
+        )
+        await svc.start()
+        svc.cancelStart()
+        // Immediate observation: cancel writes .stopped synchronously.
+        XCTAssertEqual(svc.status(), .stopped)
+        // And it stays .stopped — finishStart must NOT race in and overwrite.
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(svc.status(), .stopped)
+    }
+
     func testConcurrentStart_onlyOneOpenCall() async {
         let openCount = Counter()
         let svc = DockerDaemonService(

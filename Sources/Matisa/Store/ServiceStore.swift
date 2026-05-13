@@ -171,8 +171,8 @@ final class ServiceStore {
         }
 
         // Phase 2f: engine owns the Docker daemon state machine. When
-        // reachable, mirror its view unconditionally — the engine reconciles
-        // `.starting` / `.startFailed` against the live probe internally.
+        // reachable, mirror its view — the engine reconciles `.starting` /
+        // `.startFailed` against the live probe internally.
         // When the engine isn't reachable, fall back to the pre-2f
         // local state machine: only let the probe override the indicator
         // when we're not in a deliberate UI state.
@@ -181,7 +181,17 @@ final class ServiceStore {
                "docker.daemon.status",
                as: DockerSystemState.self
            ) {
-            dockerSystem = engineState
+            // Guard against a click-then-refresh race: if the user just
+            // pressed Start (locally marking `.starting`) while a refresh
+            // tick had already read `.stopped` from the engine pre-click,
+            // a stale write here would flicker the UI back to `.stopped`
+            // until the next 4s tick. The optimistic local `.starting`
+            // wins until the engine catches up to it.
+            let staleStoppedDuringClick =
+                dockerSystem.isStarting && engineState == .stopped
+            if !staleStoppedDuringClick {
+                dockerSystem = engineState
+            }
         } else {
             if !dockerSystem.isStarting && !dockerSystem.isStartFailed {
                 dockerSystem = dockerDaemonRunning ? .running : .stopped

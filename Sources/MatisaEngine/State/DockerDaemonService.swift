@@ -29,17 +29,17 @@ final class DockerDaemonService: @unchecked Sendable {
 
     /// Default poll interval inside `awaitDaemonReady`. Match the app's value
     /// so the engine-driven path feels identical to the local one.
-    private static let pollIntervalNS: UInt64 = 1_000_000_000   // 1s
+    private static let defaultPollIntervalNS: UInt64 = 1_000_000_000   // 1s
 
     /// Default deadline for the poll loop. Same 60s the app uses today.
-    private static let readyTimeout: TimeInterval = 60
-
-    /// Per-probe timeout passed to the daemon check. 2s is the app's value.
-    private static let probeTimeout: TimeInterval = 2
+    private static let defaultReadyTimeout: TimeInterval = 60
 
     private let queue = DispatchQueue(label: "engine.docker.daemon")
     private var state: DockerSystemState = .unknown
     private var startTask: Task<Void, Never>?
+
+    private let readyTimeout: TimeInterval
+    private let pollIntervalNS: UInt64
 
     /// Cheap, no-state-mutation daemon probe. Same call the lifecycle gate
     /// uses (`SyncDocker.daemonRunning`) so the two views never disagree.
@@ -66,11 +66,15 @@ final class DockerDaemonService: @unchecked Sendable {
                 arguments: ["-e", "quit app \"Docker\""],
                 timeout: 10
             )
-        }
+        },
+        readyTimeout: TimeInterval = DockerDaemonService.defaultReadyTimeout,
+        pollIntervalNS: UInt64 = DockerDaemonService.defaultPollIntervalNS
     ) {
         self.daemonProbe = daemonProbe
         self.openDocker = openDocker
         self.quitDocker = quitDocker
+        self.readyTimeout = readyTimeout
+        self.pollIntervalNS = pollIntervalNS
     }
 
     // MARK: - Status
@@ -93,35 +97,37 @@ final class DockerDaemonService: @unchecked Sendable {
     /// Concurrent calls while already `.starting` are no-ops; the existing
     /// in-flight Task continues.
     func start() async {
-        // Transition under the queue and capture whether we need to spin up
-        // a Task. If state was already `.starting`, return without doing
-        // anything — concurrent caller is folded into the existing task.
+        // Flip state, create the Task, and assign `startTask` all under one
+        // `queue.sync` so a concurrent `cancelStart()` can't observe a state
+        // of `.starting` with `startTask` still nil (which would let the
+        // cancel silently lose the race — see F-001 in the 2f review).
+        // Task construction is just a struct allocation; the captured
+        // closures' work runs asynchronously after the sync block returns.
+        let openDocker = self.openDocker
+        let daemonProbe = self.daemonProbe
+        let readyTimeout = self.readyTimeout
+        let pollIntervalNS = self.pollIntervalNS
         let shouldDispatch: Bool = queue.sync {
             if case .starting = state { return false }
             state = .starting
+            startTask = Task<Void, Never> { [weak self] in
+                await openDocker()
+                let ready = await Self.awaitDaemonReady(
+                    probe: daemonProbe,
+                    timeout: readyTimeout,
+                    pollIntervalNS: pollIntervalNS
+                )
+                // If we were cancelled mid-await, the cancel path has already
+                // set `.stopped`; don't stomp on it.
+                if Task.isCancelled { return }
+                self?.finishStart(ready: ready)
+            }
             return true
         }
-        guard shouldDispatch else { return }
-
-        // Spawn the background work. We don't `await task.value` here — the
-        // method returns as soon as the open + poll work is scheduled. The
-        // dispatch is otherwise prompt (just an enqueue), so semantics match
-        // the app's old performDockerStart from the caller's perspective.
-        let openDocker = self.openDocker
-        let daemonProbe = self.daemonProbe
-        let task = Task<Void, Never> { [weak self] in
-            await openDocker()
-            let ready = await Self.awaitDaemonReady(
-                probe: daemonProbe,
-                timeout: Self.readyTimeout,
-                pollIntervalNS: Self.pollIntervalNS
-            )
-            // If we were cancelled mid-await, the cancel path has already set
-            // `.stopped`; don't stomp on it.
-            if Task.isCancelled { return }
-            self?.finishStart(ready: ready)
-        }
-        queue.sync { startTask = task }
+        // Returns once the work has been *dispatched* — the open + poll
+        // continue on the captured Task. Clients poll `docker.daemon.status`
+        // for the terminal state.
+        _ = shouldDispatch
     }
 
     /// Quit Docker Desktop via AppleScript. Cleaner than killing the process
