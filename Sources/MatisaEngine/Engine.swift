@@ -24,12 +24,13 @@ final class Engine {
         )
 
         // Capture dispatcher locally so the closure doesn't need self.
-        // The connection handler is async (so methods can await), but the
-        // server's accept queue is sync — bridge by spawning a detached Task
-        // per accepted fd.
+        // The accept callback runs synchronously on a growing dispatch worker
+        // queue; the connection loop's blocking read(2) belongs there, not on
+        // the cooperative pool. ConnectionHandler bridges to async around
+        // each handler call internally.
         let dispatcher = self.dispatcher
         self.server = UnixSocketServer(path: socketPath) { fd in
-            Task { await ConnectionHandler(fd: fd, dispatcher: dispatcher).run() }
+            ConnectionHandler(fd: fd, dispatcher: dispatcher).run()
         }
 
         registerMethods()

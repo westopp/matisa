@@ -2,22 +2,26 @@ import Foundation
 import Darwin
 
 /// Owns a single accepted client fd. Reads newline-delimited JSON-RPC
-/// requests, hands them to `JSONRPCEnvelope`, writes responses back. Closes
+/// requests, hands each to `JSONRPCEnvelope`, writes responses back. Closes
 /// the fd when the peer hangs up.
 ///
-/// Framing: NDJSON (one JSON object per line). Compact encoding only.
-/// Sufficient for phase 0/1; if we ever need messages with embedded newlines
-/// (we won't — JSON encoders escape them) we can swap to length-prefix.
+/// **Threading:** `run()` is invoked on `UnixSocketServer.workerQueue` (a
+/// growing concurrent dispatch queue). The blocking `read(2)` in `LineReader`
+/// holds that worker thread for the lifetime of the connection, which is the
+/// right context for a syscall that may block indefinitely — dispatch worker
+/// threads scale; the Swift concurrency cooperative pool does not. Each
+/// dispatcher invocation runs as a `Task` on the cooperative pool, so handlers
+/// can `await` freely; we use a `DispatchSemaphore` to bring the bytes back to
+/// the synchronous caller. The caller is going to block on the next `read(2)`
+/// anyway, so blocking briefly on the dispatch result is no worse.
 ///
-/// `run()` is async so the envelope's `handle` can await dispatcher handlers
-/// without blocking the worker thread. LineReader stays sync — the await
-/// belongs around dispatch, not around the read syscall.
+/// Framing: NDJSON (one JSON object per line). Compact encoding only.
 struct ConnectionHandler: Sendable {
 
     let fd: Int32
     let dispatcher: MethodDispatcher
 
-    func run() async {
+    func run() {
         defer { close(fd) }
         let envelope = JSONRPCEnvelope(dispatcher: dispatcher)
         let reader = LineReader(fd: fd)
@@ -25,10 +29,26 @@ struct ConnectionHandler: Sendable {
             if line.isEmpty { continue }
             // handle() returns nil for notifications (JSON-RPC 2.0 §4.1:
             // "The Server MUST NOT reply to a Notification.").
-            if let response = await envelope.handle(line) {
+            if let response = awaitHandle(envelope: envelope, line: line) {
                 writeLine(response)
             }
         }
+    }
+
+    /// Bridge the async envelope back to the synchronous worker-queue caller.
+    /// The Task runs on the cooperative pool — the handler can `await` —
+    /// while this thread is parked on the semaphore. The semaphore signal
+    /// happens-after the box write, establishing a synchronization edge so
+    /// the surrounding sync context's read of `box.value` is well-defined.
+    private func awaitHandle(envelope: JSONRPCEnvelope, line: Data) -> Data? {
+        let semaphore = DispatchSemaphore(value: 0)
+        let box = Box<Data>()
+        Task {
+            box.value = await envelope.handle(line)
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return box.value
     }
 
     private func writeLine(_ data: Data) {
@@ -49,4 +69,14 @@ struct ConnectionHandler: Sendable {
             }
         }
     }
+}
+
+/// Mutable reference cell used to ferry a value out of a Task back to a
+/// synchronous caller that's parked on a DispatchSemaphore. `@unchecked
+/// Sendable` is sound here because the semaphore signal/wait pair establishes
+/// the necessary happens-before edge between the Task's write and the
+/// caller's read.
+private final class Box<T>: @unchecked Sendable {
+    var value: T?
+    init() {}
 }
