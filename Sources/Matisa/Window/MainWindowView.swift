@@ -6,6 +6,7 @@ enum SidebarSelection: Hashable {
     case service(String)
     case caddy
     case docker
+    case engine
     case configError
 }
 
@@ -147,7 +148,7 @@ struct MainWindowView: View {
                     CollapsibleSection(
                         id: "system",
                         title: "System",
-                        count: 2,
+                        count: 3,
                         collapsedAccessory: {
                             GroupRunningIndicator(runningCount: systemRunningCount)
                         }
@@ -155,6 +156,7 @@ struct MainWindowView: View {
                         VStack(spacing: 6) {
                             caddyRow
                             dockerRow
+                            engineRow
                         }
                     }
 
@@ -453,6 +455,64 @@ struct MainWindowView: View {
     }
 
     @ViewBuilder
+    private var engineRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "gearshape.2.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Engine")
+                    .font(.body.weight(.medium))
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(store.engineStatus != nil ? Color.green : Color.secondary)
+                        .frame(width: 7, height: 7)
+                    Text(engineStatusLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            IconButton(
+                store.engineStatus != nil ? "stop.fill" : "play.fill",
+                help: store.engineStatus != nil ? "Stop engine" : "Start engine",
+                tint: store.engineStatus != nil ? .red : .green
+            ) {
+                Task {
+                    if store.engineStatus != nil {
+                        await store.performEngineStop()
+                    } else {
+                        await store.performEngineStart()
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(selection == .engine ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.04))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(
+                    selection == .engine ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.12)
+                )
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .onTapGesture { selection = .engine }
+    }
+
+    private var engineStatusLabel: String {
+        if let s = store.engineStatus {
+            return "Running · v\(s.version)"
+        } else {
+            return "Stopped"
+        }
+    }
+
+    @ViewBuilder
     private var dockerRowTrailing: some View {
         switch store.dockerSystem {
         case .starting:
@@ -512,6 +572,8 @@ struct MainWindowView: View {
             CaddyDetailView()
         case .docker:
             DockerDetailView()
+        case .engine:
+            EngineDetailView()
         case .configError:
             ConfigErrorView()
         case .none:
@@ -575,9 +637,12 @@ struct MainWindowView: View {
         }.count
     }
 
-    /// System section has two rows (Caddy, Docker). Lit when each is up.
+    /// System section has three rows (Caddy, Docker, Engine).
+    /// Lit when each is up.
     private var systemRunningCount: Int {
-        (store.caddyService.running ? 1 : 0) + (store.dockerSystem.isRunning ? 1 : 0)
+        (store.caddyService.running ? 1 : 0)
+            + (store.dockerSystem.isRunning ? 1 : 0)
+            + (store.engineStatus != nil ? 1 : 0)
     }
 
     /// Lays out a category's services with optional sub-groups. Ungrouped

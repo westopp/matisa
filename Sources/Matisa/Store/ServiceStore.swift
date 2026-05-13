@@ -876,6 +876,33 @@ final class ServiceStore {
         }
     }
 
+    func performEngineStart() async {
+        do {
+            _ = try await EngineLauncher.ensureRunning(
+                socketPath: EngineClient.defaultSocketPath()
+            )
+            await refresh()
+        } catch {
+            FileHandle.standardError.write(
+                Data("performEngineStart: \(error)\n".utf8)
+            )
+        }
+    }
+
+    func performEngineStop() async {
+        do {
+            try await EngineClient.shared.shutdown()
+        } catch {
+            FileHandle.standardError.write(
+                Data("performEngineStop: \(error)\n".utf8)
+            )
+        }
+        // Clear the mirror immediately — the next refresh will confirm
+        // the socket is gone, but the UI shouldn't lag behind a known stop.
+        self.engineStatus = nil
+        await refresh()
+    }
+
     func performCaddy(_ action: CaddyAction) async {
         switch action {
         case .start:           await caddyStart()
