@@ -165,6 +165,17 @@ final class Engine {
             )
         }
 
+        // engine.shutdown — phase 3. Acks the request, then raises SIGTERM
+        // to self after a short delay so the response makes it back to the
+        // client before the process exits. Reuses the existing SIGTERM
+        // dispatch source in main.swift so there's exactly one shutdown path.
+        dispatcher.register("engine.shutdown") { () -> EmptyResponse in
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) {
+                _ = raise(SIGTERM)
+            }
+            return EmptyResponse()
+        }
+
         // config.status — phase 2a. Cheap diagnostic; never re-runs bun.
         dispatcher.register("config.status") { [configService] () -> ConfigService.Status in
             configService.status()
