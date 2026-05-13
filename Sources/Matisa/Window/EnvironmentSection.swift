@@ -178,27 +178,61 @@ struct EnvironmentSection: View {
 
     @ViewBuilder
     private var varsList: some View {
-        let entries: [EnvVar] = (viewedTab == nil) ? env.base : env.vars(in: viewedTab!)
-        if entries.isEmpty {
-            Text("No overrides for this context")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .padding(.vertical, 6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(entries, id: \.name) { v in
-                        envRow(v)
+        if let tab = viewedTab {
+            // Context view: context-specific vars on top; base below the
+            // divider, since they're also injected at runtime. Base entries
+            // whose names are overridden by the context appear struck-through
+            // to signal "this value is shadowed."
+            let contextVars = env.vars(in: tab)
+            let overriddenNames = Set(contextVars.map(\.name))
+            if contextVars.isEmpty && env.base.isEmpty {
+                emptyState
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(contextVars, id: \.name) { v in
+                            envRow(v, isShadowed: false)
+                        }
+                        if !env.base.isEmpty {
+                            if !contextVars.isEmpty {
+                                Divider().padding(.vertical, 4)
+                            }
+                            ForEach(env.base, id: \.name) { v in
+                                envRow(v, isShadowed: overriddenNames.contains(v.name))
+                            }
+                        }
                     }
                 }
+                .frame(maxHeight: 240)
             }
-            .frame(maxHeight: 240)
+        } else {
+            // Default tab: just the base vars. No merging needed.
+            if env.base.isEmpty {
+                emptyState
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(env.base, id: \.name) { v in
+                            envRow(v, isShadowed: false)
+                        }
+                    }
+                }
+                .frame(maxHeight: 240)
+            }
         }
     }
 
     @ViewBuilder
-    private func envRow(_ v: EnvVar) -> some View {
+    private var emptyState: some View {
+        Text("No environment variables.")
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func envRow(_ v: EnvVar, isShadowed: Bool) -> some View {
         let displayValue: String = revealAll
             ? v.value
             : String(repeating: "•", count: min(max(v.value.count, 4), 12))
@@ -206,17 +240,22 @@ struct EnvironmentSection: View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(v.name)
                 .font(.system(.caption, design: .monospaced).weight(.medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isShadowed ? Color.secondary.opacity(0.6) : .secondary)
+                .strikethrough(isShadowed)
                 .frame(minWidth: 140, alignment: .leading)
                 .textSelection(.enabled)
             Text(displayValue)
                 .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.primary)
+                .foregroundStyle(isShadowed ? Color.primary.opacity(0.45) : .primary)
+                .strikethrough(isShadowed)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 2)
+        .help(isShadowed
+              ? "\(v.name) is overridden in this context — the context value above is what gets injected."
+              : "")
     }
 }
