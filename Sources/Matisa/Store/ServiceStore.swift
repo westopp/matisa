@@ -388,6 +388,17 @@ final class ServiceStore {
         // -32001 (dockerDaemonRequired) drives the prompt when the engine is
         // reachable, and the *Local fallback path runs its own probe when
         // the engine is unreachable.
+        //
+        // We DO still short-circuit while Docker Desktop is mid-boot: firing
+        // a docker-using action through the engine in that window either
+        // races the start sheet (engine returns -32001 and stomps the
+        // already-up `pendingDockerPrompt`) or non-deterministically
+        // succeeds depending on when the daemon comes ready. Same gate the
+        // pre-2c.3 perform() had.
+        if Self.actionNeedsDocker(action, service: service), dockerSystem.isStarting {
+            return
+        }
+
         switch action {
         case .start:           await start(service)
         case .stop:            await stop(service)
@@ -435,7 +446,15 @@ final class ServiceStore {
             )
             return
         } catch EngineClient.ClientError.rpcError(_, let msg) {
-            markState(service.id, .error("engine: \(msg)"))
+            // Engine deliberately said no (e.g. -32002 serviceNotFound,
+            // -32603 internal). Don't write a transient `.error` state —
+            // the trailing refresh() would overwrite it within milliseconds
+            // with the engine's actual snapshot value, so the user only
+            // sees a flicker. Log for now; a dedicated `engineActionErrors`
+            // surface for the UI is pending (tracked in plan.md).
+            FileHandle.standardError.write(
+                Data("ServiceStore: engine rpcError on action: \(msg)\n".utf8)
+            )
             return
         } catch {
             // Transport / decode failure → engine isn't usable, fall through.
@@ -460,7 +479,15 @@ final class ServiceStore {
             )
             return
         } catch EngineClient.ClientError.rpcError(_, let msg) {
-            markState(service.id, .error("engine: \(msg)"))
+            // Engine deliberately said no (e.g. -32002 serviceNotFound,
+            // -32603 internal). Don't write a transient `.error` state —
+            // the trailing refresh() would overwrite it within milliseconds
+            // with the engine's actual snapshot value, so the user only
+            // sees a flicker. Log for now; a dedicated `engineActionErrors`
+            // surface for the UI is pending (tracked in plan.md).
+            FileHandle.standardError.write(
+                Data("ServiceStore: engine rpcError on action: \(msg)\n".utf8)
+            )
             return
         } catch {
             // Fall through to local.
@@ -485,7 +512,15 @@ final class ServiceStore {
             )
             return
         } catch EngineClient.ClientError.rpcError(_, let msg) {
-            markState(service.id, .error("engine: \(msg)"))
+            // Engine deliberately said no (e.g. -32002 serviceNotFound,
+            // -32603 internal). Don't write a transient `.error` state —
+            // the trailing refresh() would overwrite it within milliseconds
+            // with the engine's actual snapshot value, so the user only
+            // sees a flicker. Log for now; a dedicated `engineActionErrors`
+            // surface for the UI is pending (tracked in plan.md).
+            FileHandle.standardError.write(
+                Data("ServiceStore: engine rpcError on action: \(msg)\n".utf8)
+            )
             return
         } catch {
             // Fall through to local.
@@ -510,7 +545,15 @@ final class ServiceStore {
             )
             return
         } catch EngineClient.ClientError.rpcError(_, let msg) {
-            markState(service.id, .error("engine: \(msg)"))
+            // Engine deliberately said no (e.g. -32002 serviceNotFound,
+            // -32603 internal). Don't write a transient `.error` state —
+            // the trailing refresh() would overwrite it within milliseconds
+            // with the engine's actual snapshot value, so the user only
+            // sees a flicker. Log for now; a dedicated `engineActionErrors`
+            // surface for the UI is pending (tracked in plan.md).
+            FileHandle.standardError.write(
+                Data("ServiceStore: engine rpcError on action: \(msg)\n".utf8)
+            )
             return
         } catch {
             // Fall through to local.
@@ -535,7 +578,15 @@ final class ServiceStore {
             )
             return
         } catch EngineClient.ClientError.rpcError(_, let msg) {
-            markState(service.id, .error("engine: \(msg)"))
+            // Engine deliberately said no (e.g. -32002 serviceNotFound,
+            // -32603 internal). Don't write a transient `.error` state —
+            // the trailing refresh() would overwrite it within milliseconds
+            // with the engine's actual snapshot value, so the user only
+            // sees a flicker. Log for now; a dedicated `engineActionErrors`
+            // surface for the UI is pending (tracked in plan.md).
+            FileHandle.standardError.write(
+                Data("ServiceStore: engine rpcError on action: \(msg)\n".utf8)
+            )
             return
         } catch {
             // Fall through to local.
@@ -560,7 +611,15 @@ final class ServiceStore {
             )
             return
         } catch EngineClient.ClientError.rpcError(_, let msg) {
-            markState(service.id, .error("engine: \(msg)"))
+            // Engine deliberately said no (e.g. -32002 serviceNotFound,
+            // -32603 internal). Don't write a transient `.error` state —
+            // the trailing refresh() would overwrite it within milliseconds
+            // with the engine's actual snapshot value, so the user only
+            // sees a flicker. Log for now; a dedicated `engineActionErrors`
+            // surface for the UI is pending (tracked in plan.md).
+            FileHandle.standardError.write(
+                Data("ServiceStore: engine rpcError on action: \(msg)\n".utf8)
+            )
             return
         } catch {
             // Fall through to local.
