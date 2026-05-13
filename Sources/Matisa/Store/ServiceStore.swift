@@ -881,12 +881,14 @@ final class ServiceStore {
             _ = try await EngineLauncher.ensureRunning(
                 socketPath: EngineClient.defaultSocketPath()
             )
-            await refresh()
         } catch {
             FileHandle.standardError.write(
                 Data("performEngineStart: \(error)\n".utf8)
             )
         }
+        // Always refresh — even on spawn failure, the engine may have come
+        // up after a slow start, or some other state may have changed.
+        await refresh()
     }
 
     func performEngineStop() async {
@@ -897,9 +899,19 @@ final class ServiceStore {
                 Data("performEngineStop: \(error)\n".utf8)
             )
         }
-        // Clear the mirror immediately — the next refresh will confirm
-        // the socket is gone, but the UI shouldn't lag behind a known stop.
+        // Clear the mirror immediately — the row should reflect the user's
+        // intent right away rather than waiting on the 4s refresh poller.
         self.engineStatus = nil
+
+        // The shutdown handler acks before raising SIGTERM (~100ms delay),
+        // so the engine is briefly still reachable. Wait until the socket
+        // actually goes dark (or a short ceiling, in case shutdown failed)
+        // before refreshing — otherwise the refresh restores engineStatus
+        // and the row flickers Stopped → Running → Stopped.
+        for _ in 0..<20 where await EngineClient.shared.isReachable() {
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms × 20 = 1s ceiling
+        }
+
         await refresh()
     }
 
