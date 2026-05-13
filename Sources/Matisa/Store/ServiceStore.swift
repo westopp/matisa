@@ -141,6 +141,7 @@ final class ServiceStore {
         let managed: [Service]
         let unmanagedList: [Service]
         let dockerDaemonRunning: Bool
+        let engineReachable: Bool
         if let snap = try? await EngineClient.shared.call(
             "services.snapshot",
             as: ServicesSnapshot.self
@@ -148,6 +149,7 @@ final class ServiceStore {
             managed = snap.managed
             unmanagedList = snap.unmanaged
             dockerDaemonRunning = snap.dockerDaemonRunning
+            engineReachable = true
             // Engine is the authority on launch failures when reachable —
             // replace the local map wholesale. Best-effort: on transport
             // failure for this call alone, leave the existing map intact
@@ -165,17 +167,30 @@ final class ServiceStore {
             managed = result.managed
             unmanagedList = result.unmanaged
             dockerDaemonRunning = inputs.dockerDaemonRunning
+            engineReachable = false
         }
 
-        // Daemon-state machine: only let the probe override the indicator
-        // when we're not in a deliberate UI state (`.starting`, `.startFailed`).
-        if !dockerSystem.isStarting && !dockerSystem.isStartFailed {
-            dockerSystem = dockerDaemonRunning ? .running : .stopped
-        } else if dockerSystem.isStartFailed {
-            // Daemon may have come up some other way (user opened Docker
-            // Desktop manually) — let that override the stale failure label.
-            if dockerDaemonRunning {
-                dockerSystem = .running
+        // Phase 2f: engine owns the Docker daemon state machine. When
+        // reachable, mirror its view unconditionally — the engine reconciles
+        // `.starting` / `.startFailed` against the live probe internally.
+        // When the engine isn't reachable, fall back to the pre-2f
+        // local state machine: only let the probe override the indicator
+        // when we're not in a deliberate UI state.
+        if engineReachable,
+           let engineState = try? await EngineClient.shared.call(
+               "docker.daemon.status",
+               as: DockerSystemState.self
+           ) {
+            dockerSystem = engineState
+        } else {
+            if !dockerSystem.isStarting && !dockerSystem.isStartFailed {
+                dockerSystem = dockerDaemonRunning ? .running : .stopped
+            } else if dockerSystem.isStartFailed {
+                // Daemon may have come up some other way (user opened Docker
+                // Desktop manually) — let that override the stale failure label.
+                if dockerDaemonRunning {
+                    dockerSystem = .running
+                }
             }
         }
 
@@ -749,10 +764,41 @@ final class ServiceStore {
     }
 
     // MARK: - Docker daemon control
+    //
+    // Phase 2f: the engine owns the daemon state machine via
+    // `docker.daemon.*` RPCs. Each method below tries the engine first and
+    // falls back to the local `*Local` helper on engine-unreachable. The
+    // `dockerSystem` field on the store remains as a mirror of the engine's
+    // view (or as authoritative when running on the local-fallback path).
 
     /// Quit Docker Desktop. The System panel calls this; doesn't tear down
     /// running services beyond what Docker itself does on quit.
     func performDockerStop() async {
+        do {
+            _ = try await EngineClient.shared.call(
+                "docker.daemon.stop",
+                as: EmptyResponse.self
+            )
+            // Optimistic mirror — refresh() will reconcile from
+            // docker.daemon.status. The engine sets `.stopped` once the
+            // AppleScript returns.
+            dockerSystem = .stopped
+            await refresh()
+            return
+        } catch EngineClient.ClientError.rpcError(_, let msg) {
+            FileHandle.standardError.write(
+                Data("ServiceStore: engine rpcError on docker.daemon.stop: \(msg)\n".utf8)
+            )
+            return
+        } catch {
+            // Transport failure → fall through to local.
+        }
+        await performDockerStopLocal()
+    }
+
+    /// Engine-unreachable path. Same behaviour as the pre-2f implementation:
+    /// AppleScript quit, then optimistic mirror update.
+    private func performDockerStopLocal() async {
         await DockerProbe.stopDockerDesktop()
         dockerSystem = .stopped
         await refresh()
@@ -762,21 +808,50 @@ final class ServiceStore {
     /// the System panel start button; doesn't replay any pending action.
     func performDockerStart() async {
         guard !dockerSystem.isStarting else { return }
+        do {
+            _ = try await EngineClient.shared.call(
+                "docker.daemon.start",
+                as: EmptyResponse.self
+            )
+            // Optimistic mirror — refresh() and the periodic poll will
+            // overwrite once the engine's state machine resolves. We set
+            // `.starting` so the System panel indicator and the
+            // "Starting Docker Desktop…" sheet appear immediately.
+            dockerSystem = .starting
+            // Wait for the engine state machine to settle. Same shape as
+            // the pre-2f path: we don't return until `dockerSystem` has
+            // moved off `.starting`, so callers can chain a `refresh()`
+            // confidently.
+            await awaitEngineDockerSettled()
+            await refresh()
+            return
+        } catch EngineClient.ClientError.rpcError(_, let msg) {
+            FileHandle.standardError.write(
+                Data("ServiceStore: engine rpcError on docker.daemon.start: \(msg)\n".utf8)
+            )
+            return
+        } catch {
+            // Transport failure → fall through to local.
+        }
+        await performDockerStartLocal()
+    }
+
+    /// Engine-unreachable path. Identical to the pre-2f implementation —
+    /// the local `dockerStartTask` is kept so cancelDockerStartInFlight can
+    /// cancel a fallback-path start.
+    private func performDockerStartLocal() async {
+        guard !dockerSystem.isStarting else { return }
         dockerSystem = .starting
         let task = Task<Void, Never> { [weak self] in
             await DockerProbe.startDockerDesktop()
             let ready = await DockerProbe.awaitDaemonReady(timeout: 60)
             guard let self else { return }
-            // If we were cancelled mid-await, the cancel path has already set
-            // `.stopped`; don't stomp on it.
             guard !Task.isCancelled else { return }
             self.dockerSystem = ready ? .running : .startFailed("Docker didn't come up in time")
         }
         dockerStartTask = task
         await task.value
         dockerStartTask = nil
-        // Refresh discovery once the attempt has resolved. `.startFailed` is
-        // sticky in the probe gate so this won't overwrite the failure label.
         await refresh()
     }
 
@@ -786,6 +861,33 @@ final class ServiceStore {
     func confirmDockerStart() async {
         guard let prompt = pendingDockerPrompt else { return }
         pendingDockerPrompt = nil
+        do {
+            _ = try await EngineClient.shared.call(
+                "docker.daemon.start",
+                as: EmptyResponse.self
+            )
+            dockerSystem = .starting
+            await awaitEngineDockerSettled()
+            // Replay only if the daemon actually came up. If the engine
+            // cancelled or timed out, `dockerSystem` is `.stopped` or
+            // `.startFailed`.
+            guard case .running = dockerSystem else { return }
+            guard let service = self.service(id: prompt.serviceID) else { return }
+            await perform(prompt.action, on: service)
+            return
+        } catch EngineClient.ClientError.rpcError(_, let msg) {
+            FileHandle.standardError.write(
+                Data("ServiceStore: engine rpcError on docker.daemon.start: \(msg)\n".utf8)
+            )
+            return
+        } catch {
+            // Transport failure → fall through to local.
+        }
+        await confirmDockerStartLocal(prompt: prompt)
+    }
+
+    /// Engine-unreachable path. Same body as the pre-2f confirmDockerStart.
+    private func confirmDockerStartLocal(prompt: PendingDockerPrompt) async {
         dockerSystem = .starting
         let task = Task<Void, Never> { [weak self] in
             await DockerProbe.startDockerDesktop()
@@ -797,9 +899,6 @@ final class ServiceStore {
         dockerStartTask = task
         await task.value
         dockerStartTask = nil
-        // Replay the original action only if the daemon actually came up.
-        // If we were cancelled, `dockerSystem` is `.stopped` (set by the
-        // cancel path), so this guard skips replay correctly.
         guard case .running = dockerSystem else { return }
         guard let service = self.service(id: prompt.serviceID) else { return }
         await perform(prompt.action, on: service)
@@ -820,6 +919,15 @@ final class ServiceStore {
     /// corruption mid-boot.
     func cancelDockerStartInFlight() {
         guard dockerSystem.isStarting else { return }
+        // Best-effort engine cancel — fire-and-forget. Local cleanup runs
+        // unconditionally; the engine's cancel_start is idempotent with it
+        // (both transition to .stopped and quit Docker in the background).
+        Task {
+            _ = try? await EngineClient.shared.call(
+                "docker.daemon.cancel_start",
+                as: EmptyResponse.self
+            )
+        }
         dockerStartTask?.cancel()
         dockerStartTask = nil
         pendingDockerPrompt = nil
@@ -830,8 +938,39 @@ final class ServiceStore {
     /// Acknowledge a `startFailed` state — clears the indicator so the user
     /// can try again.
     func clearDockerStartFailure() {
+        // Best-effort engine clear — fire-and-forget. Local mirror update
+        // runs unconditionally so the UI hides the failure label immediately.
+        Task {
+            _ = try? await EngineClient.shared.call(
+                "docker.daemon.clear_failure",
+                as: EmptyResponse.self
+            )
+        }
         if case .startFailed = dockerSystem {
             dockerSystem = .stopped
+        }
+    }
+
+    /// Block until the engine's Docker daemon state moves off `.starting`.
+    /// Polls `docker.daemon.status` every 500ms with a 70s ceiling (10s wider
+    /// than the engine's own 60s readiness timeout, so a healthy timeout
+    /// always resolves before this gives up). On transport failure during
+    /// the poll, returns early so callers don't hang on an engine that
+    /// dropped out mid-start.
+    private func awaitEngineDockerSettled() async {
+        let deadline = Date().addingTimeInterval(70)
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            do {
+                let s = try await EngineClient.shared.call(
+                    "docker.daemon.status",
+                    as: DockerSystemState.self
+                )
+                dockerSystem = s
+                if !s.isStarting { return }
+            } catch {
+                return
+            }
         }
     }
 

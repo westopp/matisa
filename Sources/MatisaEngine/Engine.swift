@@ -15,6 +15,7 @@ final class Engine {
     private let discoveryService = DiscoveryService()
     private let servicesService: ServicesService
     private let lifecycleService: LifecycleService
+    private let dockerDaemonService = DockerDaemonService()
     private let startedAt = Date()
 
     init() {
@@ -153,6 +154,33 @@ final class Engine {
         }
         dispatcher.register("launch_failures.clear") { [lifecycleService] (p: ServiceIDParams) -> EmptyResponse in
             lifecycleService.clearLaunchFailure(serviceID: p.id)
+            return EmptyResponse()
+        }
+
+        // Docker daemon control — phase 2f. The engine owns the
+        // DockerSystemState machine; the app's ServiceStore mirrors the
+        // state during refresh and keeps the UI affordances (the
+        // "Starting Docker Desktop…" sheet, pendingDockerPrompt). `start`
+        // and `stop` kick off the work and return; clients poll
+        // `docker.daemon.status` for the result, same shape as
+        // `services.start`.
+        dispatcher.register("docker.daemon.status") { [dockerDaemonService] () -> DockerSystemState in
+            dockerDaemonService.status()
+        }
+        dispatcher.register("docker.daemon.start") { [dockerDaemonService] () -> EmptyResponse in
+            await dockerDaemonService.start()
+            return EmptyResponse()
+        }
+        dispatcher.register("docker.daemon.stop") { [dockerDaemonService] () -> EmptyResponse in
+            await dockerDaemonService.stop()
+            return EmptyResponse()
+        }
+        dispatcher.register("docker.daemon.cancel_start") { [dockerDaemonService] () -> EmptyResponse in
+            dockerDaemonService.cancelStart()
+            return EmptyResponse()
+        }
+        dispatcher.register("docker.daemon.clear_failure") { [dockerDaemonService] () -> EmptyResponse in
+            dockerDaemonService.clearFailure()
             return EmptyResponse()
         }
     }
