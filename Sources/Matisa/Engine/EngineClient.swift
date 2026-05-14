@@ -258,6 +258,15 @@ struct ServiceIDParams: Encodable {
     let id: String
 }
 
+/// Mirror of the engine's `ServiceLifecycleParams`. Used for the lifecycle
+/// RPCs that (re)spawn — start, restart, take_over — to carry the globally
+/// selected env context name so the engine can resolve project env as
+/// `base + that overlay` rather than base only.
+struct ServiceLifecycleClientParams: Encodable {
+    let id: String
+    let activeEnvContext: String?
+}
+
 struct EmptyResponse: Decodable {}
 
 /// Mirror of the engine's `TaskStartParams`. `TaskKind` rides as a string

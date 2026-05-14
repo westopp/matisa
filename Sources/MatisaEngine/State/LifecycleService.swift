@@ -86,7 +86,12 @@ final class LifecycleService: @unchecked Sendable {
     /// means the CLI exited 0. Fires a detached launch-watcher Task for
     /// project services internally — that watcher may later record a
     /// LaunchFailure even though this method already returned ok.
-    func start(serviceID: String) async throws {
+    ///
+    /// `activeContext` is the env context (e.g. "dev", "test") chosen by the
+    /// caller — when present, project env resolves to `base + that overlay`
+    /// instead of base only. nil means "fall back to the injected resolver",
+    /// which production wiring leaves as `{ nil }` (base only).
+    func start(serviceID: String, activeContext: String? = nil) async throws {
         let service = try requireService(serviceID)
         try ensureDockerIfNeeded(action: .start, service: service)
         // Fresh attempt — drop any prior failure capture so the UI doesn't
@@ -95,7 +100,7 @@ final class LifecycleService: @unchecked Sendable {
 
         switch service.spec {
         case .project(let f):
-            try startProject(service: service, fields: f)
+            try startProject(service: service, fields: f, activeContext: activeContext)
         case .docker(let f):
             try await startDocker(service: service, fields: f)
         case .compose(let f):
@@ -181,7 +186,7 @@ final class LifecycleService: @unchecked Sendable {
         }
     }
 
-    func restart(serviceID: String) async throws {
+    func restart(serviceID: String, activeContext: String? = nil) async throws {
         let service = try requireService(serviceID)
         try ensureDockerIfNeeded(action: .restart, service: service)
 
@@ -189,7 +194,7 @@ final class LifecycleService: @unchecked Sendable {
         case .project:
             try await stop(serviceID: serviceID)
             try? await Task.sleep(nanoseconds: 500_000_000)
-            try await start(serviceID: serviceID)
+            try await start(serviceID: serviceID, activeContext: activeContext)
         case .docker(let f):
             try await DockerActions.inlineRestart(name: f.name)
         case .compose(let f):
@@ -203,7 +208,7 @@ final class LifecycleService: @unchecked Sendable {
     /// foreign PID then spawn under our supervisor. Only meaningful for
     /// project services — for docker/compose the "running unmanaged" case
     /// means something else has the port and we can only stop it.
-    func takeOver(serviceID: String) async throws {
+    func takeOver(serviceID: String, activeContext: String? = nil) async throws {
         let service = try requireService(serviceID)
         try ensureDockerIfNeeded(action: .takeOver, service: service)
 
@@ -214,7 +219,7 @@ final class LifecycleService: @unchecked Sendable {
         }
         await LifecycleSupervisor.stopWithEscalation(pid: pid, foreign: true)
         try? await Task.sleep(nanoseconds: 400_000_000)
-        try await start(serviceID: serviceID)
+        try await start(serviceID: serviceID, activeContext: activeContext)
     }
 
     func pull(serviceID: String) async throws {
@@ -233,7 +238,7 @@ final class LifecycleService: @unchecked Sendable {
 
     // MARK: - Project start helpers
 
-    private func startProject(service: Service, fields f: ProjectFields) throws {
+    private func startProject(service: Service, fields f: ProjectFields, activeContext: String?) throws {
         // Fail loudly on path typos rather than letting posix_spawn return
         // ENOENT silently. Match the app's preflight (ServiceStore.start).
         var isDir: ObjCBool = false
@@ -244,11 +249,14 @@ final class LifecycleService: @unchecked Sendable {
             throw RPCError.invalidParams(msg)
         }
 
+        // RPC-supplied context wins; fall back to the injected resolver so
+        // tests can still drive a default without round-tripping the param.
+        let resolvedContext = activeContext ?? activeEnvContext()
         let result = try LifecycleSupervisor.spawnDetached(
             shellCommand: f.command,
             workingDirectory: f.path,
             serviceID: service.id,
-            extraEnv: f.env?.effective(activeContext: activeEnvContext()) ?? [:]
+            extraEnv: f.env?.effective(activeContext: resolvedContext) ?? [:]
         )
         let spawnedAt = Date()
         spawnStore.upsert(PersistedSpawn(

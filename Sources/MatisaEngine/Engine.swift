@@ -221,8 +221,8 @@ final class Engine {
         // gated docker/compose paths throw `dockerDaemonRequired` (-32001)
         // if the daemon isn't reachable. Method names are snake_case for
         // multi-word — `services.take_over` not `services.takeOver`.
-        dispatcher.register("services.start") { [lifecycleService] (p: ServiceIDParams) -> EmptyResponse in
-            try await lifecycleService.start(serviceID: p.id)
+        dispatcher.register("services.start") { [lifecycleService] (p: ServiceLifecycleParams) -> EmptyResponse in
+            try await lifecycleService.start(serviceID: p.id, activeContext: p.activeEnvContext)
             return EmptyResponse()
         }
         dispatcher.register("services.stop") { [lifecycleService] (p: ServiceIDParams) -> EmptyResponse in
@@ -233,12 +233,12 @@ final class Engine {
             try await lifecycleService.kill(serviceID: p.id)
             return EmptyResponse()
         }
-        dispatcher.register("services.restart") { [lifecycleService] (p: ServiceIDParams) -> EmptyResponse in
-            try await lifecycleService.restart(serviceID: p.id)
+        dispatcher.register("services.restart") { [lifecycleService] (p: ServiceLifecycleParams) -> EmptyResponse in
+            try await lifecycleService.restart(serviceID: p.id, activeContext: p.activeEnvContext)
             return EmptyResponse()
         }
-        dispatcher.register("services.take_over") { [lifecycleService] (p: ServiceIDParams) -> EmptyResponse in
-            try await lifecycleService.takeOver(serviceID: p.id)
+        dispatcher.register("services.take_over") { [lifecycleService] (p: ServiceLifecycleParams) -> EmptyResponse in
+            try await lifecycleService.takeOver(serviceID: p.id, activeContext: p.activeEnvContext)
             return EmptyResponse()
         }
         dispatcher.register("services.pull") { [lifecycleService] (p: ServiceIDParams) -> EmptyResponse in

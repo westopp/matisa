@@ -490,7 +490,12 @@ final class ServiceStore {
         await dispatchLifecycle(
             service: service,
             action: .start,
-            engineCall: { await self.lifecycleClient.start(serviceID: service.id) },
+            engineCall: {
+                await self.lifecycleClient.start(
+                    serviceID: service.id,
+                    activeEnvContext: self.activeEnvContext
+                )
+            },
             local: { await self.startLocal(service) }
         )
     }
@@ -517,7 +522,12 @@ final class ServiceStore {
         await dispatchLifecycle(
             service: service,
             action: .restart,
-            engineCall: { await self.lifecycleClient.restart(serviceID: service.id) },
+            engineCall: {
+                await self.lifecycleClient.restart(
+                    serviceID: service.id,
+                    activeEnvContext: self.activeEnvContext
+                )
+            },
             local: { await self.restartLocal(service) }
         )
     }
@@ -526,7 +536,12 @@ final class ServiceStore {
         await dispatchLifecycle(
             service: service,
             action: .takeOver,
-            engineCall: { await self.lifecycleClient.takeOver(serviceID: service.id) },
+            engineCall: {
+                await self.lifecycleClient.takeOver(
+                    serviceID: service.id,
+                    activeEnvContext: self.activeEnvContext
+                )
+            },
             local: { await self.takeOverLocal(service) }
         )
     }

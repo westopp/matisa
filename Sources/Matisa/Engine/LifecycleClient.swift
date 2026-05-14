@@ -14,8 +14,11 @@ struct LifecycleClient {
 
     init() {}
 
-    func start(serviceID: String) async -> EngineDispatchResult {
-        await dispatch("services.start", params: ServiceIDParams(id: serviceID))
+    func start(serviceID: String, activeEnvContext: String?) async -> EngineDispatchResult {
+        await dispatch(
+            "services.start",
+            params: ServiceLifecycleClientParams(id: serviceID, activeEnvContext: activeEnvContext)
+        )
     }
 
     func stop(serviceID: String) async -> EngineDispatchResult {
@@ -26,12 +29,18 @@ struct LifecycleClient {
         await dispatch("services.kill", params: ServiceIDParams(id: serviceID))
     }
 
-    func restart(serviceID: String) async -> EngineDispatchResult {
-        await dispatch("services.restart", params: ServiceIDParams(id: serviceID))
+    func restart(serviceID: String, activeEnvContext: String?) async -> EngineDispatchResult {
+        await dispatch(
+            "services.restart",
+            params: ServiceLifecycleClientParams(id: serviceID, activeEnvContext: activeEnvContext)
+        )
     }
 
-    func takeOver(serviceID: String) async -> EngineDispatchResult {
-        await dispatch("services.take_over", params: ServiceIDParams(id: serviceID))
+    func takeOver(serviceID: String, activeEnvContext: String?) async -> EngineDispatchResult {
+        await dispatch(
+            "services.take_over",
+            params: ServiceLifecycleClientParams(id: serviceID, activeEnvContext: activeEnvContext)
+        )
     }
 
     func pull(serviceID: String) async -> EngineDispatchResult {

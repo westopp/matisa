@@ -22,6 +22,18 @@ struct ServiceIDParams: Decodable {
     let id: String
 }
 
+/// Params for the lifecycle RPCs that (re)spawn the service — `services.start`,
+/// `services.restart`, `services.take_over`. Carries the globally-selected env
+/// context name so the engine resolves project env as `base + contexts[name]`
+/// rather than `base` only. Stop/kill/pull stay on `ServiceIDParams` since
+/// they don't spawn. `activeEnvContext` is optional so old clients that send
+/// `{"id": "..."}` still decode (engine then falls back to its injected
+/// resolver, which in production is `{ nil }` — same pre-fix behaviour).
+struct ServiceLifecycleParams: Decodable {
+    let id: String
+    let activeEnvContext: String?
+}
+
 /// Params for `tasks.start`. The engine resolves the command in the
 /// caller-supplied `cwd` via `/bin/zsh -l -c "cd <cwd> && exec <command>"`;
 /// `extraEnv` overrides values inherited from the engine's environment.
