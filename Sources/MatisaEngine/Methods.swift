@@ -42,7 +42,6 @@ struct ServiceLifecycleParams: Decodable {
 /// `PersistedSpawn.logPath` already ride over the wire.
 struct TaskStartParams: Decodable {
     let id: String
-    let kind: TaskKind
     let name: String
     let command: String
     let cwd: URL
@@ -50,10 +49,10 @@ struct TaskStartParams: Decodable {
 }
 
 /// Params for `tasks.cancel`, `tasks.clear`, and `tasks.close_pane` — all of
-/// which act on a single (serviceID, kind) slot.
+/// which act on a single (serviceID, commandName) slot.
 struct TaskCancelParams: Decodable {
     let id: String
-    let kind: TaskKind
+    let name: String
 }
 
 /// `{}` — for lifecycle methods whose success is signalled by the absence of

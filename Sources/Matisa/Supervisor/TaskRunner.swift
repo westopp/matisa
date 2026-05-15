@@ -3,9 +3,10 @@ import MatisaCore
 import Observation
 import Darwin
 
-/// Runs ad-hoc build / script commands per service. At most one of each kind
-/// can run per service at a time. Output is buffered in-memory only — when
-/// the user closes the pane (or invokes a new run), the buffer is discarded.
+/// Runs ad-hoc named commands per service. The unified commands surface —
+/// builds, tests, lints, anything wired up under a service's `commands:`
+/// block — all live here, keyed by command name. Output is buffered
+/// in-memory only; closing the pane (or invoking a new run) discards it.
 ///
 /// Tasks here intentionally do *not* persist across an app restart, unlike
 /// the long-lived project processes in `ProcessSupervisor`. That keeps the
@@ -14,16 +15,17 @@ import Darwin
 /// From phase 2e.3 onwards this is the local-fallback path. The primary path
 /// runs in the engine's `TaskService`; `ServiceStore.refresh()` polls
 /// `tasks.list(id)` for services with a visible pane and mirrors the engine's
-/// view into our `slots` via `applyEngineSlot` so the SwiftUI bindings keep
-/// working without rewriting every view.
+/// view into our `slots` via `replaceSlotsFromEngine` so the SwiftUI bindings
+/// keep working without rewriting every view.
+///
+/// Concurrency: at most `TaskLimits.maxRunningCommands` (2) commands per service can
+/// run at the same time. The supervised long-running `command:` (the dev
+/// server) does not count toward this cap. The runner enforces the cap
+/// defensively; the UI is the authoritative gate (it disables further
+/// menu entries when the cap is hit).
 @MainActor
 @Observable
 final class TaskRunner {
-    enum TaskKind: String, Hashable, Sendable {
-        case build
-        case script
-    }
-
     enum TaskState: Hashable, Sendable {
         /// Pane closed, no buffer.
         case idle
@@ -46,52 +48,82 @@ final class TaskRunner {
         fileprivate var pid: pid_t = 0
     }
 
-    /// Outer key is service id (e.g. `project:web`); inner key is the task kind.
-    private(set) var slots: [String: [TaskKind: TaskSlot]] = [:]
+    /// Outer key is service id (e.g. `project:web`); inner key is the
+    /// command name (the user-visible label from the service's `commands:`).
+    private(set) var slots: [String: [String: TaskSlot]] = [:]
 
     /// Cap on retained output per slot. Keeps memory bounded for chatty builds.
     private let bufferCap = 200_000
 
     // MARK: - Reads
 
-    func slot(_ serviceID: String, _ kind: TaskKind) -> TaskSlot {
-        slots[serviceID]?[kind] ?? TaskSlot()
+    func slot(_ serviceID: String, _ name: String) -> TaskSlot {
+        slots[serviceID]?[name] ?? TaskSlot()
     }
 
-    func isPaneVisible(_ serviceID: String, _ kind: TaskKind) -> Bool {
-        slot(serviceID, kind).state != .idle
+    func isPaneVisible(_ serviceID: String, _ name: String) -> Bool {
+        slot(serviceID, name).state != .idle
+    }
+
+    /// True if any command for this service has a visible pane (i.e. any
+    /// slot is not `.idle`). Used by the refresh poller to decide whether
+    /// to issue `tasks.list(id)` for the service.
+    func hasAnyVisiblePane(_ serviceID: String) -> Bool {
+        (slots[serviceID] ?? [:]).values.contains { $0.state != .idle }
+    }
+
+    /// Number of slots currently in the running state for a service.
+    /// Used by the UI to decide whether to disable further command menu
+    /// entries (cap is `TaskLimits.maxRunningCommands`).
+    func runningCount(_ serviceID: String) -> Int {
+        (slots[serviceID] ?? [:]).values
+            .reduce(into: 0) { $0 += $1.state.isRunning ? 1 : 0 }
+    }
+
+    /// Convenience: are we already at the per-service cap?
+    func atRunningCap(_ serviceID: String) -> Bool {
+        runningCount(serviceID) >= TaskLimits.maxRunningCommands
+    }
+
+    /// All slots whose pane is visible (i.e. not `.idle`), keyed by name.
+    /// The detail view enumerates these to render the right-side panes.
+    func visibleSlots(_ serviceID: String) -> [(name: String, slot: TaskSlot)] {
+        (slots[serviceID] ?? [:])
+            .filter { $0.value.state != .idle }
+            .sorted(by: { $0.key < $1.key })
+            .map { (name: $0.key, slot: $0.value) }
     }
 
     // MARK: - Mutations
 
     private func mutate(
         _ serviceID: String,
-        _ kind: TaskKind,
+        _ name: String,
         _ block: (inout TaskSlot) -> Void
     ) {
         var inner = slots[serviceID] ?? [:]
-        var s = inner[kind] ?? TaskSlot()
+        var s = inner[name] ?? TaskSlot()
         block(&s)
-        inner[kind] = s
+        inner[name] = s
         slots[serviceID] = inner
     }
 
     // MARK: - Lifecycle
 
-    /// Start a command. No-op if a task of the same kind is already running
-    /// for this service.
+    /// Start a command. No-op if a command of the same `name` is already
+    /// running for this service, or if the service is at the running cap.
     func start(
         serviceID: String,
-        kind: TaskKind,
         name: String,
         command: String,
         cwd: URL,
         extraEnv: [String: String] = [:]
     ) {
-        if slot(serviceID, kind).state.isRunning { return }
+        if slot(serviceID, name).state.isRunning { return }
+        if atRunningCap(serviceID) { return }
 
         // Reset slot to a fresh running state.
-        mutate(serviceID, kind) {
+        mutate(serviceID, name) {
             $0.state = .running(name: name, since: Date())
             $0.buffer = ""
             $0.pid = 0
@@ -125,7 +157,7 @@ final class TaskRunner {
             if data.isEmpty { return }
             let text = String(data: data, encoding: .utf8) ?? ""
             Task { @MainActor [weak self] in
-                self?.append(serviceID: serviceID, kind: kind, text: text)
+                self?.append(serviceID: serviceID, name: name, text: text)
             }
         }
         outPipe.fileHandleForReading.readabilityHandler = onChunk
@@ -137,29 +169,29 @@ final class TaskRunner {
             errPipe.fileHandleForReading.readabilityHandler = nil
             let code = proc.terminationStatus
             Task { @MainActor [weak self] in
-                self?.markExited(serviceID: serviceID, kind: kind, code: code)
+                self?.markExited(serviceID: serviceID, name: name, code: code)
             }
         }
 
         do {
             try process.run()
-            mutate(serviceID, kind) { $0.pid = process.processIdentifier }
+            mutate(serviceID, name) { $0.pid = process.processIdentifier }
         } catch {
             outPipe.fileHandleForReading.readabilityHandler = nil
             errPipe.fileHandleForReading.readabilityHandler = nil
             append(
-                serviceID: serviceID, kind: kind,
+                serviceID: serviceID, name: name,
                 text: "[matisa] failed to start: \(error)\n"
             )
-            markExited(serviceID: serviceID, kind: kind, code: -1)
+            markExited(serviceID: serviceID, name: name, code: -1)
         }
     }
 
     /// SIGTERM the running task, escalating to SIGKILL after a grace period.
     /// We signal the PID directly — these tasks share our process group, so
     /// `killpg` would also kill matisa.
-    func stop(serviceID: String, kind: TaskKind) {
-        let s = slot(serviceID, kind)
+    func stop(serviceID: String, name: String) {
+        let s = slot(serviceID, name)
         guard case .running = s.state, s.pid > 0 else { return }
         let pid = s.pid
         Task.detached {
@@ -168,16 +200,16 @@ final class TaskRunner {
     }
 
     /// Wipe the buffer without stopping the process.
-    func clear(serviceID: String, kind: TaskKind) {
-        mutate(serviceID, kind) { $0.buffer = "" }
+    func clear(serviceID: String, name: String) {
+        mutate(serviceID, name) { $0.buffer = "" }
     }
 
     /// Close the pane. Only valid when not running. Discards the buffer and
     /// returns the slot to `.idle`.
-    func closePane(serviceID: String, kind: TaskKind) {
-        let s = slot(serviceID, kind)
+    func closePane(serviceID: String, name: String) {
+        let s = slot(serviceID, name)
         if case .running = s.state { return }
-        mutate(serviceID, kind) {
+        mutate(serviceID, name) {
             $0.state = .idle
             $0.buffer = ""
             $0.pid = 0
@@ -186,8 +218,8 @@ final class TaskRunner {
 
     // MARK: - Internal callbacks
 
-    private func append(serviceID: String, kind: TaskKind, text: String) {
-        mutate(serviceID, kind) { s in
+    private func append(serviceID: String, name: String, text: String) {
+        mutate(serviceID, name) { s in
             s.buffer += text
             if s.buffer.count > bufferCap {
                 s.buffer = String(s.buffer.suffix(bufferCap))
@@ -195,10 +227,10 @@ final class TaskRunner {
         }
     }
 
-    private func markExited(serviceID: String, kind: TaskKind, code: Int32) {
-        mutate(serviceID, kind) { s in
-            if case .running(let name, let since) = s.state {
-                s.state = .exited(name: name, code: code, since: since)
+    private func markExited(serviceID: String, name: String, code: Int32) {
+        mutate(serviceID, name) { s in
+            if case .running(let n, let since) = s.state {
+                s.state = .exited(name: n, code: code, since: since)
             }
             s.pid = 0
         }
@@ -213,17 +245,6 @@ final class TaskRunner {
     // clear, and closePane on engine-driven slots all go through RPC and
     // come back via the next poll — the local stop/clear/closePane paths
     // are only invoked on the engine-unreachable fallback.
-
-    /// Map MatisaCore wire kinds to the runner's local enum. The two enums
-    /// are intentionally separate — keeping the local `TaskKind` in this
-    /// file means changing the wire type doesn't require updating every
-    /// SwiftUI call site.
-    private static func localKind(_ wire: MatisaCore.TaskKind) -> TaskKind {
-        switch wire {
-        case .build:  return .build
-        case .script: return .script
-        }
-    }
 
     /// Map a MatisaCore wire slot to the runner's local slot, dropping the
     /// engine-side PID detail.
@@ -242,16 +263,16 @@ final class TaskRunner {
     }
 
     /// Replace the slots for one service with the engine's view, wholesale.
-    /// Kinds present in `wire` overwrite local entries; kinds *absent* from
+    /// Names present in `wire` overwrite local entries; names *absent* from
     /// `wire` are dropped — **except for slots whose `pid > 0`**, which were
     /// spawned on the local-fallback path during an engine-unreachable
     /// window. Those processes are still alive on this app; the engine has
     /// no record of them. Wiping them would orphan the Process and leave
     /// the user with no UI handle to cancel it (the local `stop` reads pid
     /// from the slot map, so a missing entry would silently no-op).
-    func replaceSlotsFromEngine(serviceID: String, wire: [MatisaCore.TaskKind: MatisaCore.TaskSlot]) {
+    func replaceSlotsFromEngine(serviceID: String, wire: [String: MatisaCore.TaskSlot]) {
         let existing = slots[serviceID] ?? [:]
-        var next: [TaskKind: TaskSlot] = [:]
+        var next: [String: TaskSlot] = [:]
         // Preserve any locally-spawned slots — their pid > 0 marks them as
         // app-owned, not engine-owned.
         for (k, v) in existing where v.pid > 0 {
@@ -261,7 +282,7 @@ final class TaskRunner {
         // spawned tasks, so it won't have entries for them; engine-owned
         // slots always have pid == 0 (set by `localSlot`).
         for (k, v) in wire {
-            next[Self.localKind(k)] = Self.localSlot(v)
+            next[k] = Self.localSlot(v)
         }
         if next.isEmpty {
             slots.removeValue(forKey: serviceID)
@@ -270,14 +291,14 @@ final class TaskRunner {
         }
     }
 
-    /// Write a placeholder `.running` slot for `(serviceID, kind)`. Called by
-    /// `ServiceStore.runBuild` / `runScript` right after the engine accepts
-    /// a `tasks.start` RPC, so `isPaneVisible` flips to `true` before the
+    /// Write a placeholder `.running` slot for `(serviceID, name)`. Called
+    /// by `ServiceStore.runCommand` right after the engine accepts a
+    /// `tasks.start` RPC, so `isPaneVisible` flips to `true` before the
     /// next refresh tick mirrors the engine's real state in. Without this
     /// bootstrap the next poll wouldn't fire — refresh only queries
     /// `tasks.list` for slots whose pane is already visible.
-    func writeEnginePlaceholder(serviceID: String, kind: TaskKind, name: String) {
-        mutate(serviceID, kind) {
+    func writeEnginePlaceholder(serviceID: String, name: String) {
+        mutate(serviceID, name) {
             $0.state = .running(name: name, since: Date())
             $0.buffer = ""
             $0.pid = 0

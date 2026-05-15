@@ -42,8 +42,7 @@ final class LifecycleServiceTests: XCTestCase {
             port: port,
             url: nil,
             command: command,
-            build: nil,
-            scripts: [],
+            commands: [],
             group: nil,
             env: nil
         )

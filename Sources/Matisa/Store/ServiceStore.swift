@@ -48,6 +48,14 @@ final class ServiceStore {
     /// — internal so the extension can mutate it.
     var launchFailures: [String: LaunchFailure] = [:]
 
+    /// Per-service resource utilisation (CPU%, mem footprint), keyed by
+    /// service id. Mirrored from the engine's `resources.snapshot` RPC each
+    /// refresh tick. Entries are omitted (not zeroed) for stopped services
+    /// so the UI can render "no data" rather than "0%, 0 MB". When the engine
+    /// is unreachable the previous map is kept until either the engine
+    /// recovers or the service stops.
+    var resourceStats: [String: ResourceStats] = [:]
+
     /// Per-service ad-hoc tasks (build, scripts). Lives on the store so SwiftUI
     /// observation flows through it naturally.
     let tasks = TaskRunner()
@@ -268,6 +276,17 @@ final class ServiceStore {
         self.services = managed
         self.unmanaged = unmanagedList
 
+        // Resource stats — engine samples per-service CPU/mem and returns a
+        // dict keyed by service id. On RPC failure (`nil`) we keep the previous
+        // map intact so a transient blip doesn't blank the UI; on success we
+        // replace wholesale so stopped services drop out cleanly.
+        if engineReachable, let resources = mirror.resources {
+            self.resourceStats = resources
+        } else if !engineReachable {
+            // Engine gone — drop stale data so we don't render zombie stats.
+            self.resourceStats = [:]
+        }
+
         // Phase 2e.3: engine owns the ad-hoc task slots. The mirror has
         // already fetched `tasks.list` for every pane-visible service id;
         // apply the per-id results. On engine-unreachable the mirror returns
@@ -327,7 +346,7 @@ final class ServiceStore {
     private func paneVisibleTaskServiceIDs() -> Set<String> {
         var out: Set<String> = []
         for svc in services {
-            if tasks.isPaneVisible(svc.id, .build) || tasks.isPaneVisible(svc.id, .script) {
+            if tasks.hasAnyVisiblePane(svc.id) {
                 out.insert(svc.id)
             }
         }
@@ -567,6 +586,24 @@ final class ServiceStore {
         engineCall: () async -> EngineDispatchResult,
         local: () async -> Void
     ) async {
+        // Optimistic loading state. Pre-engine the local lifecycle path wrote
+        // `.starting` / `.stopping` before kicking off the work, which gave
+        // the row's primary button its spinner. The engine-first dispatch
+        // skipped this — the trailing `refresh()` in `perform()` was the only
+        // state write, so the row froze on its previous state for the whole
+        // RPC roundtrip. Reinstating the optimistic mark restores the UX;
+        // refresh() reconciles with the engine's real state on return.
+        // rpcError / dockerDaemonRequired paths are self-correcting because
+        // refresh() runs unconditionally on the way out of `perform()`.
+        switch action {
+        case .start, .restart, .takeOver:
+            markState(service.id, .starting)
+        case .stop, .kill:
+            markState(service.id, .stopping)
+        default:
+            break
+        }
+
         switch await engineCall() {
         case .ok:
             return
@@ -590,96 +627,69 @@ final class ServiceStore {
         }
     }
 
-    // MARK: - Build / scripts
+    // MARK: - Commands
     //
-    // Engine-first dispatch: `runBuild` and `runScript` route through
-    // `tasks.start` on the engine; on engine-unreachable they fall through
-    // to the local `TaskRunner`. The UI's stop / clear / closePane buttons
-    // call into `stopTask`, `clearTask`, and `closeTaskPane` below, which
-    // do the same engine-first dance. When the engine accepts a `tasks.start`,
-    // the wrapper writes a placeholder `.running` slot into the local runner
-    // so `isPaneVisible` returns true; the next `refresh()` tick polls
-    // `tasks.list(id)` and mirrors the engine's real state into the slot.
+    // Engine-first dispatch: `runCommand` routes through `tasks.start` on
+    // the engine; on engine-unreachable it falls through to the local
+    // `TaskRunner`. The UI's stop / clear / closePane buttons call into
+    // `stopTask`, `clearTask`, and `closeTaskPane` below, which do the
+    // same engine-first dance. When the engine accepts a `tasks.start`,
+    // the wrapper writes a placeholder `.running` slot into the local
+    // runner so `isPaneVisible` returns true; the next `refresh()` tick
+    // polls `tasks.list(id)` and mirrors the engine's real state into the
+    // slot.
+    //
+    // Concurrency: at most `TaskLimits.maxRunningCommands` (2) commands
+    // per service can run at the same time. The UI is the authoritative
+    // gate (it disables further command menu entries when the cap is
+    // hit); the runner enforces the cap defensively.
 
-    /// Run the configured build for a service. `name` selects which build
-    /// command when the spec is `BuildSpec.multi`; ignored for `.single`.
-    /// No-op when no build is configured or one is already running.
-    func runBuild(_ service: Service, named name: String? = nil) {
-        guard let build = service.spec.build else { return }
-        let chosen: NamedCommand
-        switch build {
-        case .single(let cmd):
-            chosen = NamedCommand(name: "build", command: cmd)
-        case .multi(let commands):
-            if let name, let match = commands.first(where: { $0.name == name }) {
-                chosen = match
-            } else if let first = commands.first {
-                chosen = first
-            } else {
-                return
-            }
-        }
-        startTask(
-            service: service,
-            kind: .build,
-            localKind: .build,
-            chosen: chosen
-        )
+    /// Run a named command for a service. No-op if the name isn't
+    /// configured, the command is already running for this service, or
+    /// the service is already at the running cap.
+    func runCommand(_ service: Service, named name: String) {
+        guard let match = service.spec.commands.first(where: { $0.name == name }) else { return }
+        startTask(service: service, chosen: match)
     }
 
-    /// Run a named script for a service. No-op if the name isn't configured
-    /// or a script is already running for this service.
-    func runScript(_ service: Service, named name: String) {
-        guard let match = service.spec.scripts.first(where: { $0.name == name }) else { return }
-        startTask(
-            service: service,
-            kind: .script,
-            localKind: .script,
-            chosen: match
-        )
-    }
-
-    /// Cancel the running task in `(service, kind)`. Engine-first; falls back
-    /// to the local TaskRunner.stop on engine-unreachable.
-    func stopTask(_ service: Service, kind: TaskRunner.TaskKind) {
-        let wireKind = Self.wireKind(kind)
+    /// Cancel the running command `name` for this service. Engine-first;
+    /// falls back to the local TaskRunner.stop on engine-unreachable.
+    func stopTask(_ service: Service, name: String) {
         Task {
-            switch await taskClient.cancel(serviceID: service.id, kind: wireKind) {
+            switch await taskClient.cancel(serviceID: service.id, name: name) {
             case .ok, .rpcError, .dockerDaemonRequired:
                 // Engine handled it (success) or deliberately refused
                 // (rpcError). Either way there's nothing to fall back to.
                 // tasks.* don't surface -32001; treat as a refusal.
                 return
             case .engineUnreachable:
-                tasks.stop(serviceID: service.id, kind: kind)
+                tasks.stop(serviceID: service.id, name: name)
             }
         }
     }
 
-    /// Clear the output buffer for `(service, kind)` without stopping. Engine
+    /// Clear the output buffer for command `name` without stopping. Engine
     /// returns success even when no slot exists, so we always issue the RPC
     /// and only fall back on transport failure.
-    func clearTask(_ service: Service, kind: TaskRunner.TaskKind) {
-        let wireKind = Self.wireKind(kind)
+    func clearTask(_ service: Service, name: String) {
         // Optimistic local clear so the UI updates immediately; the next
         // refresh will overwrite from the engine's view anyway. Matches the
         // app's pre-2e.3 latency.
-        tasks.clear(serviceID: service.id, kind: kind)
+        tasks.clear(serviceID: service.id, name: name)
         Task {
-            await taskClient.clear(serviceID: service.id, kind: wireKind)
+            await taskClient.clear(serviceID: service.id, name: name)
         }
     }
 
-    /// Close the pane for `(service, kind)`. No-op while the task is still
+    /// Close the pane for command `name`. No-op while the task is still
     /// running. Engine-first; falls back to local on engine-unreachable.
-    func closeTaskPane(_ service: Service, kind: TaskRunner.TaskKind) {
-        let wireKind = Self.wireKind(kind)
+    func closeTaskPane(_ service: Service, name: String) {
         // Optimistic local close so the UI hides the pane immediately. If the
         // engine still considers it running (race), the next refresh will
         // bring back the running slot.
-        tasks.closePane(serviceID: service.id, kind: kind)
+        tasks.closePane(serviceID: service.id, name: name)
         Task {
-            await taskClient.closePane(serviceID: service.id, kind: wireKind)
+            await taskClient.closePane(serviceID: service.id, name: name)
         }
     }
 
@@ -689,13 +699,12 @@ final class ServiceStore {
     /// On engine-unreachable, drives the local TaskRunner directly.
     private func startTask(
         service: Service,
-        kind: MatisaCore.TaskKind,
-        localKind: TaskRunner.TaskKind,
         chosen: NamedCommand
     ) {
-        // Skip if a task of the same kind is already running locally. Matches
-        // `TaskRunner.start`'s same-shape guard.
-        if tasks.slot(service.id, localKind).state.isRunning { return }
+        // Skip if the same-named command is already running locally, or if
+        // the service is at the cap. Matches `TaskRunner.start`'s guards.
+        if tasks.slot(service.id, chosen.name).state.isRunning { return }
+        if tasks.atRunningCap(service.id) { return }
 
         let cwd = service.spec.workingDirectory
         let env = service.spec.env?.effective(activeContext: activeEnvContext) ?? [:]
@@ -703,7 +712,6 @@ final class ServiceStore {
         Task { @MainActor in
             let result = await taskClient.start(
                 serviceID: service.id,
-                kind: kind,
                 name: chosen.name,
                 command: chosen.command,
                 cwd: cwd,
@@ -715,7 +723,6 @@ final class ServiceStore {
                 // tick sees a visible pane and starts polling.
                 tasks.writeEnginePlaceholder(
                     serviceID: service.id,
-                    kind: localKind,
                     name: chosenName
                 )
             case .rpcError, .dockerDaemonRequired:
@@ -725,20 +732,12 @@ final class ServiceStore {
             case .engineUnreachable:
                 tasks.start(
                     serviceID: service.id,
-                    kind: localKind,
                     name: chosen.name,
                     command: chosen.command,
                     cwd: cwd,
                     extraEnv: env
                 )
             }
-        }
-    }
-
-    private static func wireKind(_ k: TaskRunner.TaskKind) -> MatisaCore.TaskKind {
-        switch k {
-        case .build:  return .build
-        case .script: return .script
         }
     }
 

@@ -12,7 +12,7 @@ final class ServiceMergeTests: XCTestCase {
         let spec = ServiceSpec.project(ProjectFields(
             name: "web", path: URL(fileURLWithPath: "/tmp/web"),
             port: 5173, url: nil, command: "npm run dev",
-            build: nil, scripts: [], group: nil, env: nil
+            commands: [], group: nil, env: nil
         ))
         let started = Date(timeIntervalSince1970: 1_700_000_000)
         let result = ServiceMerge.merge(
@@ -35,7 +35,7 @@ final class ServiceMergeTests: XCTestCase {
         let spec = ServiceSpec.project(ProjectFields(
             name: "web", path: URL(fileURLWithPath: "/tmp/web"),
             port: 5173, url: nil, command: "bun run dev",
-            build: nil, scripts: [], group: nil, env: nil
+            commands: [], group: nil, env: nil
         ))
         let started = Date(timeIntervalSince1970: 1_700_000_000)
         let result = ServiceMerge.merge(
@@ -56,7 +56,7 @@ final class ServiceMergeTests: XCTestCase {
         let spec = ServiceSpec.project(ProjectFields(
             name: "web", path: URL(fileURLWithPath: "/tmp/web"),
             port: 5173, url: nil, command: "npm run dev",
-            build: nil, scripts: [], group: nil, env: nil
+            commands: [], group: nil, env: nil
         ))
         let started = Date(timeIntervalSince1970: 1_700_000_000)
         let result = ServiceMerge.merge(
@@ -76,7 +76,7 @@ final class ServiceMergeTests: XCTestCase {
         let spec = ServiceSpec.project(ProjectFields(
             name: "web", path: URL(fileURLWithPath: "/tmp/web"),
             port: 5173, url: nil, command: "npm run dev",
-            build: nil, scripts: [], group: nil, env: nil
+            commands: [], group: nil, env: nil
         ))
         let result = ServiceMerge.merge(
             config: config(services: [spec]),
@@ -94,7 +94,7 @@ final class ServiceMergeTests: XCTestCase {
         let spec = ServiceSpec.project(ProjectFields(
             name: "web", path: URL(fileURLWithPath: "/tmp/web"),
             port: 5173, url: nil, command: "npm run dev",
-            build: nil, scripts: [], group: nil, env: nil
+            commands: [], group: nil, env: nil
         ))
         let result = ServiceMerge.merge(
             config: config(services: [spec]),
@@ -112,7 +112,7 @@ final class ServiceMergeTests: XCTestCase {
         let spec = ServiceSpec.project(ProjectFields(
             name: "web", path: URL(fileURLWithPath: "/tmp/web"),
             port: 5173, url: nil, command: "npm run dev",
-            build: nil, scripts: [], group: nil, env: nil
+            commands: [], group: nil, env: nil
         ))
         let result = ServiceMerge.merge(
             config: config(services: [spec]),
@@ -129,7 +129,7 @@ final class ServiceMergeTests: XCTestCase {
         let spec = ServiceSpec.project(ProjectFields(
             name: "web", path: URL(fileURLWithPath: "/tmp/web"),
             port: 5173, url: nil, command: "npm run dev",
-            build: nil, scripts: [], group: nil, env: nil
+            commands: [], group: nil, env: nil
         ))
         let result = ServiceMerge.merge(
             config: config(services: [spec]),
@@ -146,7 +146,7 @@ final class ServiceMergeTests: XCTestCase {
     func testDocker_matchingContainer_isRunning() {
         let spec = ServiceSpec.docker(DockerFields(
             name: "redis", image: "redis:7", port: 6379, url: nil,
-            scripts: [], group: nil
+            commands: [], group: nil
         ))
         let result = ServiceMerge.merge(
             config: config(services: [spec]),
@@ -164,7 +164,7 @@ final class ServiceMergeTests: XCTestCase {
     func testDocker_listeningPortButNoContainer_isUnmanaged() {
         let spec = ServiceSpec.docker(DockerFields(
             name: "redis", image: "redis:7", port: 6379, url: nil,
-            scripts: [], group: nil
+            commands: [], group: nil
         ))
         let result = ServiceMerge.merge(
             config: config(services: [spec]),
@@ -180,7 +180,7 @@ final class ServiceMergeTests: XCTestCase {
     func testDocker_daemonDown_filtersContainers_isStopped() {
         let spec = ServiceSpec.docker(DockerFields(
             name: "redis", image: "redis:7", port: 6379, url: nil,
-            scripts: [], group: nil
+            commands: [], group: nil
         ))
         // Container is present in the snapshot but daemon-running is false —
         // merge treats containers/composeStacks as empty.
@@ -202,7 +202,7 @@ final class ServiceMergeTests: XCTestCase {
         let spec = ServiceSpec.compose(ComposeFields(
             name: "obs", file: file,
             ports: [ComposePort(host: 16686, url: nil)],
-            build: nil, scripts: [], group: nil
+            commands: [], group: nil
         ))
         // Stack's docker project name differs from our config name — match
         // is by ConfigFiles path.
@@ -225,7 +225,7 @@ final class ServiceMergeTests: XCTestCase {
         let spec = ServiceSpec.compose(ComposeFields(
             name: "obs", file: file,
             ports: [ComposePort(host: 16686, url: nil)],
-            build: nil, scripts: [], group: nil
+            commands: [], group: nil
         ))
         let result = ServiceMerge.merge(
             config: config(services: [spec]),
@@ -333,7 +333,7 @@ final class ServiceMergeTests: XCTestCase {
         let composeSpec = ServiceSpec.compose(ComposeFields(
             name: "obs", file: file,
             ports: [ComposePort(host: 16686, url: nil)],
-            build: nil, scripts: [], group: nil
+            commands: [], group: nil
         ))
         // docker resolves the compose project to "observability" via the file
         // path; child container is named "observability-collector-1".
@@ -357,15 +357,15 @@ final class ServiceMergeTests: XCTestCase {
         let project = ServiceSpec.project(ProjectFields(
             name: "zeta", path: URL(fileURLWithPath: "/z"),
             port: 3000, url: nil, command: "x",
-            build: nil, scripts: [], group: nil, env: nil
+            commands: [], group: nil, env: nil
         ))
         let docker = ServiceSpec.docker(DockerFields(
             name: "alpha", image: "i", port: 4000, url: nil,
-            scripts: [], group: nil
+            commands: [], group: nil
         ))
         let compose = ServiceSpec.compose(ComposeFields(
             name: "mid", file: URL(fileURLWithPath: "/c"),
-            ports: [], build: nil, scripts: [], group: nil
+            ports: [], commands: [], group: nil
         ))
         let result = ServiceMerge.merge(
             config: config(services: [docker, compose, project]),

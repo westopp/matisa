@@ -1,21 +1,29 @@
 import Foundation
 
-/// Wire types for the engine's ad-hoc task surface (per-service build /
-/// script invocations). Mirrors the shape the app's `TaskRunner` exposes to
-/// its SwiftUI bindings, minus engine-internal process-management state
-/// (PID, Process handles). The app polls `tasks.list(id)` for services with
-/// a visible task pane and mirrors the result into its local `TaskRunner` so
-/// the existing UI bindings keep working.
+/// Wire types for the engine's ad-hoc command surface (per-service named
+/// commands — builds, tests, lints, anything the user wires up). Mirrors
+/// the shape the app's `TaskRunner` exposes to its SwiftUI bindings, minus
+/// engine-internal process-management state (PID, Process handles).
+///
+/// The app polls `tasks.list(id)` for services with a visible command pane
+/// and mirrors the result into its local `TaskRunner` so the existing UI
+/// bindings keep working.
 
-/// Which kind of ad-hoc task this is. At most one task per (serviceID, kind)
-/// can run at a time. `build` is the configured `build` command (single or
-/// the user-picked named entry from a `multi` build); `script` is one of the
-/// `scripts` entries.
-public enum TaskKind: String, Codable, Sendable {
-    case build, script
+/// Tunables for the ad-hoc commands surface. Centralised here so engine,
+/// app, and UI all reference the same numbers.
+public enum TaskLimits {
+    /// Per-service hard cap on concurrently running ad-hoc commands. The
+    /// supervised long-running `command:` (the dev server) does not count
+    /// toward this — it has its own start/stop on the row. So the effective
+    /// per-service cap is `1 supervised + maxRunningCommands` ad-hoc.
+    ///
+    /// Set to 2 for the MVP to bound system-resource impact. When this is
+    /// at or above the user's appetite, the menu disables further command
+    /// entries until something stops.
+    public static let maxRunningCommands: Int = 2
 }
 
-/// Lifecycle state of a single task slot.
+/// Lifecycle state of a single command slot.
 ///
 /// `idle` means the pane is closed and there's no buffer. `running` means a
 /// command is in flight; the engine streams stdout/stderr into the slot
@@ -77,7 +85,7 @@ extension TaskState: Codable {
 /// Observability-only slot snapshot. Carries the current lifecycle state and
 /// the buffered stdout+stderr (interleaved, capped at ~200KB on the engine
 /// side). No process handle or PID — the engine owns those internally; the
-/// app cancels tasks via `tasks.cancel` RPC, not by pid.
+/// app cancels via `tasks.cancel` RPC, not by pid.
 public struct TaskSlot: Hashable, Sendable, Codable {
     public let state: TaskState
     public let buffer: String
@@ -88,40 +96,38 @@ public struct TaskSlot: Hashable, Sendable, Codable {
     }
 }
 
-/// Wire shape for `tasks.list`. Wraps the kind→slot map so the JSON-RPC
-/// `result` is always an object. JSON shape is `{"build": {...}, "script":
-/// {...}}` — Foundation's `Dictionary<E, V> where E: RawRepresentable<String>`
-/// encodes as an unkeyed container of alternating key/value pairs, so we
-/// transcode via the string raw values manually to get a proper JSON object.
+/// Wire shape for `tasks.list`. Wraps a command-name→slot map so the
+/// JSON-RPC `result` is always an object. JSON shape is
+/// `{"<command-name>": {state, buffer}, ...}` — the map is just a
+/// string-keyed dictionary, so Foundation encodes it as a plain JSON
+/// object directly.
+///
+/// Slots are keyed by **command name** (the user-visible label from the
+/// config's `commands:` block), not by an enum tag. Matisa used to split
+/// build vs script into distinct slot kinds; that distinction was dropped
+/// when builds were folded into the unified commands surface.
 public struct TaskList: Codable, Sendable {
-    public let slots: [TaskKind: TaskSlot]
+    public let slots: [String: TaskSlot]
 
-    public init(slots: [TaskKind: TaskSlot]) {
+    public init(slots: [String: TaskSlot]) {
         self.slots = slots
     }
 
     public func encode(to encoder: Encoder) throws {
-        let stringKeyed: [String: TaskSlot] = Dictionary(
-            uniqueKeysWithValues: slots.map { ($0.key.rawValue, $0.value) }
-        )
         var c = encoder.singleValueContainer()
-        try c.encode(stringKeyed)
+        try c.encode(slots)
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
-        let stringKeyed = try c.decode([String: TaskSlot].self)
-        var typed: [TaskKind: TaskSlot] = [:]
-        for (k, v) in stringKeyed {
-            guard let kind = TaskKind(rawValue: k) else {
-                // Unknown kinds are dropped silently — forward-compat in case
-                // the engine grows a new TaskKind variant the app doesn't know
-                // about yet. A stricter decoder would throw; the app's UI
-                // would surface a useless "decode failed" instead.
-                continue
-            }
-            typed[kind] = v
+        self.slots = try c.decode([String: TaskSlot].self)
+    }
+
+    /// Number of slots currently in the running state. The engine uses this
+    /// (plus `maxRunningCommands`) to decide whether to accept a new start.
+    public var runningCount: Int {
+        slots.values.reduce(into: 0) { count, slot in
+            if slot.state.isRunning { count += 1 }
         }
-        self.slots = typed
     }
 }

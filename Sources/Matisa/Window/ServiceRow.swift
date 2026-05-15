@@ -104,10 +104,29 @@ struct ServiceRow: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.tertiary)
             }
+            if let stats = store.resourceStats[service.id] {
+                resourcePill(stats)
+            }
             if let env = service.spec.env, !env.isEmpty {
                 EnvContextPicker(scope: env)
             }
         }
+    }
+
+    /// Compact CPU% · mem chip. Only shown when the engine has live samples
+    /// for this service (i.e. running and the engine resolved a PID). Tooltip
+    /// surfaces the underlying process count so a runaway child fanout is
+    /// visible on hover without claiming sidebar width for it.
+    @ViewBuilder
+    private func resourcePill(_ stats: ResourceStats) -> some View {
+        HStack(spacing: 4) {
+            Text(stats.cpuLabel)
+            Text("·").foregroundStyle(.tertiary)
+            Text(stats.memLabel)
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.secondary)
+        .help("\(stats.processCount) process\(stats.processCount == 1 ? "" : "es")")
     }
 
     @ViewBuilder

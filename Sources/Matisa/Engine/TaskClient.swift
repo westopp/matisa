@@ -13,7 +13,6 @@ struct TaskClient {
 
     func start(
         serviceID: String,
-        kind: MatisaCore.TaskKind,
         name: String,
         command: String,
         cwd: URL,
@@ -21,7 +20,6 @@ struct TaskClient {
     ) async -> EngineDispatchResult {
         let params = TaskStartClientParams(
             id: serviceID,
-            kind: kind,
             name: name,
             command: command,
             cwd: cwd,
@@ -30,30 +28,30 @@ struct TaskClient {
         return await dispatch("tasks.start", params: params)
     }
 
-    func cancel(serviceID: String, kind: MatisaCore.TaskKind) async -> EngineDispatchResult {
+    func cancel(serviceID: String, name: String) async -> EngineDispatchResult {
         await dispatch(
             "tasks.cancel",
-            params: TaskCancelClientParams(id: serviceID, kind: kind)
+            params: TaskCancelClientParams(id: serviceID, name: name)
         )
     }
 
     /// Fire-and-forget engine clear. The caller has already done an
     /// optimistic local clear so the UI updated immediately; a transport
     /// failure here is non-actionable.
-    func clear(serviceID: String, kind: MatisaCore.TaskKind) async {
+    func clear(serviceID: String, name: String) async {
         _ = try? await EngineClient.shared.call(
             "tasks.clear",
-            params: TaskCancelClientParams(id: serviceID, kind: kind),
+            params: TaskCancelClientParams(id: serviceID, name: name),
             as: EmptyResponse.self
         )
     }
 
     /// Fire-and-forget engine close_pane. The caller has already hidden the
     /// pane locally; a transport failure here is non-actionable.
-    func closePane(serviceID: String, kind: MatisaCore.TaskKind) async {
+    func closePane(serviceID: String, name: String) async {
         _ = try? await EngineClient.shared.call(
             "tasks.close_pane",
-            params: TaskCancelClientParams(id: serviceID, kind: kind),
+            params: TaskCancelClientParams(id: serviceID, name: name),
             as: EmptyResponse.self
         )
     }

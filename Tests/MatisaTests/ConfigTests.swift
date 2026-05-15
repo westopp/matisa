@@ -83,11 +83,11 @@ final class ConfigTests: XCTestCase {
                 .project(ProjectFields(
                     name: "rv", path: URL(fileURLWithPath: "/tmp/rv"),
                     port: 5478, url: "rv.localhost", command: "npm run dev",
-                    build: nil, scripts: [], group: nil, env: nil
+                    commands: [], group: nil, env: nil
                 )),
                 .docker(DockerFields(
                     name: "redis", image: "redis:7", port: 6379, url: nil,
-                    scripts: [], group: nil
+                    commands: [], group: nil
                 )),
                 .compose(ComposeFields(
                     name: "obs",
@@ -96,7 +96,7 @@ final class ConfigTests: XCTestCase {
                         ComposePort(host: 16686, url: "jaeger.localhost"),
                         ComposePort(host: 4317, url: nil),
                     ],
-                    build: nil, scripts: [], group: nil
+                    commands: [], group: nil
                 ))
             ],
             tunnel: .defaults,

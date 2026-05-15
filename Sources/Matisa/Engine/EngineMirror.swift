@@ -29,11 +29,18 @@ final class EngineMirror {
         let caddy: CaddyServiceInfo?
         let publicTunnels: [String: PublicTunnelStatus]?
         let sameNetwork: [String: SameNetworkStatus]?
-        /// Per-service task lists, keyed by service id. Only populated for
-        /// services whose build/script pane is currently visible — see
-        /// `paneVisibleTaskServiceIDs` on `pull`. Per-service entries are
-        /// omitted when the individual `tasks.list` RPC fails.
-        let tasksByServiceID: [String: [MatisaCore.TaskKind: MatisaCore.TaskSlot]]
+        /// Per-service task lists, keyed by service id. Inner key is the
+        /// command name (the user-visible label from the service's
+        /// `commands:` block). Only populated for services whose command
+        /// pane is currently visible — see `paneVisibleTaskServiceIDs` on
+        /// `pull`. Per-service entries are omitted when the individual
+        /// `tasks.list` RPC fails.
+        let tasksByServiceID: [String: [String: MatisaCore.TaskSlot]]
+        /// Per-service resource utilisation (CPU%, mem). `nil` when the
+        /// `resources.snapshot` RPC failed for this tick — caller leaves the
+        /// last-seen map intact rather than blanking the UI. Empty dict means
+        /// "RPC succeeded but no services were sampleable" (everything stopped).
+        let resources: [String: ResourceStats]?
     }
 
     init() {}
@@ -66,7 +73,8 @@ final class EngineMirror {
                 caddy: nil,
                 publicTunnels: nil,
                 sameNetwork: nil,
-                tasksByServiceID: [:]
+                tasksByServiceID: [:],
+                resources: nil
             )
         }
 
@@ -103,11 +111,11 @@ final class EngineMirror {
             as: CaddyServiceInfo.self
         )
 
-        // Ad-hoc tasks — only for services with a visible pane. Gating on
-        // pane visibility keeps the per-service RPC out of the 4s tick for
-        // the common case where no panes are open. Runs before the tunnel /
-        // same-network mirrors to preserve the pre-3 call ordering.
-        var tasksByID: [String: [MatisaCore.TaskKind: MatisaCore.TaskSlot]] = [:]
+        // Ad-hoc commands — only for services with a visible pane. Gating
+        // on pane visibility keeps the per-service RPC out of the 4s tick
+        // for the common case where no panes are open. Runs before the
+        // tunnel / same-network mirrors to preserve the pre-3 call ordering.
+        var tasksByID: [String: [String: MatisaCore.TaskSlot]] = [:]
         for id in paneVisibleTaskServiceIDs {
             if let list = try? await EngineClient.shared.call(
                 "tasks.list",
@@ -140,6 +148,19 @@ final class EngineMirror {
             sameNetwork = nil
         }
 
+        // Resource utilisation — engine samples `proc_pid_rusage` per service
+        // process tree. Best-effort: on transport failure the caller leaves
+        // the last-seen map intact so brief blips don't blank the badges.
+        let resources: [String: ResourceStats]?
+        if let snap = try? await EngineClient.shared.call(
+            "resources.snapshot",
+            as: ResourcesSnapshot.self
+        ) {
+            resources = snap.stats
+        } else {
+            resources = nil
+        }
+
         return Snapshot(
             services: snap,
             engine: engineStatus,
@@ -148,7 +169,8 @@ final class EngineMirror {
             caddy: caddy,
             publicTunnels: tunnels,
             sameNetwork: sameNetwork,
-            tasksByServiceID: tasksByID
+            tasksByServiceID: tasksByID,
+            resources: resources
         )
     }
 }

@@ -2,71 +2,90 @@ import Foundation
 import Darwin
 import MatisaCore
 
-/// Engine-side ad-hoc task runner. Owns the per-(serviceID, kind) slot map
-/// for build / script invocations. Port of the app's `TaskRunner`; semantics
-/// are identical:
+/// Engine-side ad-hoc command runner. Owns the per-(serviceID, commandName)
+/// slot map for the unified commands surface (builds, tests, lints — anything
+/// the user wires up under a service's `commands:` block).
 ///
-///   - At most one task per (serviceID, kind). A second `start` of the same
-///     shape while one is already running is silently dropped.
-///   - Stdout + stderr are interleaved into a single in-memory buffer, capped
-///     at `bufferCap` bytes (the oldest are dropped on overflow).
+/// Semantics:
+///
+///   - **Per-name idempotency.** A second `start` of the same command name
+///     while one is already running is silently dropped.
+///   - **Per-service concurrency cap.** At most `TaskLimits.maxRunningCommands` (2)
+///     commands per service can run at the same time. A third `start` is
+///     silently dropped — the UI is responsible for disabling the menu
+///     items, the engine just refuses defensively. The supervised
+///     long-running `command:` does not count toward this cap.
+///   - **Survival.** Running commands are not killed when the service's
+///     supervised `command:` stops or restarts. They keep running until
+///     the user stops them explicitly (via menu, pane stop button, or
+///     `cancel` RPC).
+///   - Stdout + stderr are interleaved into a single in-memory buffer,
+///     capped at `bufferCap` bytes (the oldest are dropped on overflow).
 ///   - On exit, the slot transitions `running(name, since) → exited(name,
-///     code, since)`. The buffer is retained until `closePane` (or the next
-///     `start` for that slot).
-///   - `cancel` SIGTERMs the child directly (these tasks share the engine's
-///     process group, so `killpg` would also kill the engine), escalating to
-///     SIGKILL via `LifecycleSupervisor.stopWithEscalation`.
+///     code, since)`. The buffer is retained until `closePane` (or the
+///     next `start` for that name).
+///   - `cancel` SIGTERMs the child directly (these tasks share the
+///     engine's process group, so `killpg` would also kill the engine),
+///     escalating to SIGKILL via `LifecycleSupervisor.stopWithEscalation`.
 ///
 /// Marked `@unchecked Sendable`: a serial `DispatchQueue` (`engine.tasks`)
 /// guards all mutable state — the `slots` map plus the running `Process`
-/// handles. `Process` pipe callbacks (`readabilityHandler`, `terminationHandler`)
-/// arrive on Foundation worker threads and marshal back onto the queue
-/// before touching any state.
+/// handles. `Process` pipe callbacks (`readabilityHandler`,
+/// `terminationHandler`) arrive on Foundation worker threads and marshal
+/// back onto the queue before touching any state.
 final class TaskService: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "engine.tasks")
 
-    /// Outer key is service id; inner key is the task kind. Mirrors the
+    /// Outer key is service id; inner key is the command name. Mirrors the
     /// `TaskList` wire shape exactly.
-    private var slots: [String: [TaskKind: TaskSlot]] = [:]
+    private var slots: [String: [String: TaskSlot]] = [:]
 
-    /// Live Process handles, keyed by (serviceID, kind). Kept separate from
-    /// the wire-visible `slots` map so the wire type can stay
+    /// Live Process handles, keyed by (serviceID, commandName). Kept
+    /// separate from the wire-visible `slots` map so the wire type can stay
     /// process-management-free.
     private var processes: [SlotKey: Process] = [:]
 
-    /// 200KB cap on retained output per slot. Matches the app's `TaskRunner`
-    /// — chatty builds stay bounded.
+    /// 200KB cap on retained output per slot. Chatty builds stay bounded.
     private let bufferCap = 200_000
 
     init() {}
 
     // MARK: - Reads
 
-    func list(serviceID: String) -> [TaskKind: TaskSlot] {
+    func list(serviceID: String) -> [String: TaskSlot] {
         queue.sync { slots[serviceID] ?? [:] }
     }
 
     // MARK: - Lifecycle
 
-    /// Idempotent. No-op when a task of the same kind is already running for
-    /// this service id.
+    /// Idempotent on (serviceID, name) and capped at `TaskLimits.maxRunningCommands`
+    /// concurrent running commands per service. No-ops in either guard
+    /// case — the UI is the authoritative cap enforcer; this is just
+    /// defence-in-depth.
     func start(
         serviceID: String,
-        kind: TaskKind,
         name: String,
         command: String,
         cwd: URL,
         extraEnv: [String: String]
     ) {
         queue.sync {
-            // Same-shape double-start guard. Mirrors `TaskRunner.start`.
-            if let current = slots[serviceID]?[kind], current.state.isRunning {
+            // Same-name double-start guard.
+            if let current = slots[serviceID]?[name], current.state.isRunning {
                 return
             }
+            // Concurrency cap. Counts only currently-running slots, not
+            // exited-but-pane-still-open ones.
+            let runningNow = (slots[serviceID] ?? [:]).values
+                .reduce(into: 0) { $0 += $1.state.isRunning ? 1 : 0 }
+            if runningNow >= TaskLimits.maxRunningCommands {
+                return
+            }
+
             // Reset slot to a fresh running state. Anything left over from a
             // previous exited run is discarded.
-            mutateLocked(serviceID, kind) {
+            mutateLocked(serviceID, name) {
                 $0 = TaskSlot(
                     state: .running(name: name, since: Date()),
                     buffer: ""
@@ -102,7 +121,7 @@ final class TaskService: @unchecked Sendable {
                 if data.isEmpty { return }
                 let text = String(data: data, encoding: .utf8) ?? ""
                 self?.queue.async { [weak self] in
-                    self?.appendLocked(serviceID: serviceID, kind: kind, text: text)
+                    self?.appendLocked(serviceID: serviceID, name: name, text: text)
                 }
             }
             outPipe.fileHandleForReading.readabilityHandler = onChunk
@@ -113,22 +132,22 @@ final class TaskService: @unchecked Sendable {
                 errPipe.fileHandleForReading.readabilityHandler = nil
                 let code = proc.terminationStatus
                 self?.queue.async { [weak self] in
-                    self?.markExitedLocked(serviceID: serviceID, kind: kind, code: code)
+                    self?.markExitedLocked(serviceID: serviceID, name: name, code: code)
                 }
             }
 
             do {
                 try process.run()
-                processes[SlotKey(serviceID: serviceID, kind: kind)] = process
+                processes[SlotKey(serviceID: serviceID, name: name)] = process
             } catch {
                 outPipe.fileHandleForReading.readabilityHandler = nil
                 errPipe.fileHandleForReading.readabilityHandler = nil
                 appendLocked(
                     serviceID: serviceID,
-                    kind: kind,
+                    name: name,
                     text: "[matisa] failed to start: \(error)\n"
                 )
-                markExitedLocked(serviceID: serviceID, kind: kind, code: -1)
+                markExitedLocked(serviceID: serviceID, name: name, code: -1)
             }
         }
     }
@@ -136,12 +155,12 @@ final class TaskService: @unchecked Sendable {
     /// SIGTERM the running task, escalating to SIGKILL after a grace period.
     /// Signals the PID directly (`foreign: true`) — these tasks share the
     /// engine's process group, so `killpg` would also kill the engine.
-    func cancel(serviceID: String, kind: TaskKind) {
+    func cancel(serviceID: String, name: String) {
         let pid: pid_t? = queue.sync {
             guard
-                let slot = slots[serviceID]?[kind],
+                let slot = slots[serviceID]?[name],
                 case .running = slot.state,
-                let proc = processes[SlotKey(serviceID: serviceID, kind: kind)]
+                let proc = processes[SlotKey(serviceID: serviceID, name: name)]
             else { return nil }
             let pid = proc.processIdentifier
             return pid > 0 ? pid : nil
@@ -156,27 +175,22 @@ final class TaskService: @unchecked Sendable {
     /// exists — we used to default a missing slot to `.idle + buffer:""`
     /// and write it back, which left ghost entries in the map for any
     /// service whose pane had ever been cleared.
-    func clear(serviceID: String, kind: TaskKind) {
+    func clear(serviceID: String, name: String) {
         queue.sync {
-            guard slots[serviceID]?[kind] != nil else { return }
-            mutateLocked(serviceID, kind) { $0 = TaskSlot(state: $0.state, buffer: "") }
+            guard slots[serviceID]?[name] != nil else { return }
+            mutateLocked(serviceID, name) { $0 = TaskSlot(state: $0.state, buffer: "") }
         }
     }
 
     /// Close the pane. No-op while the task is still running; on an exited
     /// slot, drops the entry entirely so subsequent `list(id)` calls return a
-    /// map without this kind. Diverges slightly from the app's pre-2e.3
-    /// `TaskRunner.closePane`, which transitions the slot to `.idle` with an
-    /// empty buffer — equivalent over the wire because the app's
-    /// `replaceSlotsFromEngine` treats absent and `.idle` the same way
-    /// (`isPaneVisible` returns false for both), and an absent entry keeps
-    /// the `tasks.list` payload small.
-    func closePane(serviceID: String, kind: TaskKind) {
+    /// map without this name.
+    func closePane(serviceID: String, name: String) {
         queue.sync {
-            guard let current = slots[serviceID]?[kind] else { return }
+            guard let current = slots[serviceID]?[name] else { return }
             if case .running = current.state { return }
             var inner = slots[serviceID] ?? [:]
-            inner.removeValue(forKey: kind)
+            inner.removeValue(forKey: name)
             if inner.isEmpty {
                 slots.removeValue(forKey: serviceID)
             } else {
@@ -184,7 +198,7 @@ final class TaskService: @unchecked Sendable {
             }
             // Drop the Process handle too if one's still lying around (after
             // a clean exit it'll be the just-finished one; harmless to release).
-            processes.removeValue(forKey: SlotKey(serviceID: serviceID, kind: kind))
+            processes.removeValue(forKey: SlotKey(serviceID: serviceID, name: name))
         }
     }
 
@@ -192,23 +206,23 @@ final class TaskService: @unchecked Sendable {
 
     private struct SlotKey: Hashable {
         let serviceID: String
-        let kind: TaskKind
+        let name: String
     }
 
     private func mutateLocked(
         _ serviceID: String,
-        _ kind: TaskKind,
+        _ name: String,
         _ block: (inout TaskSlot) -> Void
     ) {
         var inner = slots[serviceID] ?? [:]
-        var s = inner[kind] ?? TaskSlot(state: .idle, buffer: "")
+        var s = inner[name] ?? TaskSlot(state: .idle, buffer: "")
         block(&s)
-        inner[kind] = s
+        inner[name] = s
         slots[serviceID] = inner
     }
 
-    private func appendLocked(serviceID: String, kind: TaskKind, text: String) {
-        mutateLocked(serviceID, kind) { s in
+    private func appendLocked(serviceID: String, name: String, text: String) {
+        mutateLocked(serviceID, name) { s in
             var b = s.buffer + text
             if b.count > bufferCap {
                 b = String(b.suffix(bufferCap))
@@ -217,15 +231,15 @@ final class TaskService: @unchecked Sendable {
         }
     }
 
-    private func markExitedLocked(serviceID: String, kind: TaskKind, code: Int32) {
-        mutateLocked(serviceID, kind) { s in
-            if case .running(let name, let since) = s.state {
+    private func markExitedLocked(serviceID: String, name: String, code: Int32) {
+        mutateLocked(serviceID, name) { s in
+            if case .running(let n, let since) = s.state {
                 s = TaskSlot(
-                    state: .exited(name: name, code: code, since: since),
+                    state: .exited(name: n, code: code, since: since),
                     buffer: s.buffer
                 )
             }
         }
-        processes.removeValue(forKey: SlotKey(serviceID: serviceID, kind: kind))
+        processes.removeValue(forKey: SlotKey(serviceID: serviceID, name: name))
     }
 }

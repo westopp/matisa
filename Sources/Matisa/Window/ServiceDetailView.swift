@@ -282,8 +282,7 @@ struct ServiceDetailView: View {
                 }
             }
 
-            buildControl
-            scriptsControl
+            commandsControl
 
             if showKillButton {
                 IconButton("xmark.octagon", help: "Force kill (SIGKILL)", tint: .red) {
@@ -295,67 +294,45 @@ struct ServiceDetailView: View {
         }
     }
 
-    // MARK: - Build / scripts controls
+    // MARK: - Commands control
+    //
+    // Single icon, single menu. Each configured command is one menu entry —
+    // builds, tests, lints, anything wired up under `commands:`. When a
+    // command is running, its menu entry's label flips to `Stop: <name>` and
+    // selecting it cancels the running command. When `TaskLimits.maxRunningCommands`
+    // are already running, every other (not-yet-running) entry is disabled
+    // until something stops. The trigger icon itself never becomes a stop
+    // button — stops are reachable via the menu entry or the pane chrome.
 
     @ViewBuilder
-    private var buildControl: some View {
-        if let build = service.spec.build {
-            let running = store.tasks.slot(service.id, .build).state.isRunning
-            if running {
-                IconButton("stop.fill", help: "Stop build", tint: .red) {
-                    store.stopTask(service, kind: .build)
-                }
-            } else {
-                switch build {
-                case .single:
-                    IconButton("hammer.fill", help: "Build") {
-                        store.runBuild(service)
-                    }
-                case .multi(let commands):
-                    Menu {
-                        ForEach(commands, id: \.name) { c in
-                            Button(c.name) { store.runBuild(service, named: c.name) }
+    private var commandsControl: some View {
+        let commands = service.spec.commands
+        if !commands.isEmpty {
+            let atCap = store.tasks.atRunningCap(service.id)
+            Menu {
+                ForEach(commands, id: \.name) { c in
+                    let running = store.tasks.slot(service.id, c.name).state.isRunning
+                    if running {
+                        Button("Stop: \(c.name)") {
+                            store.stopTask(service, name: c.name)
                         }
-                    } label: {
-                        Image(systemName: "hammer.fill")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 22, height: 22)
+                    } else {
+                        Button(c.name) {
+                            store.runCommand(service, named: c.name)
+                        }
+                        .disabled(atCap)
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .help("Build…")
                 }
+            } label: {
+                Image(systemName: "terminal.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 22)
             }
-        }
-    }
-
-    @ViewBuilder
-    private var scriptsControl: some View {
-        let scripts = service.spec.scripts
-        if !scripts.isEmpty {
-            let running = store.tasks.slot(service.id, .script).state.isRunning
-            if running {
-                IconButton("stop.fill", help: "Stop script", tint: .red) {
-                    store.stopTask(service, kind: .script)
-                }
-            } else {
-                Menu {
-                    ForEach(scripts, id: \.name) { s in
-                        Button(s.name) { store.runScript(service, named: s.name) }
-                    }
-                } label: {
-                    Image(systemName: "terminal.fill")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 22, height: 22)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Run a script…")
-            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Run a command…")
         }
     }
 
@@ -457,6 +434,15 @@ struct ServiceDetailView: View {
             if let port = f.port { items.append(("port", "\(port)")) }
             items.append(("name", f.displayName))
         }
+        // Live resource utilisation — appended last so the existing metadata
+        // ordering doesn't shift when a service starts. Includes process count
+        // so a misbehaving service with 50 child workers reads as such
+        // without needing the hover tooltip the sidebar uses.
+        if let stats = store.resourceStats[service.id] {
+            items.append(("cpu", stats.cpuLabel))
+            items.append(("mem", stats.memLabel))
+            items.append(("procs", "\(stats.processCount)"))
+        }
         return items
     }
 
@@ -464,23 +450,24 @@ struct ServiceDetailView: View {
 
     /// Layout (from the spec):
     ///   - Logs pane is always visible on the left.
-    ///   - Build / scripts panes appear in the right column when their slot
-    ///     is non-idle. Two open → scripts on top, build on bottom; one open
-    ///     → it takes the full right column.
+    ///   - Command panes appear in the right column whenever a command's
+    ///     slot is non-idle (running or exited-but-pane-still-open). Two
+    ///     stacked vertically; the running cap of `TaskLimits.maxRunningCommands`
+    ///     keeps the visible count practically bounded.
     ///   - +4px on the inter-pane gutter compared to the outer VStack spacing.
     @ViewBuilder
     private var logsArea: some View {
-        let buildVisible = store.tasks.isPaneVisible(service.id, .build)
-        let scriptVisible = store.tasks.isPaneVisible(service.id, .script)
+        let visible = store.tasks.visibleSlots(service.id)
 
         HStack(spacing: 18) {
             primaryLogs
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if buildVisible || scriptVisible {
+            if !visible.isEmpty {
                 VStack(spacing: 18) {
-                    if scriptVisible { scriptPane }
-                    if buildVisible { buildPane }
+                    ForEach(visible, id: \.name) { entry in
+                        commandPane(name: entry.name, slot: entry.slot)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -512,39 +499,27 @@ struct ServiceDetailView: View {
     }
 
     @ViewBuilder
-    private var buildPane: some View {
-        let slot = store.tasks.slot(service.id, .build)
+    private func commandPane(name: String, slot: TaskRunner.TaskSlot) -> some View {
         TaskLogPane(
-            title: "Build",
+            title: name,
             subtitle: paneSubtitle(slot.state),
             buffer: slot.buffer,
             isRunning: slot.state.isRunning,
-            onStop: { store.stopTask(service, kind: .build) },
-            onClear: { store.clearTask(service, kind: .build) },
-            onClose: { store.closeTaskPane(service, kind: .build) }
+            onStop: { store.stopTask(service, name: name) },
+            onClear: { store.clearTask(service, name: name) },
+            onClose: { store.closeTaskPane(service, name: name) }
         )
     }
 
-    @ViewBuilder
-    private var scriptPane: some View {
-        let slot = store.tasks.slot(service.id, .script)
-        TaskLogPane(
-            title: "Script",
-            subtitle: paneSubtitle(slot.state),
-            buffer: slot.buffer,
-            isRunning: slot.state.isRunning,
-            onStop: { store.stopTask(service, kind: .script) },
-            onClear: { store.clearTask(service, kind: .script) },
-            onClose: { store.closeTaskPane(service, kind: .script) }
-        )
-    }
-
-    /// Display the running/exited command name in the pane header.
+    /// Display the running/exited status in the pane header. The command
+    /// name is the pane title, so the subtitle just carries lifecycle
+    /// state (since-time would need a relative-formatter; the existing
+    /// behaviour just shows exit code on completion).
     private func paneSubtitle(_ state: TaskRunner.TaskState) -> String? {
         switch state {
         case .idle: return nil
-        case .running(let name, _): return name
-        case .exited(let name, let code, _): return "\(name) · exit \(code)"
+        case .running: return "running"
+        case .exited(_, let code, _): return "exit \(code)"
         }
     }
 }

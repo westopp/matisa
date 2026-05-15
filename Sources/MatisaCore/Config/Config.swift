@@ -90,8 +90,7 @@ public struct RawService: Decodable {
     public let file: String?
     public let ports: [RawComposePort]?
     // common
-    public let build: RawBuild?
-    public let scripts: [RawNamedCommand]?
+    public let commands: [RawNamedCommand]?
     public let group: String?
     public let env: RawEnv?
 }
@@ -122,27 +121,6 @@ public struct RawComposePort: Decodable {
 public struct RawNamedCommand: Decodable, Hashable {
     public let name: String
     public let command: String
-}
-
-/// `build:` accepts either a string (single direct-run command) or an array
-/// of `{ name, command }` objects (the bun eval normalises `Record<string, string>`
-/// to that shape, preserving JS object key order).
-public enum RawBuild: Decodable {
-    case single(String)
-    case multi([RawNamedCommand])
-
-    public init(from decoder: Decoder) throws {
-        let c = try decoder.singleValueContainer()
-        if let s = try? c.decode(String.self) {
-            self = .single(s)
-            return
-        }
-        if let arr = try? c.decode([RawNamedCommand].self) {
-            self = .multi(arr)
-            return
-        }
-        throw ConfigError.parseFailed("'build' must be a string or a Record<string, string>")
-    }
 }
 
 public enum ConfigError: Error, CustomStringConvertible {
@@ -193,8 +171,7 @@ public extension AppConfig {
                     port: port,
                     url: rs.url,
                     command: cmd,
-                    build: Self.buildFromRaw(rs.build, owner: "project '\(name)'"),
-                    scripts: Self.scriptsFromRaw(rs.scripts),
+                    commands: Self.commandsFromRaw(rs.commands),
                     group: Self.normaliseGroup(rs.group),
                     env: Self.envFromRaw(rs.env)
                 ))
@@ -209,17 +186,12 @@ public extension AppConfig {
                 guard let port = rs.port else {
                     throw ConfigError.invalidEntry("docker '\(name)' missing 'port'")
                 }
-                if rs.build != nil {
-                    throw ConfigError.invalidEntry(
-                        "docker '\(name)' cannot define 'build' — only project and compose services support builds"
-                    )
-                }
                 return .docker(DockerFields(
                     name: name,
                     image: image,
                     port: port,
                     url: rs.url,
-                    scripts: Self.scriptsFromRaw(rs.scripts),
+                    commands: Self.commandsFromRaw(rs.commands),
                     group: Self.normaliseGroup(rs.group)
                 ))
 
@@ -235,8 +207,7 @@ public extension AppConfig {
                     name: name,
                     file: Self.expand(fileStr),
                     ports: composePorts,
-                    build: Self.buildFromRaw(rs.build, owner: "compose '\(name)'"),
-                    scripts: Self.scriptsFromRaw(rs.scripts),
+                    commands: Self.commandsFromRaw(rs.commands),
                     group: Self.normaliseGroup(rs.group)
                 ))
 
@@ -279,27 +250,13 @@ public extension AppConfig {
         )
     }
 
-    static func buildFromRaw(_ raw: RawBuild?, owner: String) -> BuildSpec? {
-        guard let raw else { return nil }
-        switch raw {
-        case .single(let s):
-            let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : .single(trimmed)
-        case .multi(let items):
-            let mapped = items
-                .filter { !$0.name.isEmpty && !$0.command.isEmpty }
-                .map { NamedCommand(name: $0.name, command: $0.command) }
-            return mapped.isEmpty ? nil : .multi(mapped)
-        }
-    }
-
     static func normaliseGroup(_ raw: String?) -> String? {
         guard let raw else { return nil }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    static func scriptsFromRaw(_ raw: [RawNamedCommand]?) -> [NamedCommand] {
+    static func commandsFromRaw(_ raw: [RawNamedCommand]?) -> [NamedCommand] {
         (raw ?? [])
             .filter { !$0.name.isEmpty && !$0.command.isEmpty }
             .map { NamedCommand(name: $0.name, command: $0.command) }

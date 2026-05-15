@@ -31,8 +31,7 @@ final class CaddyServiceTests: XCTestCase {
                     port: 5173,
                     url: "web.localhost",
                     command: "npm run dev",
-                    build: nil,
-                    scripts: [],
+                    commands: [],
                     group: nil,
                     env: nil
                 )),
@@ -41,7 +40,7 @@ final class CaddyServiceTests: XCTestCase {
                     image: "ghcr.io/example/api:latest",
                     port: 8080,
                     url: "api.localhost",
-                    scripts: [],
+                    commands: [],
                     group: nil
                 )),
             ],

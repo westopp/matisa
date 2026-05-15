@@ -3,9 +3,9 @@ import Darwin
 import MatisaCore
 @testable import MatisaEngine
 
-/// Exercises the engine's ad-hoc task runner end-to-end against a real
+/// Exercises the engine's ad-hoc command runner end-to-end against a real
 /// `Foundation.Process` — the same boundary the runner uses in production.
-/// Each test uses a unique service id so the per-(serviceID, kind) slot map
+/// Each test uses a unique service id so the per-(serviceID, name) slot map
 /// stays isolated across runs.
 final class TaskServiceTests: XCTestCase {
 
@@ -22,14 +22,14 @@ final class TaskServiceTests: XCTestCase {
     private func waitForSlot(
         _ svc: TaskService,
         id: String,
-        kind: TaskKind,
+        name: String,
         timeout: TimeInterval = 5.0,
         until predicate: (TaskSlot) -> Bool
     ) async -> TaskSlot {
         let deadline = Date().addingTimeInterval(timeout)
         var last = TaskSlot(state: .idle, buffer: "")
         while Date() < deadline {
-            last = svc.list(serviceID: id)[kind] ?? TaskSlot(state: .idle, buffer: "")
+            last = svc.list(serviceID: id)[name] ?? TaskSlot(state: .idle, buffer: "")
             if predicate(last) { return last }
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
@@ -40,10 +40,10 @@ final class TaskServiceTests: XCTestCase {
         let svc = TaskService()
         let id = uniqueID("echo")
         svc.start(
-            serviceID: id, kind: .build, name: "echo",
+            serviceID: id, name: "echo",
             command: "echo hello", cwd: tmp, extraEnv: [:]
         )
-        let final = await waitForSlot(svc, id: id, kind: .build) {
+        let final = await waitForSlot(svc, id: id, name: "echo") {
             if case .exited = $0.state { return true }
             return false
         }
@@ -55,51 +55,93 @@ final class TaskServiceTests: XCTestCase {
         XCTAssertTrue(final.buffer.contains("hello"), "buffer should include 'hello', got: \(final.buffer)")
     }
 
-    func testStart_whileAlreadyRunning_isNoOp() async throws {
+    func testStart_sameName_whileAlreadyRunning_isNoOp() async throws {
         let svc = TaskService()
         let id = uniqueID("dup")
         // Long sleeper — gives us a steady "running" state to attempt a
-        // second start against.
+        // second same-name start against.
         svc.start(
-            serviceID: id, kind: .build, name: "first",
+            serviceID: id, name: "build",
             command: "sleep 5", cwd: tmp, extraEnv: [:]
         )
-        // Confirm the first one landed and is running.
-        let firstSlot = await waitForSlot(svc, id: id, kind: .build) { $0.state.isRunning }
-        guard case .running(let firstName, _) = firstSlot.state else {
+        let firstSlot = await waitForSlot(svc, id: id, name: "build") { $0.state.isRunning }
+        guard case .running(let firstName, let firstSince) = firstSlot.state else {
             return XCTFail("expected .running, got \(firstSlot.state)")
         }
-        XCTAssertEqual(firstName, "first")
+        XCTAssertEqual(firstName, "build")
 
-        // Second start with a different name — should be silently dropped.
+        // Second start with the same name — should be silently dropped.
+        // We re-issue with a longer sleep so a successful start would
+        // visibly extend the slot lifetime; the same-name guard should
+        // prevent it. We compare `since:` to verify nothing reset.
         svc.start(
-            serviceID: id, kind: .build, name: "second",
-            command: "sleep 5", cwd: tmp, extraEnv: [:]
+            serviceID: id, name: "build",
+            command: "sleep 30", cwd: tmp, extraEnv: [:]
         )
-        // Slot should still report the first task running.
-        let after = svc.list(serviceID: id)[.build]
-        guard case .running(let name, _) = after?.state else {
+        let after = svc.list(serviceID: id)["build"]
+        guard case .running(_, let sinceAfter) = after?.state else {
             return XCTFail("expected still .running, got \(String(describing: after?.state))")
         }
-        XCTAssertEqual(name, "first", "second start should not have replaced the first")
+        XCTAssertEqual(sinceAfter, firstSince, "same-name re-start should not have replaced the running slot")
 
-        svc.cancel(serviceID: id, kind: .build)
-        _ = await waitForSlot(svc, id: id, kind: .build) {
+        svc.cancel(serviceID: id, name: "build")
+        _ = await waitForSlot(svc, id: id, name: "build") {
             if case .exited = $0.state { return true }
             return false
         }
+    }
+
+    /// Two different command names can run simultaneously — concurrency cap
+    /// is `TaskLimits.maxRunningCommands` (2), not 1.
+    func testStart_differentNames_canRunConcurrently() async throws {
+        let svc = TaskService()
+        let id = uniqueID("concurrent")
+        svc.start(serviceID: id, name: "a", command: "sleep 30", cwd: tmp, extraEnv: [:])
+        svc.start(serviceID: id, name: "b", command: "sleep 30", cwd: tmp, extraEnv: [:])
+
+        let slotA = await waitForSlot(svc, id: id, name: "a") { $0.state.isRunning }
+        let slotB = await waitForSlot(svc, id: id, name: "b") { $0.state.isRunning }
+        XCTAssertTrue(slotA.state.isRunning)
+        XCTAssertTrue(slotB.state.isRunning)
+
+        svc.cancel(serviceID: id, name: "a")
+        svc.cancel(serviceID: id, name: "b")
+    }
+
+    /// Hitting the per-service cap silently drops the third start.
+    func testStart_atRunningCap_dropsThirdStart() async throws {
+        let svc = TaskService()
+        let id = uniqueID("cap")
+        svc.start(serviceID: id, name: "a", command: "sleep 30", cwd: tmp, extraEnv: [:])
+        svc.start(serviceID: id, name: "b", command: "sleep 30", cwd: tmp, extraEnv: [:])
+        _ = await waitForSlot(svc, id: id, name: "a") { $0.state.isRunning }
+        _ = await waitForSlot(svc, id: id, name: "b") { $0.state.isRunning }
+
+        // Third start should be silently dropped — the slot for "c" must
+        // never appear in the list.
+        svc.start(serviceID: id, name: "c", command: "sleep 30", cwd: tmp, extraEnv: [:])
+        // Give the engine a tick to (correctly) decide not to spawn.
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertNil(svc.list(serviceID: id)["c"], "third start beyond the cap must not create a slot")
+        XCTAssertEqual(
+            svc.list(serviceID: id).values.filter { $0.state.isRunning }.count,
+            TaskLimits.maxRunningCommands
+        )
+
+        svc.cancel(serviceID: id, name: "a")
+        svc.cancel(serviceID: id, name: "b")
     }
 
     func testCancel_killsRunningTask() async throws {
         let svc = TaskService()
         let id = uniqueID("cancel")
         svc.start(
-            serviceID: id, kind: .build, name: "sleeper",
+            serviceID: id, name: "sleeper",
             command: "sleep 30", cwd: tmp, extraEnv: [:]
         )
-        _ = await waitForSlot(svc, id: id, kind: .build) { $0.state.isRunning }
-        svc.cancel(serviceID: id, kind: .build)
-        let final = await waitForSlot(svc, id: id, kind: .build) {
+        _ = await waitForSlot(svc, id: id, name: "sleeper") { $0.state.isRunning }
+        svc.cancel(serviceID: id, name: "sleeper")
+        let final = await waitForSlot(svc, id: id, name: "sleeper") {
             if case .exited = $0.state { return true }
             return false
         }
@@ -121,18 +163,18 @@ final class TaskServiceTests: XCTestCase {
         // `exec <command>` — without the wrapper, the shell would `exec echo`
         // and never reach `sleep`.
         svc.start(
-            serviceID: id, kind: .build, name: "chatty",
+            serviceID: id, name: "chatty",
             command: "sh -c 'echo hi; sleep 30'", cwd: tmp, extraEnv: [:]
         )
-        _ = await waitForSlot(svc, id: id, kind: .build) { slot in
+        _ = await waitForSlot(svc, id: id, name: "chatty") { slot in
             slot.state.isRunning && slot.buffer.contains("hi")
         }
-        svc.clear(serviceID: id, kind: .build)
-        let cleared = try XCTUnwrap(svc.list(serviceID: id)[.build])
+        svc.clear(serviceID: id, name: "chatty")
+        let cleared = try XCTUnwrap(svc.list(serviceID: id)["chatty"])
         XCTAssertEqual(cleared.buffer, "", "buffer should be empty after clear")
         XCTAssertTrue(cleared.state.isRunning, "clear must not affect state")
-        svc.cancel(serviceID: id, kind: .build)
-        _ = await waitForSlot(svc, id: id, kind: .build) {
+        svc.cancel(serviceID: id, name: "chatty")
+        _ = await waitForSlot(svc, id: id, name: "chatty") {
             if case .exited = $0.state { return true }
             return false
         }
@@ -142,15 +184,15 @@ final class TaskServiceTests: XCTestCase {
         let svc = TaskService()
         let id = uniqueID("close-running")
         svc.start(
-            serviceID: id, kind: .build, name: "sleeper",
+            serviceID: id, name: "sleeper",
             command: "sleep 30", cwd: tmp, extraEnv: [:]
         )
-        _ = await waitForSlot(svc, id: id, kind: .build) { $0.state.isRunning }
-        svc.closePane(serviceID: id, kind: .build)
-        let after = try XCTUnwrap(svc.list(serviceID: id)[.build])
+        _ = await waitForSlot(svc, id: id, name: "sleeper") { $0.state.isRunning }
+        svc.closePane(serviceID: id, name: "sleeper")
+        let after = try XCTUnwrap(svc.list(serviceID: id)["sleeper"])
         XCTAssertTrue(after.state.isRunning, "closePane on a running slot must be a no-op")
-        svc.cancel(serviceID: id, kind: .build)
-        _ = await waitForSlot(svc, id: id, kind: .build) {
+        svc.cancel(serviceID: id, name: "sleeper")
+        _ = await waitForSlot(svc, id: id, name: "sleeper") {
             if case .exited = $0.state { return true }
             return false
         }
@@ -160,19 +202,19 @@ final class TaskServiceTests: XCTestCase {
         let svc = TaskService()
         let id = uniqueID("close-exited")
         svc.start(
-            serviceID: id, kind: .script, name: "echo",
+            serviceID: id, name: "echo",
             command: "echo done", cwd: tmp, extraEnv: [:]
         )
-        _ = await waitForSlot(svc, id: id, kind: .script) {
+        _ = await waitForSlot(svc, id: id, name: "echo") {
             if case .exited = $0.state { return true }
             return false
         }
-        svc.closePane(serviceID: id, kind: .script)
+        svc.closePane(serviceID: id, name: "echo")
         // closePane drops the slot from the map entirely — `list` returns an
         // empty dict for the service. The app's `replaceSlotsFromEngine`
-        // treats an absent kind the same way it treats `.idle`: the pane
+        // treats an absent name the same way it treats `.idle`: the pane
         // disappears.
-        XCTAssertNil(svc.list(serviceID: id)[.script])
+        XCTAssertNil(svc.list(serviceID: id)["echo"])
     }
 
     func testList_returnsEmptyForUnknownService() {

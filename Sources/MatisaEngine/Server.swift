@@ -46,6 +46,15 @@ final class UnixSocketServer {
         let lockPath = path + ".lock"
         let lfd = open(lockPath, O_CREAT | O_RDWR, 0o600)
         guard lfd >= 0 else { throw SocketError.lock(errnoCopy(), lockPath) }
+        // Stamp FD_CLOEXEC before flock so the fd doesn't leak into any child
+        // process the engine spawns. Without this, a child started by one of
+        // our service spawns inherits this fd; when the engine then exits but
+        // the child outlives it (reparented to launchd), the child keeps the
+        // flock alive and every subsequent engine start fails with "another
+        // matisa-engine appears to be running" until the child is killed.
+        // Observed in the wild against an orphan `bun run dev` from a
+        // long-stopped service spawn.
+        _ = fcntl(lfd, F_SETFD, FD_CLOEXEC)
         if flock(lfd, LOCK_EX | LOCK_NB) != 0 {
             let e = errnoCopy()
             close(lfd)

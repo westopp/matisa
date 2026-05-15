@@ -20,6 +20,7 @@ final class Engine {
     private let taskService = TaskService()
     private let tunnelService: TunnelService
     private let mdnsService: MDNSService
+    private let resourceSampler = ResourceSampler()
     private let startedAt = Date()
 
     init() {
@@ -208,6 +209,25 @@ final class Engine {
             try servicesService.snapshot()
         }
 
+        // resources.snapshot — phase 3.x. Per-service CPU% / mem footprint /
+        // process count, aggregated across each service's process tree. Driven
+        // off the same merged snapshot as `services.snapshot` so the keys line
+        // up; the sampler caches per-PID cumulative CPU time across calls to
+        // compute the delta — first sample for a fresh PID returns 0%. Cheap:
+        // one rusage syscall per process in each tree, ~ms total at typical
+        // dev-machine load.
+        dispatcher.register("resources.snapshot") { [servicesService, resourceSampler] () -> ResourcesSnapshot in
+            let snap = try servicesService.snapshot()
+            var roots: [(serviceID: String, pid: pid_t)] = []
+            for svc in snap.managed + snap.unmanaged {
+                if let pid = svc.state.pid, pid > 1 {
+                    roots.append((svc.id, pid))
+                }
+            }
+            let stats = resourceSampler.sample(roots: roots)
+            return ResourcesSnapshot(stats: stats, takenAt: Date())
+        }
+
         // discovery.snapshot — phase 2b.1. Raw probe results. The app's
         // local-fallback path still uses this when services.snapshot fails,
         // so the merge can run against engine-cached discovery even if the
@@ -319,16 +339,17 @@ final class Engine {
             return EmptyResponse()
         }
 
-        // Ad-hoc tasks (build / script invocations) — phase 2e.3. Engine owns
-        // the per-(serviceID, kind) slot map and the underlying Process
-        // lifecycle. App polls `tasks.list(id)` for services with a visible
-        // pane and mirrors the result into its local TaskRunner so the
-        // existing SwiftUI bindings keep working. Method names are snake_case
-        // for multi-word — `tasks.close_pane` not `tasks.closePane`.
+        // Ad-hoc commands — phase 2e.3, refactored for the unified commands
+        // surface. Engine owns the per-(serviceID, commandName) slot map and
+        // the underlying Process lifecycle, capped at `maxRunningCommands`
+        // concurrent per service. App polls `tasks.list(id)` for services
+        // with a visible pane and mirrors the result into its local
+        // TaskRunner so the existing SwiftUI bindings keep working. Method
+        // names are snake_case for multi-word — `tasks.close_pane` not
+        // `tasks.closePane`.
         dispatcher.register("tasks.start") { [taskService] (p: TaskStartParams) -> EmptyResponse in
             taskService.start(
                 serviceID: p.id,
-                kind: p.kind,
                 name: p.name,
                 command: p.command,
                 cwd: p.cwd,
@@ -337,15 +358,15 @@ final class Engine {
             return EmptyResponse()
         }
         dispatcher.register("tasks.cancel") { [taskService] (p: TaskCancelParams) -> EmptyResponse in
-            taskService.cancel(serviceID: p.id, kind: p.kind)
+            taskService.cancel(serviceID: p.id, name: p.name)
             return EmptyResponse()
         }
         dispatcher.register("tasks.clear") { [taskService] (p: TaskCancelParams) -> EmptyResponse in
-            taskService.clear(serviceID: p.id, kind: p.kind)
+            taskService.clear(serviceID: p.id, name: p.name)
             return EmptyResponse()
         }
         dispatcher.register("tasks.close_pane") { [taskService] (p: TaskCancelParams) -> EmptyResponse in
-            taskService.closePane(serviceID: p.id, kind: p.kind)
+            taskService.closePane(serviceID: p.id, name: p.name)
             return EmptyResponse()
         }
         dispatcher.register("tasks.list") { [taskService] (p: ServiceIDParams) -> TaskList in

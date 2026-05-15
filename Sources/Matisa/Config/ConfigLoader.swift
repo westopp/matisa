@@ -8,9 +8,11 @@ import MatisaCore
 /// bun directly when the engine is down, so the app keeps working in
 /// dev / pre-install scenarios.
 ///
-/// Cache-by-mtime is preserved on the local-fallback path. The engine has
-/// its own mtime cache, so engine-served calls are also cheap when nothing
-/// has changed.
+/// Cache key on the local-fallback path is the max mtime across all `.ts`
+/// files under the config dir (see `ConfigMtime`), so per-project files
+/// split out under `projects/` invalidate the cache too. The engine has
+/// its own (identical) cache, so engine-served calls are also cheap when
+/// nothing has changed.
 @MainActor
 final class ConfigLoader {
     private(set) var lastConfig: AppConfig?
@@ -66,8 +68,11 @@ final class ConfigLoader {
             throw err
         }
 
-        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
-        let mtime = attrs?[.modificationDate] as? Date
+        // Cache key: max mtime across all `.ts` files under the config dir,
+        // so per-project files split out under `projects/` also invalidate
+        // the cache (not just edits to services.ts).
+        let configDir = url.deletingLastPathComponent()
+        let mtime = ConfigMtime.latest(under: configDir)
 
         if let cached = lastConfig, let lastMtime, mtime == lastMtime {
             return cached
@@ -80,11 +85,11 @@ final class ConfigLoader {
             throw err
         }
 
-        // Normalise `build` (when an object) and `scripts` from
-        // Record<string, string> to an ordered array of { name, command }
-        // before JSON.stringify, since NSJSONSerialization on Apple platforms
-        // doesn't preserve object key order. Same goes for `env` — string
-        // values become base vars, object values become named contexts.
+        // Normalise `commands` from Record<string, string> to an ordered
+        // array of { name, command } before JSON.stringify, since
+        // NSJSONSerialization on Apple platforms doesn't preserve object
+        // key order. Same goes for `env` — string values become base vars,
+        // object values become named contexts.
         let script = """
         const c = (await import('\(url.path)')).default;
         const out = typeof c === 'function' ? await c() : c;
@@ -114,8 +119,7 @@ final class ConfigLoader {
         if (out && Array.isArray(out.services)) {
           out.services = out.services.map((s) => ({
             ...s,
-            build: typeof s?.build === 'string' ? s.build : norm(s?.build),
-            scripts: norm(s?.scripts),
+            commands: norm(s?.commands),
             env: splitEnv(s?.env),
           }));
         }

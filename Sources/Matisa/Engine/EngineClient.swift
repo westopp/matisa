@@ -269,11 +269,10 @@ struct ServiceLifecycleClientParams: Encodable {
 
 struct EmptyResponse: Decodable {}
 
-/// Mirror of the engine's `TaskStartParams`. `TaskKind` rides as a string
-/// since it's `Codable` via its `String` RawValue.
+/// Mirror of the engine's `TaskStartParams`. Slot identity is the command
+/// `name` (the user-visible label from the service's `commands:` block).
 struct TaskStartClientParams: Encodable {
     let id: String
-    let kind: MatisaCore.TaskKind
     let name: String
     let command: String
     let cwd: URL
@@ -284,7 +283,7 @@ struct TaskStartClientParams: Encodable {
 /// `tasks.clear`, and `tasks.close_pane`.
 struct TaskCancelClientParams: Encodable {
     let id: String
-    let kind: MatisaCore.TaskKind
+    let name: String
 }
 
 /// Mirror of the engine's `EngineStatus`. Decoded from `engine.status` RPC

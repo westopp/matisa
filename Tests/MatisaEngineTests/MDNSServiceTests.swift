@@ -34,8 +34,7 @@ final class MDNSServiceTests: XCTestCase {
                 port: port,
                 url: nil,
                 command: "npm run dev",
-                build: nil,
-                scripts: [],
+                commands: [],
                 group: nil,
                 env: nil
             )),

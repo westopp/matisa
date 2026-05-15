@@ -20,35 +20,6 @@ final class CodableRoundTripTests: XCTestCase {
         XCTAssertEqual(value, decoded, file: file, line: line)
     }
 
-    // MARK: - BuildSpec (string or array)
-
-    func testBuildSpec_single_roundTrips() throws {
-        try roundTrip(BuildSpec.single("npm run build"))
-    }
-
-    func testBuildSpec_multi_roundTrips() throws {
-        try roundTrip(BuildSpec.multi([
-            NamedCommand(name: "web", command: "npm run build:web"),
-            NamedCommand(name: "api", command: "npm run build:api"),
-        ]))
-    }
-
-    func testBuildSpec_single_wireShapeIsBareString() throws {
-        let data = try encoder.encode(BuildSpec.single("make"))
-        let json = String(data: data, encoding: .utf8)
-        XCTAssertEqual(json, "\"make\"")
-    }
-
-    func testBuildSpec_multi_wireShapeIsArray() throws {
-        let data = try encoder.encode(BuildSpec.multi([
-            NamedCommand(name: "a", command: "cmd-a"),
-        ]))
-        let json = (try? JSONSerialization.jsonObject(with: data)) as? [[String: String]]
-        XCTAssertEqual(json?.count, 1)
-        XCTAssertEqual(json?.first?["name"], "a")
-        XCTAssertEqual(json?.first?["command"], "cmd-a")
-    }
-
     // MARK: - UnmanagedKind
 
     func testUnmanagedKind_process_full() throws {
@@ -194,8 +165,10 @@ final class CodableRoundTripTests: XCTestCase {
             port: 5173,
             url: "web.localhost",
             command: "npm run dev",
-            build: .multi([NamedCommand(name: "default", command: "npm run build")]),
-            scripts: [NamedCommand(name: "lint", command: "npm run lint")],
+            commands: [
+                NamedCommand(name: "build", command: "npm run build"),
+                NamedCommand(name: "lint", command: "npm run lint"),
+            ],
             group: "frontend",
             env: EnvSpec(
                 base: [EnvVar(name: "PORT", value: "5173")],
@@ -208,11 +181,11 @@ final class CodableRoundTripTests: XCTestCase {
     }
 
     func testServiceSpec_project_minimal() throws {
-        // All optionals nil, no build, no scripts, no env.
+        // All optionals nil, no commands, no env.
         let spec = ServiceSpec.project(ProjectFields(
             name: "minimal", path: URL(fileURLWithPath: "/tmp/m"),
             port: 3000, url: nil, command: "run",
-            build: nil, scripts: [], group: nil, env: nil
+            commands: [], group: nil, env: nil
         ))
         try roundTrip(spec)
     }
@@ -220,7 +193,7 @@ final class CodableRoundTripTests: XCTestCase {
     func testServiceSpec_docker() throws {
         try roundTrip(ServiceSpec.docker(DockerFields(
             name: "redis", image: "redis:7", port: 6379, url: nil,
-            scripts: [], group: "infra"
+            commands: [], group: "infra"
         )))
     }
 
@@ -232,8 +205,10 @@ final class CodableRoundTripTests: XCTestCase {
                 ComposePort(host: 16686, url: "jaeger.localhost"),
                 ComposePort(host: 4317, url: nil),
             ],
-            build: .single("docker compose build"),
-            scripts: [NamedCommand(name: "logs", command: "docker compose logs -f")],
+            commands: [
+                NamedCommand(name: "build", command: "docker compose build"),
+                NamedCommand(name: "logs", command: "docker compose logs -f"),
+            ],
             group: nil
         )))
     }
@@ -255,7 +230,7 @@ final class CodableRoundTripTests: XCTestCase {
     func testServiceSpec_project_wireShapeUsesTypeFieldsEnvelope() throws {
         let spec = ServiceSpec.docker(DockerFields(
             name: "x", image: "y", port: 1, url: nil,
-            scripts: [], group: nil
+            commands: [], group: nil
         ))
         let data = try encoder.encode(spec)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -345,7 +320,7 @@ final class CodableRoundTripTests: XCTestCase {
             spec: .project(ProjectFields(
                 name: "web", path: URL(fileURLWithPath: "/tmp/web"),
                 port: 5173, url: nil, command: "npm run dev",
-                build: nil, scripts: [], group: nil, env: nil
+                commands: [], group: nil, env: nil
             )),
             state: .running(pid: 4242, since: Date(timeIntervalSince1970: 1_700_000_000)),
             logsPath: URL(fileURLWithPath: "/tmp/Logs/project-web.log")
@@ -370,7 +345,7 @@ final class CodableRoundTripTests: XCTestCase {
                 Service(
                     spec: .docker(DockerFields(
                         name: "redis", image: "redis:7", port: 6379,
-                        url: nil, scripts: [], group: nil
+                        url: nil, commands: [], group: nil
                     )),
                     state: .running(pid: 0, since: Date(timeIntervalSince1970: 1_700_000_000)),
                     logsPath: URL(fileURLWithPath: "/tmp/Logs/docker-redis.log")
@@ -481,16 +456,16 @@ final class CodableRoundTripTests: XCTestCase {
         ))
     }
 
-    func testTaskList_multipleKinds_roundTrip() throws {
+    func testTaskList_multipleCommands_roundTrip() throws {
         let list = TaskList(slots: [
-            .build: TaskSlot(
+            "build": TaskSlot(
                 state: .running(
-                    name: "default",
+                    name: "build",
                     since: Date(timeIntervalSince1970: 1_700_000_000)
                 ),
                 buffer: "step 1\n"
             ),
-            .script: TaskSlot(
+            "lint": TaskSlot(
                 state: .exited(
                     name: "lint",
                     code: 1,
@@ -504,16 +479,28 @@ final class CodableRoundTripTests: XCTestCase {
         XCTAssertEqual(decoded.slots, list.slots)
     }
 
-    /// Sanity-check the JSON shape: `TaskList` must encode as a keyed object
-    /// with string kinds, not the dictionary-of-pairs default Foundation uses
-    /// for `RawRepresentable<String>`-keyed dicts. App + engine read both
-    /// sides so a shape regression would silently break the wire.
+    /// Sanity-check the JSON shape: `TaskList` encodes as a plain JSON
+    /// object keyed by command name, so the engine and app read the same
+    /// wire payload. A shape regression here would silently break the wire.
     func testTaskList_wireShapeIsKeyedObject() throws {
         let list = TaskList(slots: [
-            .build: TaskSlot(state: .idle, buffer: ""),
+            "build": TaskSlot(state: .idle, buffer: ""),
         ])
         let data = try encoder.encode(list)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         XCTAssertNotNil(json?["build"], "expected `build` key at the top level, got \(String(describing: json))")
+    }
+
+    /// Sanity-check `TaskList.runningCount` — the engine and app both
+    /// rely on this to enforce the per-service concurrency cap.
+    func testTaskList_runningCount() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let list = TaskList(slots: [
+            "build": TaskSlot(state: .running(name: "build", since: now), buffer: ""),
+            "test":  TaskSlot(state: .exited(name: "test", code: 0, since: now), buffer: ""),
+            "lint":  TaskSlot(state: .running(name: "lint", since: now), buffer: ""),
+            "docs":  TaskSlot(state: .idle, buffer: ""),
+        ])
+        XCTAssertEqual(list.runningCount, 2)
     }
 }

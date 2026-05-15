@@ -16,17 +16,16 @@ public struct ProjectFields: Hashable, Sendable, Codable {
     public let port: Int
     public let url: String?
     public let command: String
-    public let build: BuildSpec?
-    public let scripts: [NamedCommand]
+    public let commands: [NamedCommand]
     public let group: String?
     public let env: EnvSpec?
 
     public init(
         name: String, path: URL, port: Int, url: String?, command: String,
-        build: BuildSpec?, scripts: [NamedCommand], group: String?, env: EnvSpec?
+        commands: [NamedCommand], group: String?, env: EnvSpec?
     ) {
         self.name = name; self.path = path; self.port = port; self.url = url
-        self.command = command; self.build = build; self.scripts = scripts
+        self.command = command; self.commands = commands
         self.group = group; self.env = env
     }
 }
@@ -36,15 +35,15 @@ public struct DockerFields: Hashable, Sendable, Codable {
     public let image: String
     public let port: Int
     public let url: String?
-    public let scripts: [NamedCommand]
+    public let commands: [NamedCommand]
     public let group: String?
 
     public init(
         name: String, image: String, port: Int, url: String?,
-        scripts: [NamedCommand], group: String?
+        commands: [NamedCommand], group: String?
     ) {
         self.name = name; self.image = image; self.port = port; self.url = url
-        self.scripts = scripts; self.group = group
+        self.commands = commands; self.group = group
     }
 }
 
@@ -52,16 +51,15 @@ public struct ComposeFields: Hashable, Sendable, Codable {
     public let name: String
     public let file: URL
     public let ports: [ComposePort]
-    public let build: BuildSpec?
-    public let scripts: [NamedCommand]
+    public let commands: [NamedCommand]
     public let group: String?
 
     public init(
         name: String, file: URL, ports: [ComposePort],
-        build: BuildSpec?, scripts: [NamedCommand], group: String?
+        commands: [NamedCommand], group: String?
     ) {
         self.name = name; self.file = file; self.ports = ports
-        self.build = build; self.scripts = scripts; self.group = group
+        self.commands = commands; self.group = group
     }
 }
 
@@ -72,37 +70,6 @@ public struct NamedCommand: Hashable, Sendable, Codable {
     public let command: String
     public init(name: String, command: String) {
         self.name = name; self.command = command
-    }
-}
-
-/// Build configuration. `single` runs directly when the build icon is tapped;
-/// `multi` opens a context menu of named commands.
-public enum BuildSpec: Hashable, Sendable {
-    case single(String)
-    case multi([NamedCommand])
-}
-
-extension BuildSpec: Codable {
-    /// Wire shape mirrors the source TS config: a plain string is a single
-    /// command, an array of `{name, command}` is the multi variant.
-    public func encode(to encoder: Encoder) throws {
-        var c = encoder.singleValueContainer()
-        switch self {
-        case .single(let s): try c.encode(s)
-        case .multi(let arr): try c.encode(arr)
-        }
-    }
-    public init(from decoder: Decoder) throws {
-        let c = try decoder.singleValueContainer()
-        if let s = try? c.decode(String.self) {
-            self = .single(s); return
-        }
-        if let arr = try? c.decode([NamedCommand].self) {
-            self = .multi(arr); return
-        }
-        throw DecodingError.dataCorruptedError(
-            in: c, debugDescription: "BuildSpec must be a string or an array of NamedCommand"
-        )
     }
 }
 
@@ -333,22 +300,16 @@ public extension ServiceSpec {
         }
     }
 
-    /// Build configuration, if defined for this service. Only project and
-    /// compose services support builds.
-    var build: BuildSpec? {
-        switch self {
-        case .project(let f): f.build
-        case .compose(let f): f.build
-        case .docker, .unmanaged: nil
-        }
-    }
-
     /// Ad-hoc named commands for this service. Empty when none configured.
-    var scripts: [NamedCommand] {
+    /// Builds, tests, lints — anything the user wants reachable from the
+    /// command menu — all live here. There used to be a separate `build:`
+    /// field; it was folded into commands so the model has one concept
+    /// (named commands) instead of two with overlapping semantics.
+    var commands: [NamedCommand] {
         switch self {
-        case .project(let f): f.scripts
-        case .docker(let f): f.scripts
-        case .compose(let f): f.scripts
+        case .project(let f): f.commands
+        case .docker(let f): f.commands
+        case .compose(let f): f.commands
         case .unmanaged: []
         }
     }

@@ -1,9 +1,11 @@
 import Foundation
+import MatisaCore
 
 /// Loads `~/.config/matisa/services.ts` by shelling out to bun, mirrors the
 /// app's `ConfigLoader` byte-for-byte (same eval script, same caching by
-/// mtime). The result is raw JSON bytes; the wire shape is whatever the
-/// bun eval emits, which the app already knows how to decode.
+/// max-mtime across all `.ts` files under the config dir — see
+/// `ConfigMtime`). The result is raw JSON bytes; the wire shape is whatever
+/// the bun eval emits, which the app already knows how to decode.
 ///
 /// Thread-safe: all access goes through a serial queue. A single in-flight
 /// bun call blocks the queue for the duration (~100–500ms first time,
@@ -68,8 +70,11 @@ final class ConfigService {
                 throw RPCError.internalError(msg)
             }
 
-            let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
-            let mtime = (attrs?[.modificationDate] as? Date) ?? Date()
+            // Cache key: max mtime across all `.ts` files under the config
+            // dir, so per-project files split out under `projects/` also
+            // invalidate the cache (not just edits to services.ts).
+            let configDir = url.deletingLastPathComponent()
+            let mtime = ConfigMtime.latest(under: configDir)
 
             if let c = cached, c.mtime == mtime {
                 return c.json
@@ -135,8 +140,7 @@ final class ConfigService {
         if (out && Array.isArray(out.services)) {
           out.services = out.services.map((s) => ({
             ...s,
-            build: typeof s?.build === 'string' ? s.build : norm(s?.build),
-            scripts: norm(s?.scripts),
+            commands: norm(s?.commands),
             env: splitEnv(s?.env),
           }));
         }
