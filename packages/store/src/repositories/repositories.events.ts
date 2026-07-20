@@ -1,0 +1,103 @@
+import { Context, Effect, Layer } from "effect"
+import { and, eq, gt, max } from "drizzle-orm"
+import { ProjectId, type EngineEvent } from "@matisa/core"
+import { events, type EventRow } from "../db.schema/db.events.js"
+import { Store } from "../store.client.js"
+import { StoreQueryError } from "../store.errors.js"
+
+/** An event to append — the full EngineEvent minus its DB-assigned `seq`. */
+export type NewEvent = Omit<EngineEvent, "seq">
+
+export interface EventPullParams {
+  /** Return events with seq strictly greater than this cursor. */
+  readonly since: number
+  readonly limit?: number
+  readonly projectId?: ProjectId
+}
+
+export interface EventPullResult {
+  readonly events: ReadonlyArray<EngineEvent>
+  readonly nextCursor: number
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// EventsRepo — the ONLY writer of the events table (durable-cursor-events).
+// `append` returns the new autoincrement seq (the cursor); `pull` replays by
+// cursor for one-shot backfill; live fan-out is a PubSub push built above this.
+//
+// Single-table, flat rows — no aggregate assembly — so this repo goes through
+// the schema-aware Drizzle client and takes its row type from the schema
+// (`EventRow` = typeof events.$inferSelect) instead of a hand-synced interface.
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface EventsRepoShape {
+  readonly append: (event: NewEvent) => Effect.Effect<number, StoreQueryError>
+  readonly pull: (params: EventPullParams) => Effect.Effect<EventPullResult, StoreQueryError>
+  readonly latestCursor: () => Effect.Effect<number, StoreQueryError>
+}
+
+export class EventsRepo extends Context.Tag("EventsRepo")<EventsRepo, EventsRepoShape>() {}
+
+const toEvent = (r: EventRow): EngineEvent =>
+  ({
+    seq: r.seq,
+    ts: r.ts,
+    projectId: ProjectId.make(r.projectId),
+    type: r.type,
+    payload: JSON.parse(r.payloadJson)
+  }) as EngineEvent
+
+export const EventsRepoLive = Layer.effect(
+  EventsRepo,
+  Effect.gen(function* () {
+    const { db } = yield* Store
+
+    const q = <A>(fn: () => A): Effect.Effect<A, StoreQueryError> =>
+      Effect.try({ try: fn, catch: (cause) => new StoreQueryError({ cause }) })
+
+    const append: EventsRepoShape["append"] = (event) =>
+      q(() => {
+        // RETURNING the PK beats reading lastInsertRowid — the cursor comes
+        // straight from the insert rather than a second, racier round-trip.
+        const row = db
+          .insert(events)
+          .values({
+            ts: event.ts,
+            projectId: event.projectId,
+            topic: null,
+            type: event.type,
+            payloadJson: JSON.stringify(event.payload)
+          })
+          .returning({ seq: events.seq })
+          .get()
+        return row.seq
+      })
+
+    const pull: EventsRepoShape["pull"] = (params) =>
+      q(() => {
+        const rows = db
+          .select()
+          .from(events)
+          .where(
+            and(
+              gt(events.seq, params.since),
+              params.projectId ? eq(events.projectId, params.projectId) : undefined
+            )
+          )
+          .orderBy(events.seq)
+          .limit(params.limit ?? 100)
+          .all()
+        const pulled = rows.map(toEvent)
+        const nextCursor = pulled.at(-1)?.seq ?? params.since
+        return { events: pulled, nextCursor }
+      })
+
+    const latestCursor: EventsRepoShape["latestCursor"] = () =>
+      q(() => {
+        const r = db.select({ m: max(events.seq) }).from(events).get()
+        return r?.m ?? 0
+      })
+
+    return EventsRepo.of({ append, pull, latestCursor })
+  })
+)

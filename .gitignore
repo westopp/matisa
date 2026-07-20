@@ -10,3 +10,11 @@ Matisa.app/
 *.swiftdeps
 *.swiftdeps~
 .review/
+
+# node / pnpm / typescript
+node_modules/
+dist/
+*.tsbuildinfo
+
+# matisa runtime (socket + db)
+.matisa/

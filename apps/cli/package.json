@@ -1,0 +1,20 @@
+{
+  "name": "matisa-cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/main.ts",
+  "bin": {
+    "matisa": "./src/main.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@effect/cli": "^0.76.0",
+    "@effect/platform": "^0.97.0",
+    "@effect/platform-node": "^0.108.0",
+    "@matisa/core": "workspace:*",
+    "effect": "^3.22.0"
+  }
+}

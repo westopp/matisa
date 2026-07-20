@@ -1,0 +1,18 @@
+{
+  "name": "@matisa/engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/main.ts",
+  "scripts": {
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@effect/platform": "^0.97.0",
+    "@effect/platform-node": "^0.108.0",
+    "@matisa/core": "workspace:*",
+    "@matisa/store": "workspace:*",
+    "effect": "^3.22.0",
+    "node-pty": "^1.1.0"
+  }
+}
