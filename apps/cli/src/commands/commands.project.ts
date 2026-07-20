@@ -32,7 +32,7 @@ const portOption = (name: string) =>
 // POSIX-ish tokenizer for --cmd: single quotes are literal, double quotes
 // group with \" \\ \$ \` escapes, bare backslash escapes the next char.
 // Splitting on whitespace alone mangled anything like `node -e 'setInterval(…)'`.
-const tokenize = (input: string): ReadonlyArray<string> | null => {
+export const tokenize = (input: string): ReadonlyArray<string> | null => {
   const out: Array<string> = []
   let cur = ""
   let started = false
