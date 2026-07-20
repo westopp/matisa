@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>Matisa</string>
+	<key>CFBundleIdentifier</key>
+	<string>dev.thulane.Matisa</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Matisa</string>
+	<key>CFBundleDisplayName</key>
+	<string>Matisa</string>
+	<key>CFBundleIconFile</key>
+	<string>Matisa</string>
+	<key>CFBundleIconName</key>
+	<string>Matisa</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSSupportsAutomaticTermination</key>
+	<true/>
+	<key>NSSupportsSuddenTermination</key>
+	<true/>
+	<!--
+	  TCC usage descriptions for the per-user-data prompts that macOS
+	  shows even for unsandboxed apps. Matisa reads project directories
+	  configured in matisa.config.ts (typical locations include
+	  ~/Desktop, ~/Documents, ~/Downloads, ~/Developer) to discover
+	  what's running, so when the user's projects live under those
+	  protected dirs the OS asks once on first launch. Strings show up
+	  inside the prompt — give the user a meaningful reason rather than
+	  the macOS default "Matisa.app would like to access…".
+
+	  These only describe the prompt; the user still has to click
+	  "Allow". For persistence across rebuilds we use a stable code
+	  signing identity in build-app.sh — see that file's comments.
+	-->
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Matisa reads project directories listed in your matisa.config.ts. Allowing access lets it detect which services are running and tail their logs.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Matisa reads project directories listed in your matisa.config.ts. Allowing access lets it detect which services are running and tail their logs.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Matisa reads project directories listed in your matisa.config.ts. Allowing access lets it detect which services are running and tail their logs.</string>
+</dict>
+</plist>
