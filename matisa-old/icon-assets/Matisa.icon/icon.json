@@ -1,9 +1,22 @@
 {
   "color-space-for-untagged-svg-colors" : "display-p3",
   "fill" : {
-    "automatic-gradient" : "display-p3:0.12549,0.54902,0.27059,1.00000"
+    "automatic-gradient" : "display-p3:0.00000,0.23794,0.54902,1.00000"
   },
   "groups" : [
+    {
+      "layers" : [
+
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
     {
       "layers" : [
         {
@@ -44,49 +57,223 @@
           "position" : {
             "scale" : 3.55,
             "translation-in-points" : [
-              2.4540610351999703,
-              -43.82103125000003
+              0.08259166874006496,
+              -160.15188813778263
             ]
           }
         },
         {
-          "blend-mode-specializations" : [
-            {
-              "appearance" : "dark",
-              "value" : "normal"
-            }
-          ],
           "fill-specializations" : [
             {
               "value" : {
-                "solid" : "display-p3:0.63830,1.00000,0.64691,0.65831"
+                "solid" : "display-p3:0.92747,1.00000,0.92129,1.00000"
               }
             },
             {
               "appearance" : "tinted",
               "value" : {
-                "automatic-gradient" : "display-p3:0.93432,0.96783,0.86021,0.45640"
+                "linear-gradient" : [
+                  "display-p3:0.81549,0.87385,0.81279,1.00000",
+                  "display-p3:0.91379,0.96783,0.91129,1.00000"
+                ],
+                "orientation" : {
+                  "start" : {
+                    "x" : 0.5000000000000001,
+                    "y" : 1
+                  },
+                  "stop" : {
+                    "x" : 0.5000000000000001,
+                    "y" : 0.3130740718984963
+                  }
+                }
               }
             }
           ],
           "glass-specializations" : [
             {
-              "appearance" : "dark",
-              "value" : true
-            },
-            {
               "appearance" : "tinted",
-              "value" : true
+              "value" : false
             }
           ],
-          "hidden" : false,
-          "image-name" : "one.svg",
-          "name" : "one",
+          "image-name" : "two.svg",
+          "name" : "two",
           "position" : {
             "scale" : 3.55,
             "translation-in-points" : [
-              1.1591291687400371,
-              75.89288449241175
+              1.4795166687400751,
+              -107.1758623858409
+            ]
+          }
+        },
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "display-p3:0.92747,1.00000,0.92129,1.00000"
+              }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.81549,0.87385,0.81279,1.00000",
+                  "display-p3:0.91379,0.96783,0.91129,1.00000"
+                ],
+                "orientation" : {
+                  "start" : {
+                    "x" : 0.5000000000000001,
+                    "y" : 1
+                  },
+                  "stop" : {
+                    "x" : 0.5000000000000001,
+                    "y" : 0.3130740718984963
+                  }
+                }
+              }
+            }
+          ],
+          "glass-specializations" : [
+            {
+              "appearance" : "tinted",
+              "value" : false
+            }
+          ],
+          "image-name" : "two.svg",
+          "name" : "two",
+          "position" : {
+            "scale" : 3.55,
+            "translation-in-points" : [
+              0.08259166874006496,
+              127.68858761415913
+            ]
+          }
+        },
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "display-p3:0.92747,1.00000,0.92129,1.00000"
+              }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.81549,0.87385,0.81279,1.00000",
+                  "display-p3:0.91379,0.96783,0.91129,1.00000"
+                ],
+                "orientation" : {
+                  "start" : {
+                    "x" : 0.5000000000000001,
+                    "y" : 1
+                  },
+                  "stop" : {
+                    "x" : 0.5000000000000001,
+                    "y" : 0.3130740718984963
+                  }
+                }
+              }
+            }
+          ],
+          "glass-specializations" : [
+            {
+              "appearance" : "tinted",
+              "value" : false
+            }
+          ],
+          "image-name" : "two.svg",
+          "name" : "two",
+          "position" : {
+            "scale" : 3.55,
+            "translation-in-points" : [
+              0.08259166874006496,
+              74.71256186221729
+            ]
+          }
+        },
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "display-p3:0.92747,1.00000,0.92129,1.00000"
+              }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.81549,0.87385,0.81279,1.00000",
+                  "display-p3:0.91379,0.96783,0.91129,1.00000"
+                ],
+                "orientation" : {
+                  "start" : {
+                    "x" : 0.5000000000000001,
+                    "y" : 1
+                  },
+                  "stop" : {
+                    "x" : 0.5000000000000001,
+                    "y" : 0.3130740718984963
+                  }
+                }
+              }
+            }
+          ],
+          "glass-specializations" : [
+            {
+              "appearance" : "tinted",
+              "value" : false
+            }
+          ],
+          "image-name" : "two.svg",
+          "name" : "two",
+          "position" : {
+            "scale" : 3.55,
+            "translation-in-points" : [
+              0.08259166874006496,
+              13.747440690808617
+            ]
+          }
+        },
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "display-p3:0.92747,1.00000,0.92129,1.00000"
+              }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.81549,0.87385,0.81279,1.00000",
+                  "display-p3:0.91379,0.96783,0.91129,1.00000"
+                ],
+                "orientation" : {
+                  "start" : {
+                    "x" : 0.5000000000000001,
+                    "y" : 1
+                  },
+                  "stop" : {
+                    "x" : 0.5000000000000001,
+                    "y" : 0.3130740718984963
+                  }
+                }
+              }
+            }
+          ],
+          "glass-specializations" : [
+            {
+              "appearance" : "tinted",
+              "value" : false
+            }
+          ],
+          "image-name" : "two.svg",
+          "name" : "two",
+          "position" : {
+            "scale" : 3.55,
+            "translation-in-points" : [
+              0.08259166874006496,
+              -49.46937094539385
             ]
           }
         }

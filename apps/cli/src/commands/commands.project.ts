@@ -1,7 +1,7 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Effect, Option, ParseResult, Schema } from "effect"
-import { ProjectId } from "@matisa/core"
-import type { Command as CoreCommand, Port, ProjectPatch } from "@matisa/core"
+import { GroupSlug, ProjectId, tokenize } from "@matisa/core"
+import type { Command as CoreCommand, NewProject, Port, ProjectPatch } from "@matisa/core"
 import { call } from "../transport/transport.index.js"
 import { Renderer } from "../render/render.index.js"
 import { applyGlobals } from "../cli.globals.js"
@@ -28,49 +28,6 @@ const portOption = (name: string) =>
       )
     )
   )
-
-// POSIX-ish tokenizer for --cmd: single quotes are literal, double quotes
-// group with \" \\ \$ \` escapes, bare backslash escapes the next char.
-// Splitting on whitespace alone mangled anything like `node -e 'setInterval(…)'`.
-export const tokenize = (input: string): ReadonlyArray<string> | null => {
-  const out: Array<string> = []
-  let cur = ""
-  let started = false
-  let quote: "'" | '"' | null = null
-  for (let i = 0; i < input.length; i++) {
-    const ch = input[i]!
-    if (quote === "'") {
-      if (ch === "'") quote = null
-      else cur += ch
-      continue
-    }
-    if (quote === '"') {
-      if (ch === '"') quote = null
-      else if (ch === "\\" && i + 1 < input.length && '"\\$`'.includes(input[i + 1]!)) cur += input[++i]!
-      else cur += ch
-      continue
-    }
-    if (ch === "'" || ch === '"') {
-      quote = ch
-      started = true
-    } else if (ch === "\\" && i + 1 < input.length) {
-      cur += input[++i]!
-      started = true
-    } else if (/\s/.test(ch)) {
-      if (started) {
-        out.push(cur)
-        cur = ""
-        started = false
-      }
-    } else {
-      cur += ch
-      started = true
-    }
-  }
-  if (quote !== null) return null // unterminated quote
-  if (started) out.push(cur)
-  return out
-}
 
 // Decoding at the option boundary makes a bad --cmd a CLI validation failure
 // (usage, exit 4) instead of a mangled child spawned by the engine.
@@ -102,24 +59,36 @@ const buildCommand = (
 const toPorts = (nums: ReadonlyArray<number>): ReadonlyArray<Port> =>
   nums.map((number) => ({ number, protocol: "tcp" as const }))
 
+// Kind is derived from the flags: --image → docker, --compose → compose,
+// otherwise process (which requires --cmd). The engine's Schema enforces the
+// same rule, so a bad combination fails loud with the exact message.
 const add = Command.make(
   "add",
   {
     name: Options.text("name"),
     dir: Options.text("dir"),
-    cmd: cmdOption("cmd"),
+    cmd: Options.optional(cmdOption("cmd")),
+    image: Options.optional(Options.text("image")),
+    compose: Options.optional(Options.text("compose")),
+    group: Options.optional(Options.text("group")),
     port: portOption("port")
   },
-  ({ cmd, dir, name, port }) =>
+  ({ cmd, compose, dir, group, image, name, port }) =>
     Effect.gen(function* () {
       yield* applyGlobals
       const render = yield* Renderer
-      const created = yield* call("catalog.add", {
+      const kind = Option.isSome(image) ? "docker" : Option.isSome(compose) ? "compose" : "process"
+      const input: NewProject = {
         name,
         root: dir,
-        command: buildCommand(name, cmd, dir),
+        kind,
+        ...(Option.isSome(cmd) ? { command: buildCommand(name, cmd.value, dir) } : {}),
+        ...(Option.isSome(image) ? { image: image.value } : {}),
+        ...(Option.isSome(compose) ? { composeFile: compose.value } : {}),
+        ...(Option.isSome(group) ? { groupSlug: GroupSlug.make(group.value) } : {}),
         ports: toPorts(port)
-      })
+      } as NewProject
+      const created = yield* call("catalog.add", input)
       yield* render.project(created)
     })
 )
@@ -140,9 +109,12 @@ const update = Command.make(
     name: Options.optional(Options.text("name")),
     dir: Options.optional(Options.text("dir")),
     cmd: Options.optional(cmdOption("cmd")),
+    image: Options.optional(Options.text("image")),
+    compose: Options.optional(Options.text("compose")),
+    group: Options.optional(Options.text("group")),
     port: portOption("port")
   },
-  ({ cmd, dir, id, name, port }) =>
+  ({ cmd, compose, dir, group, id, image, name, port }) =>
     Effect.gen(function* () {
       yield* applyGlobals
       const render = yield* Renderer
@@ -152,6 +124,11 @@ const update = Command.make(
         ...(Option.isSome(dir) ? { root: dir.value } : {}),
         ...(Option.isSome(cmd)
           ? { command: buildCommand(cmdName, cmd.value, Option.getOrUndefined(dir)) }
+          : {}),
+        ...(Option.isSome(image) ? { image: image.value } : {}),
+        ...(Option.isSome(compose) ? { composeFile: compose.value } : {}),
+        ...(Option.isSome(group)
+          ? { groupSlug: group.value === "" ? null : GroupSlug.make(group.value) }
           : {}),
         ...(port.length > 0 ? { ports: toPorts(port) } : {})
       }

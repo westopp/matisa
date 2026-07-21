@@ -9,14 +9,23 @@ import {
   Runtime,
   SynchronizedRef
 } from "effect"
-import { type Accepted, type EngineError, type ProjectId, type RuntimeStatus } from "@matisa/core"
+import {
+  DockerDaemonRequired,
+  PortBusy,
+  type Accepted,
+  type EngineError,
+  type Health,
+  type ProjectId,
+  type RuntimeStatus
+} from "@matisa/core"
 import { EnvRepo, ProjectsRepo, RuntimeRepo } from "@matisa/store"
 import { AppConfig } from "../../config/config.app-config.js"
 import { EventsHub } from "../../server/server.events-hub.js"
 import { stateChanged } from "../../shared/events.js"
 import { toEngineError } from "../../shared/error-map.js"
-import { Keychain } from "../catalog/providers/catalog.providers.keychain.types.js"
+import { DockerDaemon } from "../docker/docker.daemon.js"
 import { PtyManager } from "../pty/pty.services.js"
+import { foreignListener } from "./supervisor.probe.js"
 import { runProject, type RunnerDeps } from "./supervisor.runner.js"
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -40,10 +49,10 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectsRepo
   const runtimeRepo = yield* RuntimeRepo
   const envRepo = yield* EnvRepo
-  const keychain = yield* Keychain
   const events = yield* EventsHub
   const config = yield* AppConfig
   const ptyMgr = yield* PtyManager
+  const daemon = yield* DockerDaemon
   const scope = yield* Effect.scope
   const rt = yield* Effect.runtime<never>()
 
@@ -51,11 +60,47 @@ const make = Effect.gen(function* () {
     HashMap.empty<string, Fiber.RuntimeFiber<void, never>>()
   )
 
-  const deps: RunnerDeps = { runtimeRepo, envRepo, keychain, events, config, pty: ptyMgr, rt }
+  const deps: RunnerDeps = { runtimeRepo, envRepo, events, config, pty: ptyMgr, rt }
 
   const start: SupervisorShape["start"] = (id) =>
     Effect.gen(function* () {
       const project = yield* projects.get(id).pipe(Effect.mapError(toEngineError))
+
+      // A start on an already-running project replaces its runner cleanly.
+      const map = yield* SynchronizedRef.get(runners)
+      const stale = HashMap.get(map, id as string)
+      if (Option.isSome(stale)) yield* Fiber.interrupt(stale.value)
+
+      if (project.kind === "docker" || project.kind === "compose") {
+        // Daemon gating (old-app parity): typed error, client prompts the
+        // user, calls docker.daemon.start on consent, then replays this.
+        const up = yield* daemon.probe()
+        if (!up) {
+          return yield* Effect.fail(
+            new DockerDaemonRequired({
+              action: "start",
+              projectId: id,
+              message: `Docker daemon is not running — cannot start ${project.name}. Start Docker (docker.daemon.start) and retry.`
+            })
+          )
+        }
+      } else {
+        // Foreign-listener guard: the user always knows who holds the port.
+        for (const p of project.ports) {
+          const holder = yield* foreignListener(p.number)
+          if (holder !== undefined) {
+            return yield* Effect.fail(
+              new PortBusy({
+                port: p.number,
+                pid: holder.pid,
+                processName: holder.processName,
+                message: `port ${p.number} is already in use by ${holder.processName ?? "an unknown process"}${holder.pid !== undefined ? ` (pid ${holder.pid})` : ""} — not managed by matisa`
+              })
+            )
+          }
+        }
+      }
+
       const fiber = yield* runProject(project, deps).pipe(
         Effect.catchAllCause((cause) =>
           Effect.gen(function* () {
@@ -75,11 +120,19 @@ const make = Effect.gen(function* () {
       const existing = HashMap.get(map, id as string)
       if (Option.isSome(existing)) {
         yield* runtimeRepo.setState(id, { state: "stopping" }).pipe(Effect.ignore)
+        // Publish it, don't just persist it. `Fiber.interrupt` below blocks
+        // until the child is reaped — SIGTERM, the app's own drain, then the
+        // 8s SIGKILL backstop. That is seconds of real work, and without this
+        // emit the only event a client ever sees is the terminal `idle`, so
+        // teardown looks instantaneous and every stop button is dead in the
+        // interim. State is event-derived truth (state-is-truth) — a state
+        // written to the DB but never published is not observable.
+        yield* events.emit(stateChanged(id, "running", "stopping", "stop requested"))
         yield* Fiber.interrupt(existing.value)
         yield* SynchronizedRef.update(runners, HashMap.remove(id as string))
       }
       yield* runtimeRepo.setState(id, { state: "idle" }).pipe(Effect.ignore)
-      yield* events.emit(stateChanged(id, "running", "idle", "stopped"))
+      yield* events.emit(stateChanged(id, "stopping", "idle", "stopped"))
       return { id, state: "idle" as const }
     })
 
@@ -96,7 +149,8 @@ const make = Effect.gen(function* () {
             state: s.state,
             pid: s.pid,
             since: s.since,
-            sessionId: s.sessionId
+            sessionId: s.sessionId,
+            health: s.health as Health | undefined
           })
         })
       )

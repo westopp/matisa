@@ -2,11 +2,25 @@
 -- Applied by store.client at acquire time (before the socket opens), tracked in
 -- schema_migrations. Forward-only. events.seq AUTOINCREMENT is the client cursor.
 
+CREATE TABLE IF NOT EXISTS groups (
+  slug         TEXT PRIMARY KEY,
+  title        TEXT NOT NULL,
+  description  TEXT,
+  notes        TEXT,
+  path_to_icon TEXT
+);
+
 CREATE TABLE IF NOT EXISTS projects (
   id                TEXT PRIMARY KEY,
   name              TEXT NOT NULL UNIQUE,
   root              TEXT NOT NULL,
-  command_json      TEXT NOT NULL,
+  -- kind discriminates the runner: process (command_json), docker (image),
+  -- compose (compose_file). Field presence enforced by core Schema.
+  kind              TEXT NOT NULL DEFAULT 'process',
+  command_json      TEXT,
+  image             TEXT,
+  compose_file      TEXT,
+  group_slug        TEXT REFERENCES groups(slug) ON DELETE SET NULL,
   active_context_id TEXT,
   exposure_json     TEXT,
   created_at        INTEGER NOT NULL,
@@ -33,8 +47,7 @@ CREATE TABLE IF NOT EXISTS env_vars (
   context_id TEXT NOT NULL REFERENCES env_contexts(id) ON DELETE CASCADE,
   key        TEXT NOT NULL,
   is_secret  INTEGER NOT NULL DEFAULT 0,
-  value      TEXT,
-  secret_ref TEXT,
+  value      TEXT NOT NULL,
   CONSTRAINT env_vars_context_key UNIQUE (context_id, key)
 );
 
@@ -44,6 +57,19 @@ CREATE TABLE IF NOT EXISTS commands (
   name       TEXT NOT NULL,
   command    TEXT NOT NULL,
   CONSTRAINT commands_project_name UNIQUE (project_id, name)
+);
+
+-- Per-command env overrides. context_id '' = the command's base layer
+-- (NOT NULL so the UNIQUE constraint actually dedupes; sqlite treats NULLs
+-- as distinct). Precedence at run time:
+--   project base -> project active ctx -> command base -> command active ctx
+CREATE TABLE IF NOT EXISTS command_vars (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  command_id INTEGER NOT NULL REFERENCES commands(id) ON DELETE CASCADE,
+  context_id TEXT NOT NULL DEFAULT '',
+  key        TEXT NOT NULL,
+  value      TEXT NOT NULL,
+  CONSTRAINT command_vars_unique UNIQUE (command_id, context_id, key)
 );
 
 CREATE TABLE IF NOT EXISTS exposures (

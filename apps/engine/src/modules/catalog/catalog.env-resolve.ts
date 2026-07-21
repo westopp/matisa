@@ -1,19 +1,23 @@
-import { Effect, Option, Redacted } from "effect"
-import type { EngineError, Project } from "@matisa/core"
+import { Effect } from "effect"
+import { BASE_CONTEXT_ID, type EngineError, type EnvContext, type Project } from "@matisa/core"
 import type { EnvRepoShape } from "@matisa/store"
 import { toEngineError } from "../../shared/error-map.js"
-import type { KeychainShape } from "./providers/catalog.providers.keychain.types.js"
 
 // ────────────────────────────────────────────────────────────────────────────
-// Effective-env resolution: the project's active context is layered into a flat
-// child env, resolving secret refs through the Keychain into plaintext. This is
-// the ONLY place secret values are read; the result is fed straight to the child
-// process env and never logged.
+// Effective-env resolution, layered lowest→highest precedence:
+//   1. `base` context — ALWAYS injected, active context or not
+//   2. the project's active context — overrides / adds on key conflicts
+// The flat result feeds straight into the spawn. POC: values (secrets
+// included) come from the store; a keychain provider re-enters here post-POC.
 // ────────────────────────────────────────────────────────────────────────────
 
 export interface EnvResolveDeps {
   readonly envRepo: EnvRepoShape
-  readonly keychain: KeychainShape
+}
+
+const layer = (out: Record<string, string>, ctx: EnvContext | undefined): void => {
+  if (ctx === undefined) return
+  for (const v of ctx.vars) out[v.key] = v.value
 }
 
 export const resolveEnv = (
@@ -21,21 +25,12 @@ export const resolveEnv = (
   deps: EnvResolveDeps
 ): Effect.Effect<Record<string, string>, EngineError> =>
   Effect.gen(function* () {
-    const ctxId = project.activeContextId
-    if (ctxId === undefined) return {}
-
     const contexts = yield* deps.envRepo.list().pipe(Effect.mapError(toEngineError))
-    const ctx = contexts.find((c) => c.id === ctxId)
-    if (ctx === undefined) return {}
 
     const out: Record<string, string> = {}
-    for (const v of ctx.vars) {
-      if (v.kind === "plain") {
-        out[v.key] = v.value
-      } else {
-        const resolved = yield* deps.keychain.get(v.secretRef).pipe(Effect.mapError(toEngineError))
-        if (Option.isSome(resolved)) out[v.key] = Redacted.value(resolved.value)
-      }
+    layer(out, contexts.find((c) => (c.id as string) === BASE_CONTEXT_ID))
+    if (project.activeContextId !== undefined) {
+      layer(out, contexts.find((c) => c.id === project.activeContextId))
     }
     return out
   })

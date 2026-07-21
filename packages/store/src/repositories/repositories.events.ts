@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect"
-import { and, eq, gt, max } from "drizzle-orm"
+import { and, eq, gt, lte, max } from "drizzle-orm"
 import { ProjectId, type EngineEvent } from "@matisa/core"
 import { events, type EventRow } from "../db.schema/db.events.js"
 import { Store } from "../store.client.js"
@@ -34,6 +34,11 @@ export interface EventsRepoShape {
   readonly append: (event: NewEvent) => Effect.Effect<number, StoreQueryError>
   readonly pull: (params: EventPullParams) => Effect.Effect<EventPullResult, StoreQueryError>
   readonly latestCursor: () => Effect.Effect<number, StoreQueryError>
+  /** Last N log_line payloads for a project, oldest→newest (logs.tail). */
+  /** Retention: delete everything older than the newest `keepLast` events.
+   * Returns rows deleted. Cursors < the new floor become unpullable — clients
+   * resuming from a pruned cursor simply start at the floor. */
+  readonly prune: (keepLast: number) => Effect.Effect<number, StoreQueryError>
 }
 
 export class EventsRepo extends Context.Tag("EventsRepo")<EventsRepo, EventsRepoShape>() {}
@@ -98,6 +103,15 @@ export const EventsRepoLive = Layer.effect(
         return r?.m ?? 0
       })
 
-    return EventsRepo.of({ append, pull, latestCursor })
+    const prune: EventsRepoShape["prune"] = (keepLast) =>
+      q(() => {
+        const top = db.select({ m: max(events.seq) }).from(events).get()?.m ?? 0
+        const floor = top - keepLast
+        if (floor <= 0) return 0
+        const res = db.delete(events).where(lte(events.seq, floor)).run()
+        return res.changes
+      })
+
+    return EventsRepo.of({ append, pull, latestCursor, prune })
   })
 )

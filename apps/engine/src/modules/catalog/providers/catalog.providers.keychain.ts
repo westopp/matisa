@@ -5,10 +5,10 @@ import { DEFAULT_SECRETS_PATH } from "../../../config/config.constants.js"
 import { Keychain, KeychainError, type KeychainShape } from "./catalog.providers.keychain.types.js"
 
 // ────────────────────────────────────────────────────────────────────────────
-// STUB keychain provider (dev/e2e only). Secrets are base64-stashed in a local
-// JSON file instead of the OS keychain (macOS Keychain / libsecret / Windows
-// Credential Manager). The DB still only ever holds the `ref` — plaintext never
-// reaches the store. Replace this Live with the per-OS backend for production.
+// NOT WIRED — POC stores env values (secrets included) directly in the DB with
+// a display-only `secret` flag. This provider re-enters the layer graph when
+// secure stores land (macOS Keychain / libsecret / Windows Credential Manager):
+// values move out of the DB, rows carry only a ref resolved here at spawn time.
 // ────────────────────────────────────────────────────────────────────────────
 
 const readStore = (): Record<string, string> => {

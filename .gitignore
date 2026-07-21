@@ -18,3 +18,10 @@ dist/
 
 # matisa runtime (socket + db)
 .matisa/
+
+# tool state (arcm datastore) + personal claude settings
+.arcm/
+.claude/settings.local.json
+
+# lighthouse CI artifacts
+.lighthouseci/

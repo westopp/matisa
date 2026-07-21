@@ -1,8 +1,8 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { tokenize } from "../commands/commands.project.js"
+import { tokenize } from "../core.tokenize.js"
 
-// The --cmd tokenizer decides exactly what program + args the engine spawns.
+// The command tokenizer decides exactly what program + args the engine spawns.
 // Whitespace-splitting mangled quoted commands (the original smoke-test bug);
 // these cases pin the POSIX-ish rules it must keep.
 

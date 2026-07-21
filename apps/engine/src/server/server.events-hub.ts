@@ -1,6 +1,7 @@
-import { Context, Effect, Layer, PubSub, Queue, Scope } from "effect"
+import { Context, Duration, Effect, Layer, PubSub, Queue, Scope } from "effect"
 import { randomUUID } from "node:crypto"
 import type { EngineEvent, ProjectId } from "@matisa/core"
+import { EVENTS_KEEP_LAST, EVENTS_PRUNE_INTERVAL_MS } from "../config/config.constants.js"
 import { EventsRepo, type EventPullParams, type EventPullResult, type NewEvent } from "@matisa/store"
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -34,15 +35,22 @@ const make = Effect.gen(function* () {
   const hub = yield* PubSub.unbounded<EngineEvent>()
 
   const emit: EventsHubShape["emit"] = (event) =>
-    repo.append(event).pipe(
-      Effect.flatMap((seq) =>
-        PubSub.publish(hub, { ...event, seq } as EngineEvent).pipe(Effect.as(seq))
-      ),
-      // A durable-log write failure must never crash a supervisor/catalog caller.
-      Effect.catchAll((cause) =>
-        Effect.logError("events: append failed", cause).pipe(Effect.as(-1))
-      )
-    )
+    // log_line is broadcast-only: the durable copy of container output already
+    // lives in docker's log store (and PTY scrollback for processes), and a
+    // chatty container must not evict the lifecycle history — the events that
+    // actually deserve durability — from the shared retention window. seq 0
+    // marks it transient; `pull` never returns one.
+    event.type === "log_line"
+      ? PubSub.publish(hub, { ...event, seq: 0 } as EngineEvent).pipe(Effect.as(0))
+      : repo.append(event).pipe(
+          Effect.flatMap((seq) =>
+            PubSub.publish(hub, { ...event, seq } as EngineEvent).pipe(Effect.as(seq))
+          ),
+          // A durable-log write failure must never crash a supervisor/catalog caller.
+          Effect.catchAll((cause) =>
+            Effect.logError("events: append failed", cause).pipe(Effect.as(-1))
+          )
+        )
 
   const pull: EventsHubShape["pull"] = (params) =>
     repo.pull(params).pipe(
@@ -68,7 +76,23 @@ const make = Effect.gen(function* () {
       return { subscriptionId: randomUUID(), cursor }
     })
 
+  // Retention: prune the durable queue at boot, then on a slow heartbeat.
+  // Bounded history is the contract — clients resuming from a pruned cursor
+  // restart at the retention floor (documented on EventsRepo.prune).
+  const pruneOnce = repo.prune(EVENTS_KEEP_LAST).pipe(
+    Effect.flatMap((n) =>
+      n > 0 ? Effect.logInfo(`events: pruned ${n} rows (retention ${EVENTS_KEEP_LAST})`) : Effect.void
+    ),
+    Effect.catchAll(() => Effect.void)
+  )
+  yield* pruneOnce
+  yield* pruneOnce.pipe(
+    Effect.delay(Duration.millis(EVENTS_PRUNE_INTERVAL_MS)),
+    Effect.forever,
+    Effect.forkScoped
+  )
+
   return EventsHub.of({ emit, pull, latestCursor, subscribe })
 })
 
-export const EventsHubLive = Layer.effect(EventsHub, make)
+export const EventsHubLive = Layer.scoped(EventsHub, make)

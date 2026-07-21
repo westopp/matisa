@@ -15,6 +15,7 @@ import {
 import { NodeSocket } from "@effect/platform-node"
 import type { RpcId, RpcRequest, RpcResponse } from "@matisa/core"
 import { ClientConfig } from "../config/config.client-config.js"
+import { spawnEngineAndWait } from "../cli.engine-spawn.js"
 import { EngineUnreachable, RequestTimeout } from "./transport.errors.js"
 import type { TransportError } from "./transport.errors.js"
 
@@ -202,7 +203,17 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             const socketPath = yield* config.socketPath
             const conn = yield* connect(socketPath, config.timeout).pipe(
-              Scope.extend(scope)
+              Scope.extend(scope),
+              // --ensure-engine: on refusal, spawn the engine once and retry.
+              Effect.catchTag("EngineUnreachable", (e) =>
+                Effect.gen(function* () {
+                  const ensure = yield* config.ensureEngine
+                  if (!ensure) return yield* Effect.fail(e)
+                  const up = yield* spawnEngineAndWait(socketPath)
+                  if (!up) return yield* Effect.fail(e)
+                  return yield* connect(socketPath, config.timeout).pipe(Scope.extend(scope))
+                })
+              )
             )
             return Option.some(conn)
           })

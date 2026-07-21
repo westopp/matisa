@@ -17,8 +17,16 @@ const portsOf = (p: Project): string =>
     ? "-"
     : p.ports.map((port) => `${port.number}/${port.protocol}`).join(",")
 
-const cmdOf = (p: Project): string =>
-  [p.command.program, ...p.command.args].join(" ")
+const cmdOf = (p: Project): string => {
+  switch (p.kind) {
+    case "docker":
+      return `docker:${p.image ?? "?"}`
+    case "compose":
+      return `compose:${p.composeFile ?? "?"}`
+    case "process":
+      return p.command === undefined ? "-" : [p.command.program, ...p.command.args].join(" ")
+  }
+}
 
 export const projectsTable = (rows: ReadonlyArray<ProjectWithState>): string => {
   if (rows.length === 0) return "no projects"
@@ -44,15 +52,21 @@ export const projectsTable = (rows: ReadonlyArray<ProjectWithState>): string => 
 }
 
 export const projectLine = (p: Project): string =>
-  `${p.id}  ${p.name}  ${p.root}  [${portsOf(p)}]  ${cmdOf(p)}`
+  `${p.id}  ${p.name}  ${p.kind}  ${p.root}  [${portsOf(p)}]  ${cmdOf(p)}${
+    p.groupSlug === undefined ? "" : `  group=${p.groupSlug}`
+  }`
 
 export const projectStateLine = (p: ProjectWithState): string =>
-  `${p.id}  ${p.name}  ${p.state}${p.pid === undefined ? "" : `  pid=${p.pid}`}`
+  `${p.id}  ${p.name}  ${p.state}${p.pid === undefined ? "" : `  pid=${p.pid}`}${
+    p.health === undefined ? "" : `  health=${p.health}`
+  }`
 
 export const statusLine = (s: RuntimeStatus): string =>
   `${s.id}  ${s.state}${s.pid === undefined ? "" : `  pid=${s.pid}`}${
     s.since === undefined ? "" : `  since=${new Date(s.since).toISOString()}`
-  }${s.sessionId === undefined ? "" : `  session=${s.sessionId}`}`
+  }${s.health === undefined ? "" : `  health=${s.health}`}${
+    s.sessionId === undefined ? "" : `  session=${s.sessionId}`
+  }`
 
 export const acceptedLine = (a: Accepted): string =>
   `accepted  ${a.id}  -> ${a.state}`
@@ -63,7 +77,7 @@ const varsOf = (c: EnvContext): string =>
   c.vars.length === 0
     ? "(empty)"
     : c.vars
-        .map((v) => (v.kind === "plain" ? `${v.key}=${v.value}` : `${v.key}=<secret>`))
+        .map((v) => (v.secret ? `${v.key}=<secret>` : `${v.key}=${v.value}`))
         .join(" ")
 
 export const envTable = (list: ReadonlyArray<EnvContext>): string => {

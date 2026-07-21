@@ -48,11 +48,37 @@ export class EngineInternal extends Schema.TaggedError<EngineInternal>()("Engine
   message: Schema.String
 }) {}
 
+/** A docker/compose action needs the Docker daemon and it is not running.
+ * The engine NEVER auto-starts Docker — clients catch this, prompt the user,
+ * call docker.daemon.start on consent, then replay the original action. */
+export class DockerDaemonRequired extends Schema.TaggedError<DockerDaemonRequired>()(
+  "DockerDaemonRequired",
+  {
+    code: stableCode("E_DOCKER_DAEMON_REQUIRED"),
+    action: Schema.String,
+    projectId: Schema.optional(ProjectId),
+    message: Schema.String
+  }
+) {}
+
+/** A project's declared port is already bound by a process the engine does
+ * not manage — surfaced BEFORE spawn so the user always knows who owns it. */
+export class PortBusy extends Schema.TaggedError<PortBusy>()("PortBusy", {
+  code: stableCode("E_PORT_BUSY"),
+  port: Schema.Int,
+  /** Pid of the foreign listener when identifiable (lsof). */
+  pid: Schema.optional(Schema.Int),
+  processName: Schema.optional(Schema.String),
+  message: Schema.String
+}) {}
+
 /** Union of every error that may cross the wire. */
 export const EngineError = Schema.Union(
   NotFound,
   PortConflict,
   ValidationError,
-  EngineInternal
+  EngineInternal,
+  DockerDaemonRequired,
+  PortBusy
 )
 export type EngineError = typeof EngineError.Type

@@ -30,5 +30,6 @@ export const applyGlobals = Effect.gen(function* () {
   const config = yield* ClientConfig
   yield* config.setSocket(g.socket)
   yield* config.setJson(g.json)
+  yield* config.setEnsure(g.ensure)
   return g
 })

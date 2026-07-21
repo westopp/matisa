@@ -14,7 +14,10 @@ export const formatEvent = (e: EngineEvent): string => {
     Match.when({ type: "crashed" }, (ev) =>
       `exit=${ev.payload.exitCode ?? "?"}${
         ev.payload.signal === undefined ? "" : ` signal=${ev.payload.signal}`
-      }`
+      }${ev.payload.summary === undefined ? "" : ` — ${ev.payload.summary}`}`
+    ),
+    Match.when({ type: "health_changed" }, (ev) =>
+      `${ev.payload.health}${ev.payload.message === undefined ? "" : ` (${ev.payload.message})`}`
     ),
     Match.when({ type: "exposure_changed" }, (ev) =>
       `${ev.payload.exposure.url} ${ev.payload.exposure.enabled ? "up" : "down"}`

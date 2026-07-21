@@ -3,8 +3,9 @@ import { NodeRuntime } from "@effect/platform-node"
 import { StoreLive } from "@matisa/store"
 import { AppConfig } from "./config/config.app-config.js"
 import { CatalogLive } from "./modules/catalog/catalog.index.js"
-import { KeychainLive } from "./modules/catalog/providers/catalog.providers.keychain.js"
 import { DiscoveryLive } from "./modules/discovery/discovery.index.js"
+import { DockerDaemonLive } from "./modules/docker/docker.index.js"
+import { ResourcesLive } from "./modules/resources/resources.services.js"
 import { ExposureLive } from "./modules/exposure/exposure.index.js"
 import { PtyLive } from "./modules/pty/pty.index.js"
 import { SupervisorLive } from "./modules/supervisor/supervisor.index.js"
@@ -37,7 +38,8 @@ const MainLive = Root.pipe(
   Layer.provide(SupervisorLive),
   Layer.provide(CatalogLive),
   Layer.provide(PtyLive),
-  Layer.provide(KeychainLive),
+  Layer.provide(DockerDaemonLive),
+  Layer.provide(ResourcesLive),
   Layer.provide(EventsHubLive),
   Layer.provide(TracingLive),
   Layer.provide(MetricsLive),

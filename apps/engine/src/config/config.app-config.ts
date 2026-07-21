@@ -11,6 +11,8 @@ import { InvalidConfigError } from "./config.errors.js"
 
 const ConfigSchema = Schema.Struct({
   socketPath: Schema.String,
+  /** Loopback WebSocket bridge port; 0 disables the bridge entirely. */
+  wsPort: Schema.Number,
   dbPath: Schema.String,
   logLevel: Schema.Literal("debug", "info", "warn", "error"),
   backoff: Schema.Struct({
@@ -29,6 +31,7 @@ export type AppConfigShape = typeof ConfigSchema.Type
 
 const gatherEnvAndDefaults = (): unknown => ({
   socketPath: process.env.MATISA_SOCK ?? C.DEFAULT_SOCKET_PATH,
+  wsPort: Number(process.env.MATISA_WS_PORT ?? C.DEFAULT_WS_PORT),
   dbPath: process.env.MATISA_DB ?? C.DEFAULT_DB_PATH,
   logLevel: process.env.MATISA_LOG_LEVEL ?? "info",
   backoff: {

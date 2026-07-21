@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { Exposure, ProjectId, RuntimeState } from "./core.schemas.js"
+import { Exposure, Health, ProjectId, RuntimeState } from "./core.schemas.js"
 
 // ────────────────────────────────────────────────────────────────────────────
 // EngineEvent — the durable-queue payload contract.
@@ -34,20 +34,35 @@ export const StateChangedEvent = envelope("state_changed", {
 })
 export type StateChangedEvent = typeof StateChangedEvent.Type
 
-/** A line of child-process output. */
+/** A line of child-process output. `service` is set only for compose stacks,
+ * where one stream carries every service's output — the engine parses the
+ * `<service>-<n> |` prefix off each line so clients can filter without
+ * re-implementing compose's log format. */
 export const LogLineEvent = envelope("log_line", {
   stream: Schema.Literal("stdout", "stderr"),
-  line: Schema.String
+  line: Schema.String,
+  service: Schema.optional(Schema.String)
 })
 export type LogLineEvent = typeof LogLineEvent.Type
 
-/** Supervised child exited non-zero (real reaped exit, not a poll). */
+/** Supervised child exited non-zero (real reaped exit, not a poll). Carries a
+ * human summary + the last lines of output so clients can surface WHY. */
 export const CrashedEvent = envelope("crashed", {
   exitCode: Schema.optional(Schema.Int),
   signal: Schema.optional(Schema.String),
-  reason: Schema.optional(Schema.String)
+  reason: Schema.optional(Schema.String),
+  summary: Schema.optional(Schema.String),
+  logTail: Schema.optional(Schema.String)
 })
 export type CrashedEvent = typeof CrashedEvent.Type
+
+/** Observed readiness changed (waiting → ready | timeout). Orthogonal to
+ * state_changed — `running + timeout` means alive but never bound its port. */
+export const HealthChangedEvent = envelope("health_changed", {
+  health: Health,
+  message: Schema.optional(Schema.String)
+})
+export type HealthChangedEvent = typeof HealthChangedEvent.Type
 
 /** A project's reverse-proxy exposure came up / changed / went down. */
 export const ExposureChangedEvent = envelope("exposure_changed", {
@@ -65,6 +80,7 @@ export const EngineEvent = Schema.Union(
   StateChangedEvent,
   LogLineEvent,
   CrashedEvent,
+  HealthChangedEvent,
   ExposureChangedEvent,
   CatalogChangedEvent
 )
@@ -75,6 +91,7 @@ export const EventType = Schema.Literal(
   "state_changed",
   "log_line",
   "crashed",
+  "health_changed",
   "exposure_changed",
   "catalog_changed"
 )

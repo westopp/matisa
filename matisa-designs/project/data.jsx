@@ -1,0 +1,215 @@
+/* Mock data describing services Matisa is managing. */
+const DATA = {
+  sections: [
+    {
+      id: "standalones",
+      kind: "group",
+      title: "Standalones",
+      parent: "Projects",
+      services: [
+        { id: "backendo", name: "backendo", port: 5715, kind: "code", status: "stopped", cpu: 0, mem: 0, branch: "dev" },
+        { id: "review-view", name: "review-view", port: 5478, kind: "code", status: "running", cpu: 1.4, mem: 102, branch: "main" },
+        { id: "techscouts", name: "techscouts", port: 5713, kind: "code", status: "running", cpu: 0.3, mem: 88, branch: "main" },
+      ],
+    },
+    {
+      id: "health-awards",
+      kind: "group",
+      title: "Health Awards",
+      parent: "Projects",
+      collapsed: true,
+      services: [
+        { id: "ha-api", name: "ha-api", port: 5810, kind: "code", status: "running", cpu: 3.1, mem: 220, branch: "main" },
+        { id: "ha-web", name: "ha-web", port: 5811, kind: "code", status: "running", cpu: 0.8, mem: 140, branch: "main" },
+        { id: "ha-worker", name: "ha-worker", port: 5812, kind: "code", status: "running", cpu: 0.0, mem: 64, branch: "main" },
+      ],
+    },
+    {
+      id: "pg-library",
+      kind: "group",
+      title: "PG Library",
+      parent: "Projects",
+      collapsed: true,
+      services: [
+        { id: "pglib-docs", name: "pgtable-docs", port: 5716, kind: "code", status: "running", cpu: 0, mem: 136, branch: "main", selected: true },
+        { id: "pglib-api", name: "pglib-api", port: 5717, kind: "code", status: "running", cpu: 0.5, mem: 92, branch: "main" },
+        { id: "pglib-cli", name: "pglib-cli", port: 5718, kind: "code", status: "stopped", cpu: 0, mem: 0, branch: "main" },
+        { id: "pglib-test", name: "pglib-test", port: 5719, kind: "code", status: "stopped", cpu: 0, mem: 0, branch: "main" },
+      ],
+    },
+    {
+      id: "portfolio",
+      kind: "group",
+      title: "Portfolio",
+      parent: "Projects",
+      collapsed: true,
+      services: [
+        { id: "pf-site", name: "portfolio-site", port: 5901, kind: "code", status: "running", cpu: 0.2, mem: 56, branch: "main" },
+        { id: "pf-cms", name: "portfolio-cms", port: 5902, kind: "code", status: "stopped", cpu: 0, mem: 0, branch: "main" },
+      ],
+    },
+    {
+      id: "infra",
+      kind: "group",
+      title: "Infra",
+      parent: "Compose Stacks",
+      services: [
+        { id: "bigquery", name: "bigquery", port: 5732, kind: "stack", status: "running", cpu: 0.4, mem: 412 },
+        { id: "localstack", name: "localstack", port: 5731, kind: "stack", status: "running", cpu: 1.1, mem: 312 },
+        { id: "otel", name: "otel", port: 5720, kind: "stack", status: "running", cpu: 0.6, mem: 198 },
+        { id: "postgres", name: "postgres", port: 5730, kind: "stack", status: "running", cpu: 0.9, mem: 256 },
+      ],
+    },
+    {
+      id: "system",
+      kind: "group",
+      title: "System",
+      parent: "Compose Stacks",
+      collapsed: true,
+      services: [
+        { id: "sys-traefik", name: "traefik", port: 80, kind: "stack", status: "running", cpu: 0.1, mem: 28 },
+        { id: "sys-redis", name: "redis", port: 6379, kind: "stack", status: "running", cpu: 0.0, mem: 18 },
+        { id: "sys-mailhog", name: "mailhog", port: 8025, kind: "stack", status: "running", cpu: 0.0, mem: 12 },
+      ],
+    },
+    {
+      id: "unmanaged",
+      kind: "group",
+      title: "Unmanaged",
+      parent: "Compose Stacks",
+      collapsed: true,
+      muted: true,
+      services: [],
+      count: 20,
+    },
+  ],
+};
+
+/* Selected service (pgtable-docs) details */
+const SELECTED = {
+  id: "pgtable-docs",
+  name: "pgtable-docs",
+  kind: "code",
+  status: "running",
+  url: "http://pgtable-docs.localhost",
+  port: 5716,
+  pid: 29053,
+  path: "~/dev/pg-library/pgtable-docs",
+  cmd: "bun run dev",
+  cpu: 0,
+  mem: 136,
+  memMax: 512,
+  procs: 3,
+  uptime: "3h 12m",
+  branch: "main",
+  cpuSeries: [3, 7, 4, 9, 2, 6, 5, 4, 11, 3, 5, 2, 1, 0, 1, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0],
+};
+
+/* Log lines */
+const LOG_LINES = [
+  { t: "08:49:43 AM", lvl: "cmd", msg: "$ vite" },
+  { t: "08:49:43 AM", lvl: "info", msg: "VITE v7.3.3  ready in 1417 ms" },
+  { t: "08:49:43 AM", lvl: "info", msg: "→  Local:   http://localhost:5716/" },
+  { t: "08:49:43 AM", lvl: "info", msg: "→  Network: use --host to expose" },
+  { t: "08:49:43 AM", lvl: "vite", msg: "(client) hmr update /src/styles/base.css, /src/examples/playground/PlaygroundTable.tsx" },
+  { t: "12:42:18 PM", lvl: "vite", msg: "(client) hmr update /src/components/Sidebar.tsx" },
+  { t: "12:42:18 PM", lvl: "info", msg: "page reload src/router.tsx (x1)" },
+  { t: "12:43:01 PM", lvl: "warn", msg: "Slow dependency: 'monaco-editor' (412ms)" },
+  { t: "12:43:03 PM", lvl: "vite", msg: "(client) hmr update /src/examples/getting-started/MiniTable.tsx, /src/examples/playground/PlaygroundTable.tsx, /src/examples/characters/CharactersTable.tsx" },
+  { t: "12:43:03 PM", lvl: "vite", msg: "(client) hmr update /src/examples/getting-started/MiniTable.tsx, /src/examples/playground/PlaygroundTable.tsx, /src/examples/characters/CharactersTable.tsx" },
+  { t: "12:43:11 PM", lvl: "info", msg: "transformed 184 modules" },
+  { t: "12:43:11 PM", lvl: "info", msg: "✓ ready in 312 ms" },
+  { t: "12:43:42 PM", lvl: "err",  msg: "TypeError: cannot read property 'rows' of undefined  →  src/examples/playground/PlaygroundTable.tsx:42:18" },
+  { t: "12:43:43 PM", lvl: "info", msg: "page reload src/examples/playground/PlaygroundTable.tsx" },
+  { t: "12:43:44 PM", lvl: "vite", msg: "(client) hmr update /src/examples/playground/PlaygroundTable.tsx" },
+  { t: "12:43:44 PM", lvl: "info", msg: "✓ recovered" },
+];
+
+/* Multiple terminals for the selected service */
+const TERMINALS = [
+  {
+    id: "server",
+    title: "server",
+    file: "project-pgtable-docs.log",
+    status: "running",
+    lines: [
+      { lvl: "cmd", msg: "$ bun run dev" },
+      { t: "10:20:15.371", lvl: "info", msg: "server listening on http://localhost:5716" },
+      { t: "10:20:15.382", lvl: "info", msg: "INFO (#3657): Incoming request" },
+      { indent: 1, lvl: "dim", msg: "client.address: 35aa3a000ce04f91" },
+      { indent: 1, lvl: "dim", msg: "url.path: /notifications/unread-count" },
+      { indent: 1, lvl: "dim", msg: "http.request.method: GET" },
+      { t: "10:20:15.383", lvl: "info", msg: "INFO (#3658): Incoming request" },
+      { indent: 1, lvl: "dim", msg: "url.path: /posts/threads" },
+      { indent: 1, lvl: "dim", msg: "http.request.method: GET" },
+      { t: "10:20:15.384", lvl: "info", msg: "INFO (#3659): Incoming request" },
+      { indent: 1, lvl: "dim", msg: "url.path: /profiles/me" },
+      { t: "10:20:15.397", lvl: "ok", msg: "INFO (#3657): Request completed" },
+      { indent: 1, lvl: "dim", msg: "http.response.duration_ms: 15" },
+      { indent: 1, lvl: "dim", msg: "http.response.status_code: 200" },
+      { t: "10:20:15.407", lvl: "ok", msg: "INFO (#3660): Request completed" },
+      { indent: 1, lvl: "dim", msg: "http.response.duration_ms: 22" },
+      { indent: 1, lvl: "dim", msg: "http.response.status_code: 200" },
+      { t: "10:20:15.418", lvl: "ok", msg: "INFO (#3659): Request completed" },
+      { indent: 1, lvl: "dim", msg: "http.response.duration_ms: 34" },
+      { indent: 1, lvl: "dim", msg: "http.response.status_code: 200" },
+      { t: "10:20:17.035", lvl: "info", msg: "INFO (#3668): Incoming request" },
+      { indent: 1, lvl: "dim", msg: "url.path: /api/auth/get-session" },
+      { t: "10:20:17.051", lvl: "ok", msg: "INFO (#3668): Request completed" },
+      { indent: 1, lvl: "dim", msg: "http.response.duration_ms: 15" },
+      { indent: 1, lvl: "dim", msg: "http.response.status_code: 200" },
+    ],
+  },
+  {
+    id: "studio",
+    title: "db:studio",
+    file: "drizzle-kit studio",
+    status: "running",
+    lines: [
+      { lvl: "cmd", msg: "$ bun --env-file=src/config/env/.env.development run drizzle-kit studio" },
+      { lvl: "dim", msg: "No config path provided, using default 'drizzle.config.ts'" },
+      { lvl: "dim", msg: "Reading config file '~/dev/pg-library/pgtable-docs/drizzle.config.ts'" },
+      { lvl: "dim", msg: "Using 'pg' driver for database querying" },
+      { lvl: "spacer", msg: "" },
+      { lvl: "warn", msg: "Warning  Drizzle Studio is currently in Beta. If you find anything not working as expected, open an issue on GitHub or reach us on Discord." },
+      { lvl: "spacer", msg: "" },
+      { lvl: "ok", msg: "Drizzle Studio is up and running on https://local.drizzle.studio" },
+    ],
+  },
+  {
+    id: "test",
+    title: "test:watch",
+    file: "vitest",
+    status: "running",
+    lines: [
+      { lvl: "cmd", msg: "$ bun run test --watch" },
+      { t: "10:19:02.114", lvl: "info", msg: "RUN v3.1.2  ~/dev/pg-library/pgtable-docs" },
+      { lvl: "spacer", msg: "" },
+      { lvl: "ok", msg: "✓ src/table/sort.test.ts (12 tests) 41ms" },
+      { lvl: "ok", msg: "✓ src/table/filter.test.ts (8 tests) 22ms" },
+      { lvl: "ok", msg: "✓ src/table/paginate.test.ts (6 tests) 18ms" },
+      { lvl: "spacer", msg: "" },
+      { lvl: "ok", msg: "Test Files  3 passed (3)" },
+      { lvl: "ok", msg: "Tests  26 passed (26)" },
+      { lvl: "dim", msg: "Waiting for file changes…" },
+    ],
+  },
+  {
+    id: "tailwind",
+    title: "tailwind",
+    file: "tailwindcss --watch",
+    status: "running",
+    lines: [
+      { lvl: "cmd", msg: "$ bunx tailwindcss -i src/styles/base.css -o dist/app.css --watch" },
+      { t: "10:18:44.902", lvl: "ok", msg: "Done in 312ms." },
+      { t: "10:20:11.006", lvl: "info", msg: "Rebuilding..." },
+      { t: "10:20:11.221", lvl: "ok", msg: "Done in 214ms." },
+      { lvl: "dim", msg: "Watching for changes…" },
+    ],
+  },
+];
+
+window.DATA = DATA;
+window.SELECTED = SELECTED;
+window.LOG_LINES = LOG_LINES;
+window.TERMINALS = TERMINALS;

@@ -33,6 +33,24 @@ export const RuntimeState = Schema.Literal(
 )
 export type RuntimeState = typeof RuntimeState.Type
 
+/** Observed readiness, orthogonal to the FSM `state` (which is kernel truth).
+ * `waiting` — spawned, declared port not bound yet. `ready` — port bound.
+ * `timeout` — never bound within the start window (process left alone).
+ * `unknown` — no declared port, nothing to observe. Probing runs during
+ * `starting` only; once ready, the engine hands off and stops watching. */
+export const Health = Schema.Literal("waiting", "ready", "timeout", "unknown")
+export type Health = typeof Health.Type
+
+/** Docker Desktop daemon lifecycle, owned by the engine's docker module. */
+export const DockerDaemonState = Schema.Literal(
+  "unknown",
+  "stopped",
+  "starting",
+  "running",
+  "start_failed"
+)
+export type DockerDaemonState = typeof DockerDaemonState.Type
+
 // ────────────────────────────────────────────────────────────────────────────
 // Port
 // ────────────────────────────────────────────────────────────────────────────
@@ -53,23 +71,17 @@ export type Port = typeof Port.Type
 // reference crosses the wire / lands in the DB — never plaintext).
 // ────────────────────────────────────────────────────────────────────────────
 
-export const PlainEnvVar = Schema.Struct({
-  kind: Schema.Literal("plain"),
-  key: Schema.String,
-  value: Schema.String
-})
-export type PlainEnvVar = typeof PlainEnvVar.Type
+/** Reserved context id whose vars are ALWAYS injected, in every environment.
+ * The active context layers over it — context wins on key conflicts. */
+export const BASE_CONTEXT_ID = "base"
 
-export const SecretEnvVar = Schema.Struct({
-  kind: Schema.Literal("secret"),
+// POC: values live in the DB, secrets included. `secret` is a display hint
+// (masked in listings). Keychain/secure stores replace this post-POC.
+export const EnvVar = Schema.Struct({
   key: Schema.String,
-  // Opaque handle resolved by the keychain provider at spawn time. The plaintext
-  // secret is NEVER stored here or in the DB.
-  secretRef: Schema.String
+  value: Schema.String,
+  secret: Schema.optionalWith(Schema.Boolean, { default: () => false })
 })
-export type SecretEnvVar = typeof SecretEnvVar.Type
-
-export const EnvVar = Schema.Union(PlainEnvVar, SecretEnvVar)
 export type EnvVar = typeof EnvVar.Type
 
 /** A named, reusable set of environment variables (e.g. "dev", "staging"). */
@@ -95,6 +107,48 @@ export const Command = Schema.Struct({
 export type Command = typeof Command.Type
 
 // ────────────────────────────────────────────────────────────────────────────
+// Named commands
+// Ad-hoc tasks attached to a project (tests, migrations, builds) — run on
+// demand as PTY sessions via commands.run. A command may carry its own env
+// overrides; they belong to the command and are injected on every run of it.
+// Precedence, lowest → highest:
+//   project base → project active context → command vars
+// ────────────────────────────────────────────────────────────────────────────
+
+export const CommandVar = Schema.Struct({
+  key: Schema.String,
+  value: Schema.String
+})
+export type CommandVar = typeof CommandVar.Type
+
+export const NamedCommand = Schema.Struct({
+  projectId: ProjectId,
+  name: Schema.String,
+  /** Raw shell line, run via $SHELL -c on a PTY in the project root. */
+  command: Schema.String,
+  vars: Schema.optionalWith(Schema.Array(CommandVar), { default: () => [] })
+})
+export type NamedCommand = typeof NamedCommand.Type
+
+// ────────────────────────────────────────────────────────────────────────────
+// Groups
+// Sidebar/organizational buckets. Standalone entities — projects reference
+// them by slug (FK). Purely presentational; no lifecycle semantics.
+// ────────────────────────────────────────────────────────────────────────────
+
+export const GroupSlug = Schema.String.pipe(Schema.brand("GroupSlug"))
+export type GroupSlug = typeof GroupSlug.Type
+
+export const Group = Schema.Struct({
+  slug: GroupSlug,
+  title: Schema.String,
+  description: Schema.optional(Schema.String),
+  notes: Schema.optional(Schema.String),
+  pathToIcon: Schema.optional(Schema.String)
+})
+export type Group = typeof Group.Type
+
+// ────────────────────────────────────────────────────────────────────────────
 // Exposure
 // How a running project's port is reachable — the reverse-proxy binding.
 // ────────────────────────────────────────────────────────────────────────────
@@ -111,27 +165,76 @@ export type Exposure = typeof Exposure.Type
 // Project
 // The persisted catalog entry. `Project` is the stored shape; `ProjectWithState`
 // layers the live FSM-observed runtime state + pid on top for read models.
+//
+// `kind` discriminates how the supervisor runs it:
+//   process — a local dev server spawned on a PTY (`command` required)
+//   docker  — a single container the engine runs/reuses (`image` required);
+//             containers are named `matisa.<name>`, started with
+//             `--restart unless-stopped` (docker owns restarts, the FSM
+//             observes real state via `docker events`)
+//   compose — a whole stack delegated to `docker compose` (`composeFile`
+//             required); the stack is the lifecycle unit
 // ────────────────────────────────────────────────────────────────────────────
+
+export const ProjectKind = Schema.Literal("process", "docker", "compose")
+export type ProjectKind = typeof ProjectKind.Type
+
+const kindFieldsValid = <A extends { kind: ProjectKind; command?: unknown; image?: unknown; composeFile?: unknown }>(p: A): boolean =>
+  (p.kind === "process" && p.command !== undefined) ||
+  (p.kind === "docker" && typeof p.image === "string") ||
+  (p.kind === "compose" && typeof p.composeFile === "string")
+
+const kindMessage =
+  "process requires `command`; docker requires `image`; compose requires `composeFile`"
 
 export const Project = Schema.Struct({
   id: ProjectId,
   name: Schema.String,
   root: Schema.String,
-  command: Command,
+  kind: Schema.optionalWith(ProjectKind, { default: () => "process" as const }),
+  /** process: how to spawn. Unused for docker/compose. */
+  command: Schema.optional(Command),
+  /** docker: the image to run as `matisa.<name>`. */
+  image: Schema.optional(Schema.String),
+  /** compose: absolute path to the docker-compose file. */
+  composeFile: Schema.optional(Schema.String),
   ports: Schema.Array(Port),
   /** Context whose vars are applied when this project is (re)spawned, if any. */
   activeContextId: Schema.optional(ContextId),
+  groupSlug: Schema.optional(GroupSlug),
+  /** Absolute path to an image the client shows instead of the generic kind
+   *  glyph. A path, not the bytes: the engine reads it on demand (fs.readIcon)
+   *  so an icon the user swaps on disk is picked up without a re-add. */
+  pathToIcon: Schema.optional(Schema.String),
   exposure: Schema.optional(Exposure),
   createdAt: Schema.Number,
   updatedAt: Schema.Number
-})
+}).pipe(Schema.filter(kindFieldsValid, { message: () => kindMessage }))
 export type Project = typeof Project.Type
+
+const projectFields = {
+  id: ProjectId,
+  name: Schema.String,
+  root: Schema.String,
+  kind: Schema.optionalWith(ProjectKind, { default: () => "process" as const }),
+  command: Schema.optional(Command),
+  image: Schema.optional(Schema.String),
+  composeFile: Schema.optional(Schema.String),
+  ports: Schema.Array(Port),
+  activeContextId: Schema.optional(ContextId),
+  groupSlug: Schema.optional(GroupSlug),
+  pathToIcon: Schema.optional(Schema.String),
+  exposure: Schema.optional(Exposure),
+  createdAt: Schema.Number,
+  updatedAt: Schema.Number
+}
 
 /** Catalog entry + live runtime view. */
 export const ProjectWithState = Schema.Struct({
-  ...Project.fields,
+  ...projectFields,
   state: RuntimeState,
-  pid: Schema.optional(Schema.Int)
+  pid: Schema.optional(Schema.Int),
+  health: Schema.optional(Health)
 })
 export type ProjectWithState = typeof ProjectWithState.Type
 
@@ -139,18 +242,28 @@ export type ProjectWithState = typeof ProjectWithState.Type
 export const NewProject = Schema.Struct({
   name: Schema.String,
   root: Schema.String,
-  command: Command,
+  kind: Schema.optionalWith(ProjectKind, { default: () => "process" as const }),
+  command: Schema.optional(Command),
+  image: Schema.optional(Schema.String),
+  composeFile: Schema.optional(Schema.String),
   ports: Schema.optionalWith(Schema.Array(Port), { default: () => [] }),
+  groupSlug: Schema.optional(GroupSlug),
+  pathToIcon: Schema.optional(Schema.String),
   exposure: Schema.optional(Exposure)
-})
+}).pipe(Schema.filter(kindFieldsValid, { message: () => kindMessage }))
 export type NewProject = typeof NewProject.Type
 
-/** Partial mutation to an existing project (catalog.update). */
+/** Partial mutation to an existing project (catalog.update). Fields that can be
+ *  cleared are nullable: `undefined` keeps what is stored, `null` erases it. */
 export const ProjectPatch = Schema.Struct({
   name: Schema.optional(Schema.String),
   root: Schema.optional(Schema.String),
   command: Schema.optional(Command),
+  image: Schema.optional(Schema.String),
+  composeFile: Schema.optional(Schema.String),
   ports: Schema.optional(Schema.Array(Port)),
+  groupSlug: Schema.optional(Schema.NullOr(GroupSlug)),
+  pathToIcon: Schema.optional(Schema.NullOr(Schema.String)),
   exposure: Schema.optional(Exposure)
 })
 export type ProjectPatch = typeof ProjectPatch.Type

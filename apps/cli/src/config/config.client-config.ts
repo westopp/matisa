@@ -25,6 +25,9 @@ export interface ClientConfigService {
   readonly setSocket: (override: Option.Option<string>) => Effect.Effect<void>
   /** Apply the global --json override. */
   readonly setJson: (json: boolean) => Effect.Effect<void>
+  /** --ensure-engine: spawn the engine if the socket is unreachable. */
+  readonly ensureEngine: Effect.Effect<boolean>
+  readonly setEnsure: (ensure: boolean) => Effect.Effect<void>
 }
 
 export class ClientConfig extends Context.Tag("matisa-cli/ClientConfig")<
@@ -75,6 +78,7 @@ const make = Effect.gen(function* () {
 
   const socketRef = yield* FiberRef.make(socket)
   const outputRef = yield* FiberRef.make<OutputMode>(output)
+  const ensureRef = yield* FiberRef.make(false)
 
   return ClientConfig.of({
     socketPath: FiberRef.get(socketRef),
@@ -85,7 +89,9 @@ const make = Effect.gen(function* () {
         onNone: () => Effect.void,
         onSome: (s) => FiberRef.set(socketRef, s)
       }),
-    setJson: (json) => (json ? FiberRef.set(outputRef, "json") : Effect.void)
+    setJson: (json) => (json ? FiberRef.set(outputRef, "json") : Effect.void),
+    ensureEngine: FiberRef.get(ensureRef),
+    setEnsure: (ensure) => FiberRef.set(ensureRef, ensure)
   })
 })
 

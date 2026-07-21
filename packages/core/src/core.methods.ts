@@ -1,8 +1,14 @@
 import { Schema } from "effect"
 import { EngineEvent } from "./core.events.js"
 import {
+  CommandVar,
   ContextId,
+  DockerDaemonState,
   EnvContext,
+  Group,
+  GroupSlug,
+  Health,
+  NamedCommand,
   NewProject,
   Project,
   ProjectId,
@@ -50,6 +56,23 @@ export const EnvUseParams = Schema.Struct({
 })
 export type EnvUseParams = typeof EnvUseParams.Type
 
+/** Create a named environment. The engine derives the id from the name — a
+ *  client that invented ids could collide with `base`, which is reserved. */
+export const EnvCreateParams = Schema.Struct({
+  name: Schema.String,
+  description: Schema.optional(Schema.String)
+})
+export type EnvCreateParams = typeof EnvCreateParams.Type
+
+export const EnvRenameParams = Schema.Struct({
+  contextId: ContextId,
+  name: Schema.String
+})
+export type EnvRenameParams = typeof EnvRenameParams.Type
+
+export const ByContextId = Schema.Struct({ contextId: ContextId })
+export type ByContextId = typeof ByContextId.Type
+
 // —— lifecycle ——
 
 /** Ack that a lifecycle transition was accepted; final state arrives via events. */
@@ -65,9 +88,167 @@ export const RuntimeStatus = Schema.Struct({
   pid: Schema.optional(Schema.Int),
   since: Schema.optional(Schema.Number),
   /** The run's PTY session (`run:<projectId>`) — attach/input/resize target. */
-  sessionId: Schema.optional(SessionId)
+  sessionId: Schema.optional(SessionId),
+  /** Observed readiness (port probe), orthogonal to `state`. */
+  health: Schema.optional(Health)
 })
 export type RuntimeStatus = typeof RuntimeStatus.Type
+
+/** A persisted launch failure — queryable so clients can always show WHY. */
+export const CrashRecord = Schema.Struct({
+  projectId: ProjectId,
+  ts: Schema.Number,
+  exitCode: Schema.optional(Schema.Int),
+  signal: Schema.optional(Schema.String),
+  summary: Schema.optional(Schema.String),
+  logTail: Schema.optional(Schema.String)
+})
+export type CrashRecord = typeof CrashRecord.Type
+
+export const FailuresParams = Schema.Struct({
+  projectId: Schema.optional(ProjectId),
+  limit: Schema.optionalWith(Schema.Int, { default: () => 20 })
+})
+export type FailuresParams = typeof FailuresParams.Type
+
+// —— named commands ——
+
+export const CommandSetParams = Schema.Struct({
+  projectId: ProjectId,
+  name: Schema.String,
+  command: Schema.String,
+  vars: Schema.optionalWith(Schema.Array(CommandVar), { default: () => [] })
+})
+export type CommandSetParams = typeof CommandSetParams.Type
+
+export const CommandRefParams = Schema.Struct({
+  projectId: ProjectId,
+  name: Schema.String
+})
+export type CommandRefParams = typeof CommandRefParams.Type
+
+export const CommandRunParams = Schema.Struct({
+  projectId: ProjectId,
+  name: Schema.String,
+  cols: Schema.optionalWith(Schema.Int, { default: () => 80 }),
+  rows: Schema.optionalWith(Schema.Int, { default: () => 24 })
+})
+export type CommandRunParams = typeof CommandRunParams.Type
+
+// —— groups ——
+
+export const GroupSetParams = Schema.Struct({
+  slug: GroupSlug,
+  title: Schema.String,
+  description: Schema.optional(Schema.String),
+  notes: Schema.optional(Schema.String),
+  pathToIcon: Schema.optional(Schema.String)
+})
+export type GroupSetParams = typeof GroupSetParams.Type
+
+export const BySlug = Schema.Struct({ slug: GroupSlug })
+export type BySlug = typeof BySlug.Type
+
+// —— fs ——
+
+export const ListDirParams = Schema.Struct({
+  /** Absolute path to list; omitted or empty defaults to the user's home directory. */
+  path: Schema.optional(Schema.String)
+})
+export type ListDirParams = typeof ListDirParams.Type
+
+export const DirEntry = Schema.Struct({
+  name: Schema.String,
+  path: Schema.String
+})
+export type DirEntry = typeof DirEntry.Type
+
+export const ListDirResult = Schema.Struct({
+  path: Schema.String,
+  /** Absent once `path` is the filesystem root. */
+  parent: Schema.optional(Schema.String),
+  entries: Schema.Array(DirEntry)
+})
+export type ListDirResult = typeof ListDirResult.Type
+
+export const ChooseDirParams = Schema.Struct({
+  /** Where the panel opens. Ignored if it no longer exists. */
+  defaultPath: Schema.optional(Schema.String)
+})
+export type ChooseDirParams = typeof ChooseDirParams.Type
+
+export const ChooseDirResult = Schema.Struct({
+  /** Absent when the user dismissed the panel — a cancel is not an error. */
+  path: Schema.optional(Schema.String)
+})
+export type ChooseDirResult = typeof ChooseDirResult.Type
+
+export const ChooseFileParams = Schema.Struct({
+  defaultPath: Schema.optional(Schema.String),
+  /** UTI/extension filter for the panel, e.g. ["png", "svg"]. */
+  extensions: Schema.optionalWith(Schema.Array(Schema.String), { default: () => [] })
+})
+export type ChooseFileParams = typeof ChooseFileParams.Type
+
+export const ReadIconParams = Schema.Struct({ path: Schema.String })
+export type ReadIconParams = typeof ReadIconParams.Type
+
+/** An icon as a data URI. The client runs in a browser sandbox and cannot read
+ *  `file://`, so the engine — which does have disk access — inlines the bytes. */
+export const ReadIconResult = Schema.Struct({
+  dataUri: Schema.String
+})
+export type ReadIconResult = typeof ReadIconResult.Type
+
+// —— logs ——
+
+export const LogsTailParams = Schema.Struct({
+  projectId: ProjectId,
+  lines: Schema.optionalWith(Schema.Int, { default: () => 200 })
+})
+export type LogsTailParams = typeof LogsTailParams.Type
+
+export const LogsTailResult = Schema.Struct({
+  lines: Schema.Array(Schema.String)
+})
+export type LogsTailResult = typeof LogsTailResult.Type
+
+// —— engine ——
+
+export const EngineStatus = Schema.Struct({
+  pid: Schema.Int,
+  version: Schema.String,
+  startedAt: Schema.Number,
+  socketPath: Schema.String,
+  dbPath: Schema.String,
+  modulesFull: Schema.Array(Schema.String),
+  modulesStub: Schema.Array(Schema.String)
+})
+export type EngineStatus = typeof EngineStatus.Type
+
+// —— docker daemon ——
+
+export const DaemonStatusResult = Schema.Struct({
+  state: DockerDaemonState,
+  message: Schema.optional(Schema.String)
+})
+export type DaemonStatusResult = typeof DaemonStatusResult.Type
+
+// —— resources ——
+
+export const ResourceSample = Schema.Struct({
+  projectId: ProjectId,
+  pid: Schema.optional(Schema.Int),
+  cpuPercent: Schema.Number,
+  rssBytes: Schema.Number
+})
+export type ResourceSample = typeof ResourceSample.Type
+
+export const ResourcesSnapshot = Schema.Struct({
+  ts: Schema.Number,
+  samples: Schema.Array(ResourceSample)
+})
+export type ResourcesSnapshot = typeof ResourcesSnapshot.Type
 
 // —— events ——
 
@@ -156,6 +337,9 @@ export const methods = {
   "env.set": { params: EnvSetParams, result: EnvContext },
   "env.list": { params: Schema.Void, result: Schema.Array(EnvContext) },
   "env.use": { params: EnvUseParams, result: ProjectWithState },
+  "env.create": { params: EnvCreateParams, result: EnvContext },
+  "env.rename": { params: EnvRenameParams, result: EnvContext },
+  "env.remove": { params: ByContextId, result: Schema.Void },
 
   "lifecycle.start": { params: ById, result: Accepted },
   "lifecycle.stop": { params: ById, result: Accepted },
@@ -168,7 +352,33 @@ export const methods = {
   "pty.open": { params: PtyOpenParams, result: PtySession },
   "pty.attach": { params: BySessionId, result: Attached },
   "pty.input": { params: PtyInputParams, result: Schema.Void },
-  "pty.resize": { params: PtyResizeParams, result: Schema.Void }
+  "pty.resize": { params: PtyResizeParams, result: Schema.Void },
+
+  "commands.set": { params: CommandSetParams, result: NamedCommand },
+  "commands.list": { params: ById, result: Schema.Array(NamedCommand) },
+  "commands.remove": { params: CommandRefParams, result: Schema.Void },
+  "commands.run": { params: CommandRunParams, result: PtySession },
+
+  "groups.set": { params: GroupSetParams, result: Group },
+  "groups.list": { params: Schema.Void, result: Schema.Array(Group) },
+  "groups.remove": { params: BySlug, result: Schema.Void },
+
+  "fs.listDir": { params: ListDirParams, result: ListDirResult },
+  "fs.chooseDir": { params: ChooseDirParams, result: ChooseDirResult },
+  "fs.chooseFile": { params: ChooseFileParams, result: ChooseDirResult },
+  "fs.readIcon": { params: ReadIconParams, result: ReadIconResult },
+
+  "logs.tail": { params: LogsTailParams, result: LogsTailResult },
+  "lifecycle.failures": { params: FailuresParams, result: Schema.Array(CrashRecord) },
+
+  "engine.status": { params: Schema.Void, result: EngineStatus },
+  "engine.shutdown": { params: Schema.Void, result: Schema.Struct({ accepted: Schema.Boolean }) },
+
+  "docker.daemon.status": { params: Schema.Void, result: DaemonStatusResult },
+  "docker.daemon.start": { params: Schema.Void, result: DaemonStatusResult },
+  "docker.daemon.stop": { params: Schema.Void, result: DaemonStatusResult },
+
+  "resources.snapshot": { params: Schema.Void, result: ResourcesSnapshot }
 } as const satisfies Record<string, { params: Schema.Schema.Any; result: Schema.Schema.Any }>
 
 export type Methods = typeof methods

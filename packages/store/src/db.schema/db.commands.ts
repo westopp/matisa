@@ -16,3 +16,20 @@ export const commands = sqliteTable(
 )
 
 export type CommandRow = typeof commands.$inferSelect
+
+// command_vars — per-command env overrides, injected on every run of the
+// command they belong to. One value per key per command; nothing to scope.
+export const commandVars = sqliteTable(
+  "command_vars",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    commandId: integer("command_id")
+      .notNull()
+      .references(() => commands.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    value: text("value").notNull()
+  },
+  (t) => [unique("command_vars_unique").on(t.commandId, t.key)]
+)
+
+export type CommandVarRow = typeof commandVars.$inferSelect

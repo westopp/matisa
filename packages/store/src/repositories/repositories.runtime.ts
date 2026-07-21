@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Option } from "effect"
-import { and, eq, isNull } from "drizzle-orm"
+import { and, desc, eq, isNull } from "drizzle-orm"
 import { ProjectId, SessionId, type RuntimeState } from "@matisa/core"
 import { crashHistory } from "../db.schema/db.crashes.js"
 import { runtimeState, type RuntimeStateRow } from "../db.schema/db.runtime.js"
@@ -46,6 +46,16 @@ export interface SpawnRecord {
 
 export interface CrashInput {
   readonly projectId: ProjectId
+  readonly exitCode?: number
+  readonly signal?: string
+  readonly summary?: string
+  readonly logTail?: string
+}
+
+/** A persisted failure, newest-first from `recentCrashes`. */
+export interface CrashRecordRow {
+  readonly projectId: ProjectId
+  readonly ts: number
   readonly exitCode?: number
   readonly signal?: string
   readonly summary?: string
@@ -99,6 +109,11 @@ export interface RuntimeRepoShape {
   /** Reap a spawn (mark exited with its real code) — never a kill(pid,0) poll. */
   readonly removeSpawn: (spawnId: number, exitCode?: number) => Effect.Effect<void, StoreQueryError>
   readonly recordCrash: (input: CrashInput) => Effect.Effect<void, StoreQueryError>
+  /** Newest-first launch failures — the queryable "always know WHY" surface. */
+  readonly recentCrashes: (
+    projectId?: ProjectId,
+    limit?: number
+  ) => Effect.Effect<ReadonlyArray<CrashRecordRow>, StoreQueryError>
 }
 
 export class RuntimeRepo extends Context.Tag("RuntimeRepo")<RuntimeRepo, RuntimeRepoShape>() {}
@@ -201,6 +216,25 @@ export const RuntimeRepoLive = Layer.effect(
           .run()
       })
 
+    const recentCrashes: RuntimeRepoShape["recentCrashes"] = (projectId, limit = 20) =>
+      q(() => {
+        const rows = db
+          .select()
+          .from(crashHistory)
+          .where(projectId ? eq(crashHistory.projectId, projectId) : undefined)
+          .orderBy(desc(crashHistory.ts))
+          .limit(limit)
+          .all()
+        return rows.map((r) => ({
+          projectId: ProjectId.make(r.projectId),
+          ts: r.ts,
+          exitCode: r.exitCode ?? undefined,
+          signal: r.signal ?? undefined,
+          summary: r.summary ?? undefined,
+          logTail: r.logTail ?? undefined
+        }))
+      })
+
     return RuntimeRepo.of({
       getState,
       setState,
@@ -208,7 +242,8 @@ export const RuntimeRepoLive = Layer.effect(
       recordSpawn,
       liveSpawns,
       removeSpawn,
-      recordCrash
+      recordCrash,
+      recentCrashes
     })
   })
 )

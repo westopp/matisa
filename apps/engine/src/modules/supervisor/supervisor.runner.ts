@@ -1,36 +1,33 @@
 import { Duration, Effect, Either, Ref, Runtime } from "effect"
 import { SessionId, type Project } from "@matisa/core"
 import type { EnvRepoShape, RuntimeRepoShape, RuntimePatch } from "@matisa/store"
-import { crashed, logLine, stateChanged } from "../../shared/events.js"
+import { crashed, healthChanged, logLine, stateChanged } from "../../shared/events.js"
 import { resolveEnv } from "../catalog/catalog.env-resolve.js"
-import type { KeychainShape } from "../catalog/providers/catalog.providers.keychain.types.js"
 import type { EventsHubShape } from "../../server/server.events-hub.js"
 import type { AppConfigShape } from "../../config/config.app-config.js"
 import type { PtyManagerShape } from "../pty/pty.services.js"
 import { runSessionId } from "../pty/pty.session.js"
+import { START_TIMEOUT_MS } from "../../config/config.constants.js"
 import { restartDelayMs } from "./supervisor.backoff.js"
 import { Event, runtimeStateOf, State, transition } from "./supervisor.machine.js"
+import { awaitPortBound } from "./supervisor.probe.js"
 import { spawnChild } from "./supervisor.spawn.js"
+import { runCompose, runDocker } from "./supervisor.run-docker.js"
 
 // ────────────────────────────────────────────────────────────────────────────
-// runProject — one project's supervised lifetime loop. Real process events
-// (spawn / exit) are fed into the pure FSM; each transition persists runtime_state
-// and emits a state_changed event. On an unclean exit it records a crash and
-// restarts on the expo-capped backoff up to maxAttempts, then lands in `errored`.
-// The whole loop is Effect<void> — the Supervisor forks it per project under
-// catchAllCause, so a failure degrades only that project (crash-isolation).
-//
-// The child runs on a PTY and is registered with PtyManager as the project's
-// run session (`run:<projectId>`): clients attach for live output + scrollback
-// and answer interactive prompts via pty.input. PTY output doubles as log_line
-// events. After the leader exits, the whole process group is swept with SIGTERM
-// so grandchildren (npm run → server) never outlive the reported state.
+// runProject — one project's supervised lifetime, dispatched by kind:
+//   process — PTY child, engine-owned restarts with expo backoff
+//   docker  — matisa.<name> container; docker owns restarts (unless-stopped),
+//             the FSM observes real container events
+//   compose — whole stack via docker compose; up/down is the lifecycle unit
+// Every kind feeds the SAME pure FSM; each transition persists runtime_state
+// and emits state_changed. Forked per project under catchAllCause — a project
+// failure degrades only that project (crash-isolation).
 // ────────────────────────────────────────────────────────────────────────────
 
 export interface RunnerDeps {
   readonly runtimeRepo: RuntimeRepoShape
   readonly envRepo: EnvRepoShape
-  readonly keychain: KeychainShape
   readonly events: EventsHubShape
   readonly config: AppConfigShape
   readonly pty: PtyManagerShape
@@ -40,7 +37,13 @@ export interface RunnerDeps {
 const patchFor = (state: State, sessionId?: SessionId): RuntimePatch => {
   switch (state._tag) {
     case "Running":
-      return { state: "running", pid: state.pid, since: state.since, sessionId }
+      return {
+        state: "running",
+        // pid 0 = "no meaningful pid" (compose stacks)
+        pid: state.pid === 0 ? undefined : state.pid,
+        since: state.since,
+        sessionId
+      }
     case "Unmanaged":
       return { state: "unmanaged", pid: state.pid }
     case "Crashed":
@@ -56,23 +59,23 @@ const patchFor = (state: State, sessionId?: SessionId): RuntimePatch => {
   }
 }
 
-/** SIGTERM the child's whole process group — reaps grandchildren the leader
- * left behind. The leader is a session leader (forkpty), so pgid == pid. */
-const sweepGroup = (pid: number): Effect.Effect<void> =>
-  Effect.sync(() => {
-    try {
-      process.kill(-pid, "SIGTERM")
-    } catch {
-      // group already fully gone — the common case
-    }
-  })
+/** Shared FSM driver: holds the state Ref, persists each transition, emits
+ * state_changed, and exposes health updates that preserve the state row. */
+export interface Driver {
+  readonly apply: (event: Event, reason?: string) => Effect.Effect<void>
+  readonly current: Effect.Effect<State>
+  readonly setHealth: (health: "waiting" | "ready" | "timeout" | "unknown", message?: string) => Effect.Effect<void>
+}
 
-export const runProject = (project: Project, deps: RunnerDeps): Effect.Effect<void> =>
+export const makeDriver = (
+  project: Project,
+  deps: RunnerDeps,
+  sessionId?: SessionId
+): Effect.Effect<Driver> =>
   Effect.gen(function* () {
     const ref = yield* Ref.make<State>(State.Idle())
-    const sessionId = SessionId.make(runSessionId(project.id))
 
-    const apply = (event: Event, reason?: string) =>
+    const apply: Driver["apply"] = (event, reason) =>
       Effect.gen(function* () {
         const current = yield* Ref.get(ref)
         const next = transition(current, event)
@@ -85,10 +88,72 @@ export const runProject = (project: Project, deps: RunnerDeps): Effect.Effect<vo
         if (from !== to) yield* deps.events.emit(stateChanged(project.id, from, to, reason))
       })
 
+    const setHealth: Driver["setHealth"] = (health, message) =>
+      Effect.gen(function* () {
+        const state = yield* Ref.get(ref)
+        yield* deps.runtimeRepo
+          .setState(project.id, { ...patchFor(state, sessionId), health })
+          .pipe(Effect.ignore)
+        yield* deps.events.emit(healthChanged(project.id, health, message))
+      })
+
+    return { apply, current: Ref.get(ref), setHealth }
+  })
+
+/** Probe the project's first declared port until bound or the window closes.
+ * Runs during `starting` only — once resolved the engine stops watching. */
+export const probeReadiness = (
+  project: Project,
+  driver: Driver
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const port = project.ports[0]?.number
+    if (port === undefined) {
+      yield* driver.setHealth("unknown")
+      return
+    }
+    yield* driver.setHealth("waiting")
+    const bound = yield* awaitPortBound(port, START_TIMEOUT_MS)
+    const state = yield* driver.current
+    if (state._tag !== "Running") return // exited/crashed meanwhile — moot
+    if (bound) {
+      yield* driver.setHealth("ready")
+    } else {
+      yield* driver.setHealth(
+        "timeout",
+        `port ${port} not bound within ${START_TIMEOUT_MS / 1000}s — process alive but not serving`
+      )
+    }
+  })
+
+/** Old-app style failure summary: last meaningful output line + exit shape. */
+export const summarizeFailure = (
+  tail: string,
+  exitCode: number | null,
+  signal: string | null,
+  aliveMs: number
+): string => {
+  const lastLine = tail
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .at(-1)
+  const how = signal ? `signal ${signal}` : `exit code ${exitCode ?? "unknown"}`
+  const alive = `${(aliveMs / 1000).toFixed(1)}s`
+  return lastLine !== undefined
+    ? `${how} after ${alive} — last output: ${lastLine.slice(0, 200)}`
+    : `${how} after ${alive} with no output`
+}
+
+const runProcess = (project: Project, deps: RunnerDeps): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const sessionId = SessionId.make(runSessionId(project.id))
+    const driver = yield* makeDriver(project, deps, sessionId)
+
     const lifetime = (attempt: number) =>
       Effect.scoped(
         Effect.gen(function* () {
-          yield* apply(Event.Start({ attempt }))
+          yield* driver.apply(Event.Start({ attempt }))
 
           const env = yield* resolveEnv(project, deps).pipe(
             Effect.catchAll(() => Effect.succeed({} as Record<string, string>))
@@ -96,18 +161,18 @@ export const runProject = (project: Project, deps: RunnerDeps): Effect.Effect<vo
 
           const spawned = yield* spawnChild(project, env).pipe(Effect.either)
           if (Either.isLeft(spawned)) {
-            yield* apply(Event.Fault({ reason: spawned.left.errorMessage }))
+            yield* driver.apply(Event.Fault({ reason: spawned.left.errorMessage }))
             return
           }
           const child = spawned.right
+          const spawnedAt = Date.now()
 
           yield* deps.runtimeRepo
             .recordSpawn({ projectId: project.id, pid: child.pid, pgid: child.pid })
             .pipe(Effect.ignore)
 
           // Register the run session BEFORE declaring Running so an attach
-          // races no gap. Replaces the previous attempt's session (old pumps
-          // complete via hub shutdown).
+          // races no gap.
           yield* deps.pty.register({
             sessionId,
             projectId: project.id,
@@ -117,44 +182,63 @@ export const runProject = (project: Project, deps: RunnerDeps): Effect.Effect<vo
             rows: child.rows
           })
 
-          yield* apply(Event.Healthy({ pid: child.pid, since: Date.now() }))
+          yield* driver.apply(Event.Healthy({ pid: child.pid, since: Date.now() }))
 
-          // PTY output doubles as the durable log stream, out of band via the
-          // runtime. (Single merged stream — a TTY has no stderr split.)
+          // Readiness probe races the child's lifetime; both scoped fibers.
+          yield* probeReadiness(project, driver).pipe(Effect.forkScoped)
+
           child.pty.onData((chunk: string) => {
             Runtime.runFork(deps.rt)(deps.events.emit(logLine(project.id, "stdout", chunk)))
           })
 
           const exit = yield* child.awaitExit
           yield* deps.pty.sessionExited(sessionId, exit.code)
-          // The leader is gone; sweep the group so grandchildren die with it.
-          yield* sweepGroup(child.pid)
-          yield* apply(
+          // Leader gone — sweep the group so grandchildren die with it.
+          yield* Effect.sync(() => {
+            try {
+              process.kill(-child.pid, "SIGTERM")
+            } catch {
+              // group already fully gone — the common case
+            }
+          })
+          yield* driver.apply(
             Event.Exit({ code: exit.code, signal: exit.signal }),
             `exited code=${exit.code ?? "null"} signal=${exit.signal ?? "null"}`
           )
+          return spawnedAt
         })
       )
 
     const loop = (attempt: number): Effect.Effect<void> =>
       Effect.gen(function* () {
+        const startedAt = Date.now()
         yield* lifetime(attempt)
-        const state = yield* Ref.get(ref)
+        const state = yield* driver.current
         if (state._tag !== "Crashed") return
 
+        // Surface WHY: session scrollback tail + old-app style summary.
+        const tail = yield* deps.pty.scrollbackTail(sessionId, 15)
+        const summary = summarizeFailure(
+          tail,
+          state.code,
+          state.signal,
+          Date.now() - startedAt
+        )
         yield* deps.events.emit(
-          crashed(project.id, state.code ?? undefined, state.signal ?? undefined)
+          crashed(project.id, state.code ?? undefined, state.signal ?? undefined, undefined, summary, tail)
         )
         yield* deps.runtimeRepo
           .recordCrash({
             projectId: project.id,
             exitCode: state.code ?? undefined,
-            signal: state.signal ?? undefined
+            signal: state.signal ?? undefined,
+            summary,
+            logTail: tail
           })
           .pipe(Effect.ignore)
 
         if (attempt + 1 >= deps.config.backoff.maxAttempts) {
-          yield* apply(Event.Fault({ reason: "max restart attempts reached" }))
+          yield* driver.apply(Event.Fault({ reason: "max restart attempts reached" }))
           return
         }
 
@@ -166,3 +250,14 @@ export const runProject = (project: Project, deps: RunnerDeps): Effect.Effect<vo
 
     yield* loop(0)
   })
+
+export const runProject = (project: Project, deps: RunnerDeps): Effect.Effect<void> => {
+  switch (project.kind) {
+    case "docker":
+      return runDocker(project, deps)
+    case "compose":
+      return runCompose(project, deps)
+    case "process":
+      return runProcess(project, deps)
+  }
+}

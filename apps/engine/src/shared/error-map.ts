@@ -1,4 +1,11 @@
-import { EngineInternal, NotFound, PortConflict, ProjectId, type EngineError } from "@matisa/core"
+import {
+  EngineInternal,
+  NotFound,
+  PortConflict,
+  ProjectId,
+  ValidationError,
+  type EngineError
+} from "@matisa/core"
 
 // ────────────────────────────────────────────────────────────────────────────
 // Boundary mapping: store/provider Data.TaggedError faults → the four wire
@@ -23,6 +30,13 @@ export const toEngineError = (e: unknown): EngineError => {
     case "NotFound": {
       const x = e as { entity: string; id: string }
       return new NotFound({ entity: x.entity, id: x.id, message: `${x.entity} '${x.id}' not found` })
+    }
+    case "NameTaken": {
+      const x = e as { entity: string; name: string }
+      return new ValidationError({
+        field: "name",
+        message: `${x.entity === "env_context" ? "An environment" : x.entity} called "${x.name}" already exists`
+      })
     }
     case "PortConflict": {
       const x = e as { port: number; heldBy?: string }

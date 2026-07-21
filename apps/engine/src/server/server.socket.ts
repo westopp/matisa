@@ -7,6 +7,7 @@ import { reconcile } from "../modules/supervisor/supervisor.reconcile.js"
 import { handleConnection } from "./server.connection.js"
 import { makeDispatcher } from "./server.dispatcher.js"
 import { makeHandlers } from "./handlers/handlers.index.js"
+import { wsBridge } from "./server.ws.js"
 
 // ────────────────────────────────────────────────────────────────────────────
 // SocketServer — the UDS listener as a scoped Layer. Acquire reconciles runtime
@@ -56,7 +57,13 @@ const make = Effect.gen(function* () {
       })
   )
 
+  // The GUI's transport. Same dispatcher, same handlers — only the framing differs.
+  yield* wsBridge(config.wsPort, dispatch, rt)
+
   yield* Effect.logInfo(`matisa engine listening on ${socketPath}`)
+  if (config.wsPort !== 0) {
+    yield* Effect.logInfo(`ws bridge listening on ws://127.0.0.1:${config.wsPort}`)
+  }
   yield* Effect.logInfo(
     "modules — FULL: catalog, supervisor (lifecycle), events, pty (run + shell sessions) | STUB: discovery, exposure, docker"
   )

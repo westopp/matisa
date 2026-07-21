@@ -1,4 +1,4 @@
-import type { ProjectId, RuntimeState } from "@matisa/core"
+import type { Health, ProjectId, RuntimeState } from "@matisa/core"
 import type { NewEvent } from "@matisa/store"
 
 // Typed builders for the engine-event envelopes. `seq` is assigned by the store
@@ -20,19 +20,22 @@ export const stateChanged = (
 export const logLine = (
   projectId: ProjectId,
   stream: "stdout" | "stderr",
-  line: string
+  line: string,
+  service?: string
 ): NewEvent => ({
   ts: Date.now(),
   projectId,
   type: "log_line",
-  payload: { stream, line }
+  payload: service !== undefined ? { stream, line, service } : { stream, line }
 })
 
 export const crashed = (
   projectId: ProjectId,
   exitCode?: number,
   signal?: string,
-  reason?: string
+  reason?: string,
+  summary?: string,
+  logTail?: string
 ): NewEvent => ({
   ts: Date.now(),
   projectId,
@@ -40,8 +43,21 @@ export const crashed = (
   payload: {
     ...(exitCode !== undefined ? { exitCode } : {}),
     ...(signal !== undefined ? { signal } : {}),
-    ...(reason !== undefined ? { reason } : {})
+    ...(reason !== undefined ? { reason } : {}),
+    ...(summary !== undefined ? { summary } : {}),
+    ...(logTail !== undefined ? { logTail } : {})
   }
+})
+
+export const healthChanged = (
+  projectId: ProjectId,
+  health: Health,
+  message?: string
+): NewEvent => ({
+  ts: Date.now(),
+  projectId,
+  type: "health_changed",
+  payload: message !== undefined ? { health, message } : { health }
 })
 
 export const catalogChanged = (

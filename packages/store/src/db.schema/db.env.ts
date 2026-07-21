@@ -7,9 +7,9 @@ export const envContexts = sqliteTable("env_contexts", {
   description: text("description")
 })
 
-// env_vars — one row per key within a context. A secret NEVER stores its
-// plaintext: `isSecret` rows carry only `secretRef` (a keychain handle);
-// `value` is null for them. Plain rows carry `value`, `secretRef` null.
+// env_vars — one row per key within a context. POC: `value` holds every var,
+// secrets included; `isSecret` is a display hint (masked in listings). A
+// keychain-backed store replaces plaintext secrets post-POC.
 export const envVars = sqliteTable(
   "env_vars",
   {
@@ -19,8 +19,7 @@ export const envVars = sqliteTable(
       .references(() => envContexts.id, { onDelete: "cascade" }),
     key: text("key").notNull(),
     isSecret: integer("is_secret", { mode: "boolean" }).notNull().default(false),
-    value: text("value"),
-    secretRef: text("secret_ref")
+    value: text("value").notNull()
   },
   (t) => [unique("env_vars_context_key").on(t.contextId, t.key)]
 )

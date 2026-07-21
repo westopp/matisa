@@ -1,5 +1,6 @@
 // Barrel of every drizzle table + row type. Passed to `drizzle(sqlite, { schema })`
 // in store.client so the Drizzle client is schema-aware.
+export * from "./db.groups.js"
 export * from "./db.projects.js"
 export * from "./db.ports.js"
 export * from "./db.env.js"

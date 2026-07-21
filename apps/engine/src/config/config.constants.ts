@@ -12,11 +12,24 @@ export const DEFAULT_SECRETS_PATH = `${MATISA_ROOT}/secrets.json`
 /** Caddy admin API port (exposure module — stubbed). */
 export const CADDY_ADMIN_PORT = 2019
 
+/** Loopback port for the WebSocket bridge that serves the same JSON-RPC surface
+ * as the unix socket. Browsers cannot open a UDS, so the GUI speaks this. */
+export const DEFAULT_WS_PORT = 4127
+
 /** Hard cap on a single NDJSON frame (bytes) before the connection is faulted. */
 export const MAX_FRAME_BYTES = 1024 * 1024
 
 /** Restart backoff defaults (ms) — expo from `base`, capped at `cap`. */
 export const DEFAULT_BACKOFF = { base: 500, cap: 30_000, maxAttempts: 5 } as const
+
+/** Engine version reported by engine.status. */
+export const ENGINE_VERSION = "0.1.0"
+
+/** Durable-queue retention: keep the newest N events; older rows are pruned at
+ * boot and every few hours. Clients resuming from a pruned cursor restart at
+ * the retention floor. */
+export const EVENTS_KEEP_LAST = 20_000
+export const EVENTS_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000
 
 /** Terminal geometry for supervised run sessions (clients resize via pty.resize). */
 export const RUN_PTY_COLS = 120

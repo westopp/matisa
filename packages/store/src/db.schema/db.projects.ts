@@ -8,8 +8,15 @@ export const projects = sqliteTable("projects", {
   id: text("id").primaryKey(),
   name: text("name").notNull().unique(),
   root: text("root").notNull(),
-  commandJson: text("command_json").notNull(),
+  /** process | docker | compose — which runner the supervisor uses. */
+  kind: text("kind").notNull().default("process"),
+  commandJson: text("command_json"),
+  image: text("image"),
+  composeFile: text("compose_file"),
+  groupSlug: text("group_slug"),
   activeContextId: text("active_context_id"),
+  /** Absolute path to the project's icon; the engine inlines it for clients. */
+  pathToIcon: text("path_to_icon"),
   exposureJson: text("exposure_json"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull()

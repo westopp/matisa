@@ -4,9 +4,11 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, ManagedRuntime, Option } from "effect"
-import { ContextId, ProjectId, type NewProject } from "@matisa/core"
+import { ContextId, GroupSlug, ProjectId, type NewProject } from "@matisa/core"
 import { StoreLive } from "../store.index.js"
+import { CommandsRepo } from "../repositories/repositories.commands.js"
 import { EventsRepo } from "../repositories/repositories.events.js"
+import { GroupsRepo } from "../repositories/repositories.groups.js"
 import { ProjectsRepo } from "../repositories/repositories.projects.js"
 import { EnvRepo } from "../repositories/repositories.env.js"
 import { RuntimeRepo } from "../repositories/repositories.runtime.js"
@@ -33,6 +35,7 @@ const newProject = (name: string, port?: number): NewProject =>
   ({
     name,
     root: "/tmp",
+    kind: "process" as const,
     command: { name: "run", program: "sleep", args: ["1"] },
     ports: port === undefined ? [] : [{ number: port, protocol: "tcp" as const }]
   }) as NewProject
@@ -169,14 +172,107 @@ describe("RuntimeRepo — state-is-truth persistence", () => {
   })
 })
 
-describe("EnvRepo — secrets never plaintext", () => {
-  it("stores a secret var as a ref only; plain vars round-trip", async () => {
+describe("CommandsRepo — named commands with env override layers", () => {
+  it("set/list/get round-trips a command's vars; upsert replaces the var set", async () => {
+    const r = await runtime(
+      Effect.gen(function* () {
+        const projects = yield* ProjectsRepo
+        const cmds = yield* CommandsRepo
+        const p = yield* projects.create(newProject("cmdful"))
+        yield* cmds.set({
+          projectId: p.id,
+          name: "test",
+          command: "jest --watch",
+          vars: [
+            { key: "NODE_ENV", value: "test" },
+            { key: "DB", value: "staging-db" }
+          ]
+        })
+        const first = yield* cmds.get(p.id, "test")
+        // Upsert: same name, new command, new var set — must REPLACE.
+        yield* cmds.set({
+          projectId: p.id,
+          name: "test",
+          command: "jest",
+          vars: [{ key: "ONLY", value: "one" }]
+        })
+        const second = yield* cmds.get(p.id, "test")
+        const listed = yield* cmds.list(p.id)
+        yield* cmds.remove(p.id, "test")
+        const afterRm = yield* cmds.list(p.id)
+        return { first, second, listed, afterRm }
+      })
+    )
+    assert.equal(r.first.command, "jest --watch")
+    assert.deepEqual(r.first.vars, [
+      { key: "DB", value: "staging-db" },
+      { key: "NODE_ENV", value: "test" }
+    ])
+    assert.equal(r.second.command, "jest")
+    assert.deepEqual(r.second.vars, [{ key: "ONLY", value: "one" }])
+    assert.equal(r.listed.length, 1)
+    assert.equal(r.afterRm.length, 0)
+  })
+})
+
+describe("GroupsRepo — standalone buckets, FK from projects", () => {
+  it("set/list/remove; deleting a group clears members' group_slug (SET NULL)", async () => {
+    const slug = GroupSlug.make("backend")
+    const r = await runtime(
+      Effect.gen(function* () {
+        const groups = yield* GroupsRepo
+        const projects = yield* ProjectsRepo
+        yield* groups.set({ slug, title: "Backend", description: "apis" })
+        const p = yield* projects.create({ ...newProject("grouped"), groupSlug: slug } as NewProject)
+        const listed = yield* groups.list()
+        yield* groups.remove(slug)
+        const after = yield* projects.get(p.id)
+        return { listed, after }
+      })
+    )
+    assert.ok(r.listed.some((g) => g.slug === slug && g.title === "Backend"))
+    assert.equal(r.after.groupSlug, undefined, "FK must SET NULL, not cascade-delete the project")
+  })
+})
+
+describe("EventsRepo — retention", () => {
+  it("prune keeps the newest N", async () => {
+    const r = await runtime(
+      Effect.gen(function* () {
+        const projects = yield* ProjectsRepo
+        const events = yield* EventsRepo
+        const p = yield* projects.create(newProject("retained"))
+        for (let i = 1; i <= 10; i++) {
+          yield* events.append({
+            ts: i,
+            projectId: p.id,
+            type: "state_changed",
+            payload: { from: "idle", to: "starting" }
+          } as never)
+        }
+        const before = yield* events.latestCursor()
+        const deleted = yield* events.prune(5)
+        const after = yield* events.pull({ since: 0, limit: 100 })
+        return { before, deleted, after }
+      })
+    )
+    assert.ok(r.deleted > 0, "prune must delete something")
+    assert.ok(
+      r.after.events.every((e) => e.seq > r.before - 5),
+      "only the newest 5 survive"
+    )
+  })
+})
+
+describe("EnvRepo — POC: values in the DB, secret flag masks listings", () => {
+  it("round-trips plain and secret vars, upserts on same key", async () => {
     const ctxId = ContextId.make("test-ctx")
     const list = await runtime(
       Effect.gen(function* () {
         const env = yield* EnvRepo
-        yield* env.set({ contextId: ctxId, name: "test", var: { kind: "plain", key: "URL", value: "http://x" } })
-        yield* env.set({ contextId: ctxId, var: { kind: "secret", key: "TOKEN", secretRef: "kc:abc123" } })
+        yield* env.set({ contextId: ctxId, name: "test", var: { key: "URL", value: "http://x", secret: false } })
+        yield* env.set({ contextId: ctxId, var: { key: "TOKEN", value: "s3cr3t", secret: true } })
+        yield* env.set({ contextId: ctxId, var: { key: "URL", value: "http://y", secret: false } }) // upsert
         return yield* env.list()
       })
     )
@@ -184,8 +280,7 @@ describe("EnvRepo — secrets never plaintext", () => {
     assert.ok(ctx, "context exists")
     const url = ctx.vars.find((v) => v.key === "URL")
     const token = ctx.vars.find((v) => v.key === "TOKEN")
-    assert.deepEqual(url, { kind: "plain", key: "URL", value: "http://x" })
-    assert.deepEqual(token, { kind: "secret", key: "TOKEN", secretRef: "kc:abc123" })
-    assert.ok(!("value" in (token as object)), "secret var must carry no plaintext value field")
+    assert.deepEqual(url, { key: "URL", value: "http://y", secret: false })
+    assert.deepEqual(token, { key: "TOKEN", value: "s3cr3t", secret: true })
   })
 })

@@ -8,11 +8,19 @@ import * as C from "./commands/commands.index.js"
 
 export const cli = globals.pipe(
   Command.withSubcommands([
-    C.project, // add | list | update | rm
-    C.env, // set | list | use
+    C.project, // add | list | update | rm (process | docker | compose kinds)
+    C.env, // set | list | use (base + context layering)
     C.lifecycle, // start | stop | restart | status
     C.watch, // live push stream
     C.events, // cursor pull
-    C.pty // sh | logs -f
+    C.pty, // sh | logs (session-level)
+    C.commandsGroup, // named commands: set | list | rm
+    C.run, // run <project> <command> — interactive PTY
+    C.group, // group set | list | rm
+    C.engine, // engine status | start | stop
+    C.docker, // docker daemon status | start | stop
+    C.logs, // logs <id> [--lines N] [-f]
+    C.failures, // recorded crash history (the WHY)
+    C.resources // cpu/rss snapshot
   ])
 )

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 import type Database from "better-sqlite3"
 import {
   ContextId,
+  GroupSlug,
   ProjectId,
   type Command,
   type Exposure,
@@ -20,8 +21,13 @@ interface ProjectRowRaw {
   readonly id: string
   readonly name: string
   readonly root: string
-  readonly command_json: string
+  readonly kind: string
+  readonly command_json: string | null
+  readonly image: string | null
+  readonly compose_file: string | null
+  readonly group_slug: string | null
   readonly active_context_id: string | null
+  readonly path_to_icon: string | null
   readonly exposure_json: string | null
   readonly created_at: number
   readonly updated_at: number
@@ -41,13 +47,18 @@ const buildProject = (sqlite: Sqlite, row: ProjectRowRaw): Project => {
     id: ProjectId.make(row.id),
     name: row.name,
     root: row.root,
-    command: JSON.parse(row.command_json) as Command,
+    kind: row.kind as Project["kind"],
+    command: row.command_json ? (JSON.parse(row.command_json) as Command) : undefined,
+    image: row.image ?? undefined,
+    composeFile: row.compose_file ?? undefined,
+    groupSlug: row.group_slug ? GroupSlug.make(row.group_slug) : undefined,
     ports: portRows.map((p) => ({
       number: p.number,
       protocol: p.protocol as PortProtocol,
       description: p.description ?? undefined
     })),
     activeContextId: row.active_context_id ? ContextId.make(row.active_context_id) : undefined,
+    pathToIcon: row.path_to_icon ?? undefined,
     exposure: row.exposure_json ? (JSON.parse(row.exposure_json) as Exposure) : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -120,13 +131,18 @@ export const ProjectsRepoLive = Layer.effect(
         const now = Date.now()
         yield* transaction((s) => {
           s.prepare(
-            "INSERT INTO projects (id, name, root, command_json, active_context_id, exposure_json, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
+            "INSERT INTO projects (id, name, root, kind, command_json, image, compose_file, group_slug, active_context_id, path_to_icon, exposure_json, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
           ).run(
             id,
             input.name,
             input.root,
-            JSON.stringify(input.command),
+            input.kind,
+            input.command ? JSON.stringify(input.command) : null,
+            input.image ?? null,
+            input.composeFile ?? null,
+            input.groupSlug ?? null,
             null,
+            input.pathToIcon ?? null,
             input.exposure ? JSON.stringify(input.exposure) : null,
             now,
             now
@@ -140,9 +156,14 @@ export const ProjectsRepoLive = Layer.effect(
           id: ProjectId.make(id),
           name: input.name,
           root: input.root,
+          kind: input.kind,
           command: input.command,
+          image: input.image,
+          composeFile: input.composeFile,
+          groupSlug: input.groupSlug,
           ports: input.ports,
           activeContextId: undefined,
+          pathToIcon: input.pathToIcon,
           exposure: input.exposure,
           createdAt: now,
           updatedAt: now
@@ -163,12 +184,30 @@ export const ProjectsRepoLive = Layer.effect(
         const name = patch.name ?? existing.name
         const root = patch.root ?? existing.root
         const command = patch.command ?? existing.command
+        const image = patch.image ?? existing.image
+        const composeFile = patch.composeFile ?? existing.composeFile
+        // undefined = keep, null = clear, value = set
+        const groupSlug =
+          patch.groupSlug === undefined ? (existing.groupSlug ?? null) : patch.groupSlug
+        const pathToIcon =
+          patch.pathToIcon === undefined ? (existing.pathToIcon ?? null) : patch.pathToIcon
         const exposure = patch.exposure !== undefined ? patch.exposure : existing.exposure
         const now = Date.now()
         yield* transaction((s) => {
           s.prepare(
-            "UPDATE projects SET name=?, root=?, command_json=?, exposure_json=?, updated_at=? WHERE id=?"
-          ).run(name, root, JSON.stringify(command), exposure ? JSON.stringify(exposure) : null, now, id)
+            "UPDATE projects SET name=?, root=?, command_json=?, image=?, compose_file=?, group_slug=?, path_to_icon=?, exposure_json=?, updated_at=? WHERE id=?"
+          ).run(
+            name,
+            root,
+            command ? JSON.stringify(command) : null,
+            image ?? null,
+            composeFile ?? null,
+            groupSlug,
+            pathToIcon,
+            exposure ? JSON.stringify(exposure) : null,
+            now,
+            id
+          )
           if (patch.ports) {
             s.prepare("DELETE FROM ports WHERE project_id=?").run(id)
             const ins = s.prepare(

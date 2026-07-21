@@ -1,0 +1,43 @@
+# Golden standard
+This is what we are aiming to achieve.
+
+- Timeouts
+- Retries
+- Rate limits
+- Telemetry
+- Analytics
+- Authn & Authz
+- Audit logs
+- Input validation & sanitisation
+- Idempotency (especially for writes)
+- Circuit breakers / bulkheads
+- Health checks & readiness probes
+- Structured logging with correlation/trace IDs
+- Error handling & standardised error responses
+- Configuration management (env-based, no secrets in code)
+- Secrets management & rotation
+- Encryption in transit (TLS) & at rest
+- Database migrations & schema versioning
+- DB queries and transactions
+- Pagination & query limits
+- Graceful degradation & fallbacks
+- Backups & disaster recovery
+- Caching (with proper invalidation)
+- Connection pooling
+- Async/background job processing
+- Dead-letter queues
+- API versioning
+- Feature flags
+- Monitoring, alerting & SLOs/SLIs
+- Distributed tracing
+- Metrics (RED/USE)
+- CI/CD with automated tests
+- Dependency scanning & vulnerability patching
+- CORS & security headers
+- CSRF/XSS/SQLi protections
+- Data retention & deletion policies (GDPR/CCPA)
+- PII handling & redaction in logs
+- Graceful shutdown / SIGTERM handling
+- Horizontal scalability & statelessness
+- Load testing & capacity planning
+- Documentation (API specs, runbooks)

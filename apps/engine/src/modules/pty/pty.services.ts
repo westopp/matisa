@@ -15,6 +15,7 @@ import {
   NotFound,
   SessionId,
   type EngineError,
+  type Project,
   type ProjectId,
   type PtyInputParams,
   type PtyOpenParams,
@@ -25,7 +26,6 @@ import { EnvRepo, ProjectsRepo } from "@matisa/store"
 import { SCROLLBACK_MAX_BYTES } from "../../config/config.constants.js"
 import { resolveEnv } from "../catalog/catalog.env-resolve.js"
 import { toEngineError } from "../../shared/error-map.js"
-import { Keychain } from "../catalog/providers/catalog.providers.keychain.types.js"
 import { Scrollback, type PtyFrame, type SessionEntry } from "./pty.session.js"
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -58,8 +58,21 @@ export interface AttachSnapshot {
   readonly take: Effect.Effect<PtyFrame>
 }
 
+export interface OpenSessionInput {
+  readonly project: Project
+  readonly sessionId: SessionId
+  /** Raw shell line run via $SHELL -c; omit for an interactive shell. */
+  readonly command?: string
+  readonly cols: number
+  readonly rows: number
+  /** Layered over the project's resolved env (command vars, etc). */
+  readonly extraEnv?: Record<string, string>
+}
+
 export interface PtyManagerShape {
   readonly open: (params: PtyOpenParams) => Effect.Effect<PtySession, EngineError>
+  /** Open a session with full control (id, extra env) — commands.run path. */
+  readonly openSession: (input: OpenSessionInput) => Effect.Effect<PtySession, EngineError>
   /** Register a session and wire its output into scrollback + hub. */
   readonly register: (input: RegisterInput) => Effect.Effect<void>
   /** Publish the exit frame and mark the session exited (scrollback kept). */
@@ -68,6 +81,10 @@ export interface PtyManagerShape {
   readonly attach: (sessionId: SessionId) => Effect.Effect<AttachSnapshot, EngineError, Scope.Scope>
   readonly input: (params: PtyInputParams) => Effect.Effect<void, EngineError>
   readonly resize: (params: PtyResizeParams) => Effect.Effect<void, EngineError>
+  /** Last lines of a session's decoded scrollback ("" if unknown session). */
+  readonly scrollbackTail: (sessionId: SessionId, maxLines: number) => Effect.Effect<string>
+  /** Live (non-exited) sessions whose id starts with `prefix`. */
+  readonly liveSessionCount: (prefix: string) => Effect.Effect<number>
 }
 
 export class PtyManager extends Context.Tag("PtyManager")<PtyManager, PtyManagerShape>() {}
@@ -78,7 +95,6 @@ const sessionNotFound = (sessionId: string): EngineError =>
 const make = Effect.gen(function* () {
   const projects = yield* ProjectsRepo
   const envRepo = yield* EnvRepo
-  const keychain = yield* Keychain
   const rt = yield* Effect.runtime<never>()
 
   const sessions = yield* SynchronizedRef.make(HashMap.empty<string, SessionEntry>())
@@ -149,29 +165,29 @@ const make = Effect.gen(function* () {
       return { entry, replay, take: sub.take }
     })
 
-  const open: PtyManagerShape["open"] = (params) =>
+  const openSession: PtyManagerShape["openSession"] = (input) =>
     Effect.gen(function* () {
-      const project = yield* projects.get(params.projectId).pipe(Effect.mapError(toEngineError))
-      const env = yield* resolveEnv(project, { envRepo, keychain }).pipe(
+      const project = input.project
+      const env = yield* resolveEnv(project, { envRepo }).pipe(
         Effect.catchAll(() => Effect.succeed({} as Record<string, string>))
       )
       const shell = process.env["SHELL"] ?? "/bin/zsh"
       const args: ReadonlyArray<string> =
-        params.command === undefined ? ["-i"] : ["-c", params.command]
+        input.command === undefined ? ["-i"] : ["-c", input.command]
 
       const child = yield* Effect.try({
         try: () =>
           pty.spawn(shell, [...args], {
             name: "xterm-256color",
-            cols: params.cols,
-            rows: params.rows,
+            cols: input.cols,
+            rows: input.rows,
             cwd: project.root,
-            env: { ...process.env, ...env } as Record<string, string>
+            env: { ...process.env, ...env, ...(input.extraEnv ?? {}) } as Record<string, string>
           }),
         catch: (cause) => new EngineInternal({ message: `pty spawn failed: ${String(cause)}` })
       })
 
-      const sessionId = SessionId.make(`sh:${project.id}:${child.pid}`)
+      const sessionId = input.sessionId
       // Listen BEFORE register — a `-c` one-liner can exit before registration
       // lands, and onExit fires only once. Buffer it and flush after register.
       let earlyExit: number | null | undefined
@@ -185,14 +201,49 @@ const make = Effect.gen(function* () {
         projectId: project.id,
         kind: "shell",
         pty: child,
-        cols: params.cols,
-        rows: params.rows
+        cols: input.cols,
+        rows: input.rows
       })
       registered = true
       if (earlyExit !== undefined) yield* sessionExited(sessionId, earlyExit)
 
-      return { sessionId, projectId: project.id, cols: params.cols, rows: params.rows }
+      return { sessionId, projectId: project.id, cols: input.cols, rows: input.rows }
     })
+
+  const open: PtyManagerShape["open"] = (params) =>
+    Effect.gen(function* () {
+      const project = yield* projects.get(params.projectId).pipe(Effect.mapError(toEngineError))
+      return yield* openSession({
+        project,
+        sessionId: SessionId.make(`sh:${project.id}:${Date.now() % 1_000_000}`),
+        command: params.command,
+        cols: params.cols,
+        rows: params.rows
+      })
+    })
+
+  const scrollbackTail: PtyManagerShape["scrollbackTail"] = (sessionId, maxLines) =>
+    Effect.gen(function* () {
+      const map = yield* SynchronizedRef.get(sessions)
+      const entry = HashMap.get(map, sessionId as string)
+      if (Option.isNone(entry)) return ""
+      const text = entry.value.scrollback
+        .snapshot()
+        .map((c) => Buffer.from(c.data, "base64").toString("utf8"))
+        .join("")
+      return text.split("\n").slice(-maxLines).join("\n")
+    })
+
+  const liveSessionCount: PtyManagerShape["liveSessionCount"] = (prefix) =>
+    SynchronizedRef.get(sessions).pipe(
+      Effect.map((map) => {
+        let n = 0
+        for (const [id, entry] of map) {
+          if (id.startsWith(prefix) && !entry.exited) n++
+        }
+        return n
+      })
+    )
 
   const input: PtyManagerShape["input"] = (params) =>
     Effect.gen(function* () {
@@ -221,7 +272,17 @@ const make = Effect.gen(function* () {
 
   yield* Effect.logInfo("pty module active (node-pty) — run + shell sessions, scrollback, live attach")
 
-  return PtyManager.of({ open, register, sessionExited, attach, input, resize })
+  return PtyManager.of({
+    open,
+    openSession,
+    register,
+    sessionExited,
+    attach,
+    input,
+    resize,
+    scrollbackTail,
+    liveSessionCount
+  })
 })
 
 export const PtyLive = Layer.effect(PtyManager, make)

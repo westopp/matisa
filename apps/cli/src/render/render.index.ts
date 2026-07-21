@@ -31,6 +31,8 @@ export interface RendererService {
   readonly status: (s: RuntimeStatus) => Effect.Effect<void>
   readonly event: (e: EngineEvent) => Effect.Effect<void>
   readonly cursor: (n: number) => Effect.Effect<void>
+  /** Generic sink: `value` for --json, `human` for the table mode. */
+  readonly raw: (value: unknown, human: string) => Effect.Effect<void>
 }
 
 export class Renderer extends Context.Tag("matisa-cli/Renderer")<
@@ -56,7 +58,8 @@ const make = Effect.gen(function* () {
     accepted: (a) => emit(a, T.acceptedLine(a)),
     status: (s) => emit(s, T.statusLine(s)),
     event: (e) => emit(e, formatEvent(e)),
-    cursor: (n) => emit({ nextCursor: n }, `next-cursor ${n}`)
+    cursor: (n) => emit({ nextCursor: n }, `next-cursor ${n}`),
+    raw: (value, human) => emit(value, human)
   })
 })
 

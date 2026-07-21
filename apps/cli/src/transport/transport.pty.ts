@@ -1,6 +1,6 @@
 import { Effect, Option, Queue, Stream } from "effect"
 import { ProjectId } from "@matisa/core"
-import type { SessionId } from "@matisa/core"
+import type { PtySession as PtySessionShape, SessionId } from "@matisa/core"
 import { EngineClient } from "./transport.client.js"
 import { call } from "./transport.control.js"
 import type { TransportError } from "./transport.errors.js"
@@ -87,33 +87,25 @@ const rawMode = Effect.acquireRelease(
     })
 )
 
-/** `sh <id>`: open an interactive session and bridge stdio until it ends. */
-export const open = (
-  projectId: string,
-  command: string | undefined,
-  cols: number,
-  rows: number
+/** Bridge ANY session-opening RPC into a full interactive terminal: raw mode,
+ * stdin→pty.input, pty.output→stdout, SIGWINCH→resize, ends on pty.exit.
+ * Subscribes BEFORE the RPC — the engine bridges the session onto this
+ * connection during the call, so frames can hit the wire ahead of the
+ * response; the queue buffers them until the sessionId is known. */
+export const interactiveSession = (
+  acquire: Effect.Effect<PtySessionShape, TransportError, EngineClient>
 ): Effect.Effect<void, TransportError, EngineClient> =>
   Effect.scoped(
     Effect.gen(function* () {
       const client = yield* EngineClient
 
-      // Subscribe BEFORE the RPC: the engine bridges the session onto this
-      // connection during the call, so scrollback/output frames can hit the
-      // wire ahead of the response. Buffer everything through a queue so
-      // nothing is dropped while we wait to learn the sessionId.
       const inbox = yield* Queue.unbounded<unknown>()
       yield* client.notifications.pipe(
         Stream.runForEach((frame) => Queue.offer(inbox, frame)),
         Effect.forkScoped
       )
 
-      const session = yield* call("pty.open", {
-        projectId: ProjectId.make(projectId),
-        command,
-        cols,
-        rows
-      })
+      const session = yield* acquire
 
       yield* rawMode
 
@@ -149,6 +141,28 @@ export const open = (
 
       yield* Effect.raceAll([toStdout, fromStdin, onResize])
     })
+  )
+
+/** `sh <id>`: open an interactive session and bridge stdio until it ends. */
+export const open = (
+  projectId: string,
+  command: string | undefined,
+  cols: number,
+  rows: number
+): Effect.Effect<void, TransportError, EngineClient> =>
+  interactiveSession(
+    call("pty.open", { projectId: ProjectId.make(projectId), command, cols, rows })
+  )
+
+/** `run <id> <name>`: run a named command as an interactive PTY session. */
+export const runCommand = (
+  projectId: string,
+  name: string,
+  cols: number,
+  rows: number
+): Effect.Effect<void, TransportError, EngineClient> =>
+  interactiveSession(
+    call("commands.run", { projectId: ProjectId.make(projectId), name, cols, rows })
   )
 
 /** `logs -f <id>`: attach to an existing session's live output stream. */
