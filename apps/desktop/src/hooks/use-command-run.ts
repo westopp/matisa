@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react"
 import type { ProjectId } from "@matisa/core"
-import { expectSelfBridged, sendInput, SIGINT_SEQUENCE } from "~/rpc/rpc.pty"
+import { closeSession, expectSelfBridged, sendInput, SIGINT_SEQUENCE } from "~/rpc/rpc.pty"
 import { useEngine } from "~/store/store.engine"
 import { commandPaneId, useTerminals } from "~/store/store.terminals"
 
@@ -22,6 +22,11 @@ export interface CommandRunner {
   readonly run: (name: string, command: string) => Promise<void>
   /** Ctrl-C, the same interrupt the pane's own stop button sends. */
   readonly stop: (name: string) => void
+  /** End it now: tear the session down rather than asking the process to leave.
+   *  The pane is marked exited here instead of waiting to be told, because
+   *  `pty.close` emits no `pty.exit` — there is nothing left to emit one — and a
+   *  pane that believed it was still running could never be closed. */
+  readonly kill: (name: string) => void
 }
 
 export const useCommandRunner = (projectId: ProjectId): CommandRunner => {
@@ -29,6 +34,7 @@ export const useCommandRunner = (projectId: ProjectId): CommandRunner => {
   const openPane = useTerminals((s) => s.openPane)
   const bindSession = useTerminals((s) => s.bindSession)
   const panes = useTerminals((s) => s.panes)
+  const markExited = useTerminals((s) => s.markExited)
   const [starting, setStarting] = useState<ReadonlyArray<string>>([])
 
   const statusOf = useCallback(
@@ -79,5 +85,15 @@ export const useCommandRunner = (projectId: ProjectId): CommandRunner => {
     [panes, projectId]
   )
 
-  return { statusOf, run, stop }
+  const kill = useCallback(
+    (name: string): void => {
+      const sessionId = panes[commandPaneId(projectId, name)]?.sessionId
+      if (sessionId == null) return
+      closeSession(sessionId)
+      markExited(sessionId, null)
+    },
+    [markExited, panes, projectId]
+  )
+
+  return { statusOf, run, stop, kill }
 }

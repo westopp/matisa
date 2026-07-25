@@ -1,22 +1,19 @@
 import { useEffect, useRef } from "react"
 import type { ProjectWithState } from "@matisa/core"
-import { useCommandRunner } from "~/hooks/use-command-run"
-import { useProjectCommands } from "~/hooks/use-project-commands"
 import { useEngine } from "~/store/store.engine"
-import {
-  collectPaneIds,
-  commandPaneId,
-  runPaneId,
-  useTerminals,
-  type LayoutNode
-} from "~/store/store.terminals"
+import { collectPaneIds, runPaneId, useTerminals, type LayoutNode } from "~/store/store.terminals"
 import { Icons } from "../icons"
 import { commandLine } from "../primitives"
+import { sweepHosts } from "./terminal.hosts"
 import { TerminalPane } from "./terminal.pane"
 
 // ────────────────────────────────────────────────────────────────────────────
-// The tiling shell: renders the split tree, hosts the divider drag, and owns
-// the "add terminal" affordance (named commands become panes on demand).
+// The tiling shell: renders the split tree and hosts the divider drag.
+//
+// There is deliberately no "open a terminal" control here. A terminal is the
+// VIEW of a running process, so the only way to get one is to run something —
+// the project itself, or a named command from the Commands card. A button that
+// conjured an empty terminal would be offering a window onto nothing.
 // ────────────────────────────────────────────────────────────────────────────
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
@@ -98,14 +95,13 @@ const RenderNode = ({
 }
 
 export const TerminalArea = ({ project, theme }: { project: ProjectWithState; theme: string }) => {
-  const layout = useTerminals((s) => s.layouts[project.id] ?? null)
+  const layouts = useTerminals((s) => s.layouts)
+  const layout = layouts[project.id] ?? null
   const panes = useTerminals((s) => s.panes)
   const fullscreen = useTerminals((s) => s.fullscreen)
   const openPane = useTerminals((s) => s.openPane)
 
-  const commands = useProjectCommands(project.id)
   const ensureRunSession = useEngine((s) => s.ensureRunSession)
-  const { run } = useCommandRunner(project.id)
 
   const shown = collectPaneIds(layout)
 
@@ -131,7 +127,15 @@ export const TerminalArea = ({ project, theme }: { project: ProjectWithState; th
     }
   }, [project.id, project.name, project.state, ensureRunSession, openPane])
 
-  const available = commands.filter((c) => !shown.includes(commandPaneId(project.id, c.name)))
+  // Surfaces outlive their components by design, so something has to decide when
+  // one is really finished. That is "no layout tiles this pane any more" —
+  // across every project, so switching projects keeps their terminals warm.
+  useEffect(() => {
+    const live = new Set<string>()
+    for (const l of Object.values(layouts)) for (const id of collectPaneIds(l ?? null)) live.add(id)
+    sweepHosts(live)
+  }, [layouts])
+
   const fullPane = fullscreen === null ? undefined : panes[fullscreen]
 
   return (
@@ -142,11 +146,6 @@ export const TerminalArea = ({ project, theme }: { project: ProjectWithState; th
         </span>
         <span className="term-bar-count">{shown.length} open</span>
         <span className="term-spacer" />
-        {available.map((c) => (
-          <button key={c.name} className="term-add" onClick={() => void run(c.name, c.command)} title={c.command}>
-            <Icons.Plus size={13} /> {c.name}
-          </button>
-        ))}
       </div>
 
       {layout === null ? (

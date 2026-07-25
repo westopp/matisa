@@ -20,6 +20,12 @@ export const chooseImageFile = async (defaultPath?: string): Promise<string | nu
   return result.path ?? null
 }
 
+/** Shows `path` in Finder, selected in its parent folder. The engine does the
+ *  opening — a browser tab cannot, and `file://` links are blocked outright. */
+export const revealPath = async (path: string): Promise<void> => {
+  await rpc.call("fs.reveal", { path })
+}
+
 /** Confirms `path` exists and is a readable directory. Gates hand-typed paths
  *  so a bad root fails here, in the field, instead of at spawn time. */
 export const checkDirectoryExists = async (path: string): Promise<{ ok: true } | { ok: false; message: string }> => {

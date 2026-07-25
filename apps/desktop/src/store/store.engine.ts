@@ -12,6 +12,8 @@ import {
   type EnvContext,
   type EnvSetParams,
   type Group,
+  type GroupSetParams,
+  type GroupSlug,
   type Health,
   type NamedCommand,
   type NewProject,
@@ -46,6 +48,77 @@ const decodeEvent = Schema.decodeUnknownOption(EngineEvent)
 export interface RunSession {
   readonly sessionId: SessionId
   readonly since?: number
+}
+
+// ── activity: the event stream, kept ──────────────────────────────────────────
+//
+// Every non-log event already patches the mirror and then evaporates; a toast
+// lasts seconds. The drawer's Activity tab is the history — "what did this
+// project do while I was in another file" — so the same events are also folded
+// into a ring buffer here. `log_line` is deliberately excluded: it is the one
+// high-frequency event, it has its own store, and a chatty container would
+// otherwise evict every transition worth reading.
+
+export type ActivityKind = "state" | "health" | "crash" | "exposure" | "catalog"
+
+export interface ActivityEntry {
+  /** The engine's cursor — monotonic and gap-free, so it doubles as the key. */
+  readonly seq: number
+  readonly ts: number
+  readonly projectId: ProjectId
+  readonly kind: ActivityKind
+  readonly label: string
+  readonly detail?: string
+}
+
+/** Bounded like the log buffer: a fixed memory cost regardless of uptime. */
+const MAX_ACTIVITY = 300
+
+/** How many failures the client keeps in memory. The engine holds the durable
+ *  history; this is the window the drawer reads. */
+const MAX_FAILURES = 50
+
+/** How far back to reach on connect so the tab is not empty on first open. The
+ *  window is in SEQ, and log lines share that space — hence a window much wider
+ *  than the number of entries it will actually yield. */
+const ACTIVITY_BACKFILL = 400
+
+const describeEvent = (event: EngineEvent): ActivityEntry | null => {
+  const base = { seq: event.seq, ts: event.ts, projectId: event.projectId }
+  switch (event.type) {
+    case "state_changed":
+      return {
+        ...base,
+        kind: "state",
+        label: `${event.payload.from} → ${event.payload.to}`,
+        ...(event.payload.reason !== undefined ? { detail: event.payload.reason } : {})
+      }
+    case "health_changed":
+      return {
+        ...base,
+        kind: "health",
+        label: `health ${event.payload.health}`,
+        ...(event.payload.message !== undefined ? { detail: event.payload.message } : {})
+      }
+    case "crashed":
+      return {
+        ...base,
+        kind: "crash",
+        label: `crashed (${event.payload.signal ?? event.payload.exitCode ?? "?"})`,
+        ...(event.payload.summary !== undefined ? { detail: event.payload.summary } : {})
+      }
+    case "exposure_changed":
+      return {
+        ...base,
+        kind: "exposure",
+        label: `exposure ${event.payload.exposure.enabled ? "up" : "down"}`,
+        detail: event.payload.exposure.url
+      }
+    case "catalog_changed":
+      return { ...base, kind: "catalog", label: `catalog ${event.payload.action}` }
+    case "log_line":
+      return null
+  }
 }
 
 /** Engine errors carry a stable code and a message written for a human. Show it
@@ -133,6 +206,8 @@ interface EngineState {
   commands: Record<string, ReadonlyArray<NamedCommand>>
   resources: Record<string, ResourceSample>
   failures: ReadonlyArray<CrashRecord>
+  /** Newest first. Fed by the live stream and backfilled once on connect. */
+  activity: ReadonlyArray<ActivityEntry>
   daemon: DaemonStatusResult
   engine: EngineStatus | null
   runSessions: Record<string, RunSession>
@@ -141,6 +216,10 @@ interface EngineState {
 
   markPending: (projectId: ProjectId, intent: Intent) => void
   clearPending: (projectId: ProjectId) => void
+  /** Prepend a failure to the drawer's list. The engine persists its own row for
+   *  each of these, so this is only about the live view — a bootstrap replaces
+   *  the list with the engine's durable history. */
+  recordFailure: (record: CrashRecord) => void
 
   // —— queries ——
   bootstrap: () => Promise<void>
@@ -154,10 +233,33 @@ interface EngineState {
   start: (projectId: ProjectId) => Promise<void>
   stop: (projectId: ProjectId) => Promise<void>
   restart: (projectId: ProjectId) => Promise<void>
+  /** Force down. Deliberately NOT marked pending: a kill is over by the time the
+   *  call returns, and a spinner would imply a transition to wait out — the
+   *  thing the user reached for kill to escape. */
+  kill: (projectId: ProjectId) => Promise<void>
   startDaemon: () => Promise<void>
+  stopDaemon: () => Promise<void>
+  /** Ask the engine to shut itself down. Nothing in this client can start it
+   *  again — that lives in the desktop shell — so callers must confirm first. */
+  shutdownEngine: () => Promise<void>
   addProject: (project: NewProject) => Promise<boolean>
   updateProject: (projectId: ProjectId, patch: ProjectPatch) => Promise<boolean>
+  removeProject: (projectId: ProjectId) => Promise<boolean>
+  setGroup: (params: GroupSetParams) => Promise<boolean>
+  removeGroup: (slug: GroupSlug) => Promise<boolean>
+  /** Historical tail, straight from the source (docker's log store, or the run
+   *  session's scrollback). Distinct from the live `log_line` ring buffer,
+   *  which only ever holds what arrived while this client was watching. */
+  tailLogs: (projectId: ProjectId, lines: number) => Promise<ReadonlyArray<string>>
   setEnvVar: (params: EnvSetParams) => Promise<boolean>
+  unsetEnvVar: (contextId: ContextId, key: string) => Promise<boolean>
+  /** Apply a whole notepad edit in one shot: upsert the changed lines, delete the
+   *  removed keys, resync once. */
+  applyEnvVars: (
+    contextId: ContextId,
+    upserts: ReadonlyArray<{ key: string; value: string; secret: boolean }>,
+    removals: ReadonlyArray<string>
+  ) => Promise<boolean>
   activateContext: (projectId: ProjectId, contextId: ContextId) => Promise<void>
   createContext: (name: string) => Promise<EnvContext | null>
   renameContext: (contextId: ContextId, name: string) => Promise<boolean>
@@ -177,6 +279,7 @@ export const useEngine = create<EngineState>()((set, get) => ({
   commands: {},
   resources: {},
   failures: [],
+  activity: [],
   daemon: { state: "unknown" },
   engine: null,
   runSessions: {},
@@ -188,6 +291,28 @@ export const useEngine = create<EngineState>()((set, get) => ({
       if (get().pending[projectId] === intent) get().clearPending(projectId)
     }, PENDING_MAX_MS)
   },
+
+  recordFailure: (record) =>
+    set((s) => {
+      // A retry loop produces the SAME failure over and over — same project,
+      // same exit, same summary — and listing each attempt separately turns one
+      // problem into five entries that push everything else out of a bounded
+      // list. Consecutive repeats fold into the newest, which keeps the most
+      // recent timestamp; a different failure still lands as its own row.
+      const head = s.failures[0]
+      const repeat =
+        head !== undefined &&
+        head.projectId === record.projectId &&
+        head.kind === record.kind &&
+        head.summary === record.summary &&
+        head.exitCode === record.exitCode &&
+        head.signal === record.signal
+      return {
+        failures: repeat
+          ? [record, ...s.failures.slice(1)]
+          : [record, ...s.failures].slice(0, MAX_FAILURES)
+      }
+    }),
 
   clearPending: (projectId) =>
     set((s) => {
@@ -201,7 +326,7 @@ export const useEngine = create<EngineState>()((set, get) => ({
 
   bootstrap: async () => {
     // Subscribe FIRST so nothing that happens during the snapshot is missed.
-    await rpc.call("events.subscribe", {})
+    const { cursor } = await rpc.call("events.subscribe", {})
     await Promise.all([
       get().refreshCatalog(),
       get().refreshContexts(),
@@ -209,7 +334,25 @@ export const useEngine = create<EngineState>()((set, get) => ({
       rpc.call("groups.list", undefined).then((groups) => set({ groups })),
       rpc.call("engine.status", undefined).then((engine) => set({ engine })),
       rpc.call("docker.daemon.status", undefined).then((daemon) => set({ daemon })),
-      rpc.call("lifecycle.failures", { limit: 20 }).then((failures) => set({ failures }))
+      rpc.call("lifecycle.failures", { limit: 20 }).then((failures) => set({ failures })),
+      // History, not liveness: the live subscription starts at `cursor`, so this
+      // reaches BACK of it. A pull that fails costs the Activity tab its
+      // backfill and nothing else — never the whole handshake.
+      rpc
+        .call("events.pull", { since: Math.max(0, cursor - ACTIVITY_BACKFILL), limit: ACTIVITY_BACKFILL })
+        .then(({ events }) => {
+          const past = events
+            .map(describeEvent)
+            .filter((e): e is ActivityEntry => e !== null)
+            .reverse()
+          // Live events may already have landed during the pull; `seq` is the
+          // engine's own cursor, so a dedupe on it is exact.
+          set((s) => {
+            const seen = new Set(s.activity.map((e) => e.seq))
+            return { activity: [...s.activity, ...past.filter((e) => !seen.has(e.seq))].slice(0, MAX_ACTIVITY) }
+          })
+        })
+        .catch(() => {})
     ])
   },
 
@@ -250,7 +393,18 @@ export const useEngine = create<EngineState>()((set, get) => ({
       // banner reflects reality and the user can start it from the UI.
       if (codeOf(cause) === "E_DOCKER_DAEMON_REQUIRED") {
         set({ daemon: await rpc.call("docker.daemon.status", undefined) })
+        return
       }
+      // Anything else (a held port, a project the engine will not manage) is a
+      // refusal with no state change behind it: no `errored`, no `crashed`, so
+      // the toast was the only record. Log it as a failure too — dismissing a
+      // toast should not erase the reason a start did nothing.
+      get().recordFailure({
+        projectId,
+        ts: Date.now(),
+        kind: "error",
+        summary: describe(cause).title
+      })
     }
   },
 
@@ -271,6 +425,25 @@ export const useEngine = create<EngineState>()((set, get) => ({
     } catch (cause) {
       get().clearPending(projectId)
       reportError(cause, "could not restart")
+      get().recordFailure({
+        projectId,
+        ts: Date.now(),
+        kind: "error",
+        summary: describe(cause).title
+      })
+    }
+  },
+
+  kill: async (projectId) => {
+    try {
+      await rpc.call("lifecycle.kill", { id: projectId })
+      // Whatever was in flight is moot — the process is gone. Clearing the
+      // optimistic flag is what releases a Stop button that has been spinning
+      // against a drain that was never going to finish.
+      get().clearPending(projectId)
+      await get().refreshCatalog()
+    } catch (cause) {
+      reportError(cause, "could not kill")
     }
   },
 
@@ -282,6 +455,26 @@ export const useEngine = create<EngineState>()((set, get) => ({
       const { title } = describe(cause)
       set({ daemon: { state: "start_failed", message: title } })
       reportError(cause, "could not start Docker")
+    }
+  },
+
+  stopDaemon: async () => {
+    try {
+      set({ daemon: await rpc.call("docker.daemon.stop", undefined) })
+    } catch (cause) {
+      reportError(cause, "could not stop Docker")
+      set({ daemon: await rpc.call("docker.daemon.status", undefined).catch(() => get().daemon) })
+    }
+  },
+
+  shutdownEngine: async () => {
+    try {
+      await rpc.call("engine.shutdown", undefined)
+      // No optimistic state change: the socket closing IS the confirmation, and
+      // it drives `status` through the same path as any other disconnect.
+      toast.success("Engine shutting down")
+    } catch (cause) {
+      reportError(cause, "could not shut down the engine")
     }
   },
 
@@ -309,6 +502,62 @@ export const useEngine = create<EngineState>()((set, get) => ({
     }
   },
 
+  removeProject: async (projectId) => {
+    const name = get().projects.find((p) => p.id === projectId)?.name ?? "project"
+    try {
+      await rpc.call("catalog.remove", { id: projectId })
+      await get().refreshCatalog()
+      toast.success(`Removed ${name}`)
+      return true
+    } catch (cause) {
+      reportError(cause, "could not remove project")
+      return false
+    }
+  },
+
+  setGroup: async (params) => {
+    try {
+      await rpc.call("groups.set", params)
+      set({ groups: await rpc.call("groups.list", undefined) })
+      return true
+    } catch (cause) {
+      reportError(cause, "could not save group")
+      return false
+    }
+  },
+
+  removeGroup: async (slug) => {
+    try {
+      // Ungroup the members FIRST. `groups.remove` drops the group row and
+      // nothing else, so a project left pointing at a dead slug would reappear
+      // in the tree under the raw slug as its own heading — the sidebar's
+      // orphan handling exists for stale data, not as a resting state.
+      const members = get().projects.filter((p) => p.groupSlug === slug)
+      for (const p of members) {
+        await rpc.call("catalog.update", { id: p.id, patch: { groupSlug: null } })
+      }
+      await rpc.call("groups.remove", { slug })
+      await Promise.all([
+        rpc.call("groups.list", undefined).then((groups) => set({ groups })),
+        get().refreshCatalog()
+      ])
+      return true
+    } catch (cause) {
+      reportError(cause, "could not remove group")
+      return false
+    }
+  },
+
+  tailLogs: async (projectId, lines) => {
+    try {
+      const result = await rpc.call("logs.tail", { projectId, lines })
+      return result.lines
+    } catch (cause) {
+      reportError(cause, "could not read logs")
+      return []
+    }
+  },
+
   setEnvVar: async (params) => {
     try {
       await rpc.call("env.set", params)
@@ -316,6 +565,32 @@ export const useEngine = create<EngineState>()((set, get) => ({
       return true
     } catch (cause) {
       reportError(cause, "could not set variable")
+      return false
+    }
+  },
+
+  unsetEnvVar: async (contextId, key) => {
+    try {
+      await rpc.call("env.unset", { contextId, key })
+      await get().refreshContexts()
+      return true
+    } catch (cause) {
+      reportError(cause, "could not remove variable")
+      return false
+    }
+  },
+
+  applyEnvVars: async (contextId, upserts, removals) => {
+    if (upserts.length === 0 && removals.length === 0) return true
+    try {
+      for (const u of upserts) {
+        await rpc.call("env.set", { contextId, key: u.key, value: u.value, secret: u.secret })
+      }
+      for (const key of removals) await rpc.call("env.unset", { contextId, key })
+      await get().refreshContexts()
+      return true
+    } catch (cause) {
+      reportError(cause, "could not save environment")
       return false
     }
   },
@@ -400,6 +675,9 @@ export const useEngine = create<EngineState>()((set, get) => ({
     if (decoded._tag === "None") return
     const event = decoded.value
 
+    const entry = describeEvent(event)
+    if (entry !== null) set((s) => ({ activity: [entry, ...s.activity].slice(0, MAX_ACTIVITY) }))
+
     const patch = (projectId: ProjectId, f: (p: ProjectWithState) => ProjectWithState): void =>
       set((s) => ({ projects: s.projects.map((p) => (p.id === projectId ? f(p) : p)) }))
 
@@ -407,6 +685,18 @@ export const useEngine = create<EngineState>()((set, get) => ({
       case "state_changed": {
         const to: RuntimeState = event.payload.to
         patch(event.projectId, (p) => ({ ...p, state: to }))
+
+        // `errored` is a failure the engine could not recover from — the FSM
+        // says so but emits no `crashed` event, so without this the Failures
+        // tab would stay empty while the project sits there red.
+        if (to === "errored") {
+          get().recordFailure({
+            projectId: event.projectId,
+            ts: event.ts,
+            kind: "error",
+            ...(event.payload.reason !== undefined ? { summary: event.payload.reason } : {})
+          })
+        }
 
         // Hand off from optimistic pending to engine-reported truth. From here
         // `starting`/`stopping` carry the loading state on their own, so the
@@ -429,16 +719,18 @@ export const useEngine = create<EngineState>()((set, get) => ({
         const record: CrashRecord = {
           projectId: event.projectId,
           ts: event.ts,
+          kind: "crash",
           exitCode: event.payload.exitCode,
           signal: event.payload.signal,
           summary: event.payload.summary,
           logTail: event.payload.logTail
         }
-        set((s) => ({ failures: [record, ...s.failures].slice(0, 50) }))
-        const name = get().projects.find((p) => p.id === event.projectId)?.name ?? "project"
-        toast.error(`${name}: ${event.payload.summary ?? "exited unexpectedly"}`, {
-          description: event.payload.logTail
-        })
+        // No toast. The engine restarts a crashed project on a backoff curve —
+        // five attempts, five `crashed` events — so a toast per crash means a
+        // stack of five identical popups for ONE failure the user can already
+        // see in the status. The record below is the durable account of it; the
+        // Failures tab is where you go to read it.
+        get().recordFailure(record)
         break
       }
       case "catalog_changed": {

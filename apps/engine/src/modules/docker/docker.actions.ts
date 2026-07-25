@@ -1,5 +1,6 @@
 import { Effect } from "effect"
 import { dirname } from "node:path"
+import { DOCKER_STOP_GRACE_S } from "../../config/config.constants.js"
 import type { DockerCliError } from "./docker.errors.js"
 import { sh } from "./docker.shell.js"
 
@@ -91,8 +92,35 @@ export const composeLogTail = (file: string, lines: number): Effect.Effect<strin
     Effect.catchAll(() => Effect.succeed(""))
   )
 
+// ── teardown ────────────────────────────────────────────────────────────────
+//
+// `docker stop` is itself graceful: SIGTERM, then the daemon's own SIGKILL
+// after -t seconds. The CLI timeout must therefore sit ABOVE that grace, or it
+// kills the client mid-stop and we report a container down that is still up.
+// Both paths escalate rather than give up: a stop that fails or overruns is
+// followed by a kill, because the alternative is state that lies.
+
+const STOP_CLI_TIMEOUT_MS = (DOCKER_STOP_GRACE_S + 20) * 1_000
+
 export const inlineStop = (projectName: string): Effect.Effect<void, DockerCliError> =>
-  sh(DOCKER, ["stop", containerName(projectName)], { timeoutMs: 60_000 }).pipe(Effect.asVoid)
+  sh(DOCKER, ["stop", "-t", String(DOCKER_STOP_GRACE_S), containerName(projectName)], {
+    timeoutMs: STOP_CLI_TIMEOUT_MS
+  }).pipe(Effect.asVoid)
+
+/** Stop the container, or kill it. Fails only if BOTH refuse — and then it says
+ *  so, rather than being swallowed into a confident `idle`. */
+export const inlineStopHard = (projectName: string): Effect.Effect<void, DockerCliError> =>
+  inlineStop(projectName).pipe(
+    Effect.catchTag("DockerCliError", (e) =>
+      Effect.logWarning(
+        `docker stop ${containerName(projectName)} failed (${e.stderrTail || "timed out"}) — escalating to kill`
+      ).pipe(
+        Effect.andThen(
+          sh(DOCKER, ["kill", containerName(projectName)], { timeoutMs: 20_000 }).pipe(Effect.asVoid)
+        )
+      )
+    )
+  )
 
 export const inlineRemove = (projectName: string): Effect.Effect<void, DockerCliError> =>
   sh(DOCKER, ["rm", "-f", containerName(projectName)], { timeoutMs: 60_000 }).pipe(Effect.asVoid)
@@ -105,6 +133,31 @@ export const composeUp = (file: string): Effect.Effect<void, DockerCliError> =>
   )
 
 export const composeDown = (file: string): Effect.Effect<void, DockerCliError> =>
-  sh(DOCKER, ["compose", "-f", file, "down"], { cwd: dirname(file), timeoutMs: 120_000 }).pipe(
-    Effect.asVoid
+  sh(DOCKER, ["compose", "-f", file, "down", "-t", String(DOCKER_STOP_GRACE_S)], {
+    cwd: dirname(file),
+    timeoutMs: 300_000
+  }).pipe(Effect.asVoid)
+
+/** Take the stack down, or tear it down. A big stack can legitimately outrun a
+ *  graceful `down`; killing first makes the second attempt bounded and certain,
+ *  so the engine never reports a stack stopped while containers are still up. */
+export const composeDownHard = (file: string): Effect.Effect<void, DockerCliError> =>
+  composeDown(file).pipe(
+    Effect.catchTag("DockerCliError", (e) =>
+      Effect.logWarning(
+        `docker compose down (${file}) failed (${e.stderrTail || "timed out"}) — escalating to kill`
+      ).pipe(
+        Effect.andThen(
+          sh(DOCKER, ["compose", "-f", file, "kill"], { cwd: dirname(file), timeoutMs: 60_000 }).pipe(
+            Effect.catchAll(() => Effect.void)
+          )
+        ),
+        Effect.andThen(
+          sh(DOCKER, ["compose", "-f", file, "down", "-t", "0"], {
+            cwd: dirname(file),
+            timeoutMs: 60_000
+          }).pipe(Effect.asVoid)
+        )
+      )
+    )
   )

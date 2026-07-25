@@ -21,6 +21,7 @@ import {
   type ProjectWithState,
   type PtySession,
   type EnvSetParams,
+  type EnvUnsetParams,
   type EnvUseParams
 } from "@matisa/core"
 import {
@@ -50,6 +51,7 @@ export interface CatalogShape {
   readonly update: (id: ProjectId, patch: ProjectPatch) => Effect.Effect<Project, EngineError>
   readonly remove: (id: ProjectId) => Effect.Effect<void, EngineError>
   readonly envSet: (params: EnvSetParams) => Effect.Effect<EnvContext, EngineError>
+  readonly envUnset: (params: EnvUnsetParams) => Effect.Effect<EnvContext, EngineError>
   readonly envList: () => Effect.Effect<ReadonlyArray<EnvContext>, EngineError>
   readonly envUse: (params: EnvUseParams) => Effect.Effect<ProjectWithState, EngineError>
   readonly envCreate: (params: EnvCreateParams) => Effect.Effect<EnvContext, EngineError>
@@ -115,6 +117,9 @@ const make = Effect.gen(function* () {
         var: { key: params.key, value: params.value, secret: params.secret ?? false }
       })
       .pipe(Effect.mapError(toEngineError))
+
+  const envUnset: CatalogShape["envUnset"] = (params) =>
+    env.unsetVar(params.contextId, params.key).pipe(Effect.mapError(toEngineError))
 
   const envList: CatalogShape["envList"] = () => env.list().pipe(Effect.mapError(toEngineError))
 
@@ -231,6 +236,7 @@ const make = Effect.gen(function* () {
     update,
     remove,
     envSet,
+    envUnset,
     envList,
     envUse,
     envCreate,

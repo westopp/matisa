@@ -414,10 +414,16 @@ button {
   display: flex;
   min-height: 0;
   overflow: hidden;
+  /* Containing block for the inspector drawer, which overlays this row. */
+  position: relative;
 }
+/* 360, not the 320 this used to be. The project card carries four readings and
+   three controls on one line; at 320 the last chip — the environment — fell off
+   the end of the strip on any project that was running with a port. The width
+   is what the card costs. */
 .sidebar-slot {
   flex-shrink: 0;
-  width: 320px;
+  width: 360px;
   overflow: hidden;
   transition: width 0.24s cubic-bezier(0.65, 0.05, 0.36, 1);
 }
@@ -425,12 +431,268 @@ button {
   width: 0;
 }
 .sidebar-slot .sidebar {
-  width: 320px;
+  width: 360px;
 }
 .ico-btn.active {
   background: var(--card-bg);
   color: var(--text);
   border-color: var(--border-soft);
+}
+/* Unread marker on a chrome button — a dot, because the count is one tap away
+   and a numeral in the titlebar reads as noise. */
+.ico-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--titlebar-bg);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Inspector drawer
+
+   Overlays the content instead of docking beside it: everything in it is
+   consulted and dismissed, so it must cost the terminals no width. Closed it
+   is translated out AND made `visibility: hidden`, which is what takes its
+   controls out of the tab order — a transform alone would leave them
+   focusable off-screen.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  width: 460px;
+  max-width: 80%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--sidebar-bg);
+  border-left: 1px solid var(--border-soft);
+  box-shadow: var(--shadow-pop);
+  transform: translateX(100%);
+  visibility: hidden;
+  transition:
+    transform 0.24s cubic-bezier(0.65, 0.05, 0.36, 1),
+    visibility 0.24s;
+}
+.drawer.open {
+  transform: none;
+  visibility: visible;
+}
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--titlebar-bg);
+}
+.drawer-scope {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.scope-btn {
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  transition: all 0.12s;
+}
+.scope-btn:hover {
+  color: var(--text);
+}
+.scope-btn.active {
+  background: var(--card-bg);
+  border-color: var(--border-soft);
+  color: var(--text);
+}
+.drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* The logs tab manages its own scroll and fills the height; a table tab
+     scrolls here. `grid` gives the child the full box either way. */
+  display: grid;
+  align-content: start;
+}
+/* The logs tab owns the whole box and scrolls inside itself, so the body stops
+   being a scroll container and becomes a plain column for it to fill. */
+.drawer-body:has(.logs-tab) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* Fixed layout, because the drawer is narrow and a crash summary is arbitrary
+   text: left to size itself the table would push the "why" column past the
+   drawer's own edge. The header widths become the contract, and everything
+   long wraps or clips inside it. */
+.drawer-body .tbl {
+  table-layout: fixed;
+}
+/* Failure and activity rows carry a second line; top-aligning keeps the
+   timestamp on the same baseline as the first line of the reason. */
+.drawer-body .tbl td {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.drawer-body .log-tail {
+  word-break: break-word;
+  max-height: 180px;
+  margin: 0;
+}
+
+/* ---- failure output: opt-in, full-bleed ---- */
+
+/* Collapsed by default. A failure list is scanned for WHICH run died; the
+   output is the second question, and only ever about one of them.
+
+   The disclosure leads the row rather than trailing the summary: it is the
+   control the eye looks for first, and a row's affordance belongs at its
+   start, not buried under wrapped prose three columns in. */
+.drawer-body .tbl td.details-cell {
+  padding: 8px 0 8px 6px;
+}
+.details-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-faint);
+  transition: all 0.12s;
+}
+.details-btn:hover {
+  color: var(--text);
+  background: var(--card-bg);
+}
+.details-btn.open {
+  color: var(--text);
+}
+.details-btn svg {
+  transition: transform 0.14s;
+}
+.details-btn.open svg {
+  transform: rotate(90deg);
+}
+.drawer-body .tbl tr.row-open td {
+  border-bottom: 0;
+}
+/* An engine error in the Exit column: a word, not a number, so it is set apart
+   from the exit codes it sits among rather than reading as one. */
+.failure-kind {
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--danger);
+  border: 1px solid var(--danger-soft);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+/* The output row spans every column, so the trace gets the drawer's full width
+   instead of what the "why" column leaves over. */
+.drawer-body .tbl tr.failure-details td {
+  padding: 0 10px 10px;
+  background: var(--card-bg-hover);
+}
+.detail-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-bottom: 4px;
+}
+.detail-label {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+/* The modal is the "read it properly" view: no height cap beyond the viewport,
+   and the whole tail selectable in one go. */
+.failure-summary {
+  font-size: 12.5px;
+  color: var(--text);
+}
+/* ---- logs tab ---- */
+.logs-tab {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  padding: 8px 10px 10px;
+}
+.logs-tab .detail-bar {
+  padding-bottom: 6px;
+}
+/* The tail fills the drawer and scrolls inside it — the drawer body must not
+   grow a second scrollbar around a pane that already has one. Scoped under
+   .logs-tab to outrank `.log-full`'s modal-sized 60vh cap, which is defined
+   later in this file. */
+.logs-tab .drawer-log {
+  flex: 1;
+  max-height: none;
+  min-height: 0;
+}
+
+.log-full {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  background: var(--input-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 60vh;
+  overflow: auto;
+  user-select: text;
+}
+.drawer-body .tbl th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--sidebar-bg);
+}
+.activity-label {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.activity-label.accent {
+  color: var(--accent);
+}
+.activity-label.warn {
+  color: var(--warning);
+}
+.activity-label.danger {
+  color: var(--danger);
+}
+.activity-detail {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -438,7 +700,7 @@ button {
    ══════════════════════════════════════════════════════════════════════════ */
 
 .sidebar {
-  width: 320px;
+  width: 360px;
   flex-shrink: 0;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--border-soft);
@@ -481,6 +743,7 @@ button {
 }
 
 .ico-btn {
+  position: relative;
   width: 28px;
   height: 28px;
   border-radius: 7px;
@@ -572,18 +835,11 @@ button {
 }
 
 /* A group and its projects are ONE container: the projects sit inside the
-   parent, indented, and hovering anywhere lifts the whole block. */
+   parent, indented. The container itself does not react to hover — the row
+   under the pointer does, and that is the only thing being pointed at. */
 .section {
   margin: 2px 0;
-  border: 1px solid transparent;
   border-radius: 10px;
-  transition:
-    background 0.14s,
-    border-color 0.14s;
-}
-.section:hover {
-  background: var(--card-bg);
-  border-color: var(--border-soft);
 }
 .section.muted .section-head {
   opacity: 0.65;
@@ -639,9 +895,31 @@ button {
 }
 .section-tools {
   display: inline-flex;
+  align-items: center;
   gap: 2px;
   opacity: 0;
   transition: opacity 0.12s;
+}
+/* Rename/delete sit behind the run controls and stay quieter: destructive
+   actions should not compete with the button you came here to press. */
+.section-edit {
+  display: inline-flex;
+  gap: 1px;
+  margin-right: 4px;
+  opacity: 0.75;
+}
+.section-edit:hover {
+  opacity: 1;
+}
+/* Systems rows carry the same trailing action slot as a project row. */
+/* Always shown, like a project's. These used to appear on hover only, which
+   made a system read as a lesser thing than a project — it is not: Docker being
+   down stops containers exactly the way a stopped project stops. */
+.sys-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
 }
 .section:hover .section-tools {
   opacity: 1;
@@ -669,9 +947,9 @@ button {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  padding: 9px 10px 9px 12px;
+  padding: 8px 8px 8px 10px;
   background: var(--card-bg);
   border: 1px solid var(--border-soft);
   border-radius: 10px;
@@ -702,8 +980,8 @@ button {
   border-radius: 2px;
 }
 .svc-icon {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: 7px;
   background: var(--accent-tint);
   border: 1px solid var(--accent-tint-bot);
@@ -739,25 +1017,480 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* A single row of chips that never wraps: every card is one height, so a list
+   of them scans as a column rather than a ragged stack. A running project with
+   a port, resources and an environment can outrun 320px of sidebar — the strip
+   scrolls (same contract as the environment pills) rather than clipping the
+   environment off the end. */
 .svc-meta {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
   font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--text-muted);
 }
+.svc-meta::-webkit-scrollbar {
+  display: none;
+}
+.svc-meta > * {
+  flex-shrink: 0;
+}
 .svc-port {
   color: var(--text-muted);
 }
-.svc-stat {
+
+/* ── Running-man status glyph (beside the port) ──────────────────────────────
+   A nested pivot rig, CSS TRANSFORMS ONLY (rotations + the bob translate):
+   the thigh group swings about the hip with the shin group nested inside
+   bending about the knee — same for upper arm / forearm — so joints flex
+   through strike → stance → toe-off → fold → drive → reach. `d` morphs are
+   off the table (WebKit has no CSS `d`; Blink parses SMIL `d` values AS CSS),
+   but rotations animate in every engine this app can meet.
+
+   Geometry is authored hanging straight down; the BASE transforms below pose
+   the strike frame (far side: the half-stride fold), so a runner with
+   animations off — reduced motion — still stands mid-stride, not at
+   attention. The far side plays the same keyframes offset -0.35s (half the
+   0.7s stride), which is what keeps arms and legs in strict anti-phase.
+   Inner angles are relative to the parent group: the knee bend rides the
+   thigh's swing. transform-box: view-box resolves the pivot origins in
+   viewBox units at any rendered size. */
+/* ── Failure glyph + its reason tip ──────────────────────────────────────────
+   The triangle replaces the dot for `crashed` / `errored`, so broken is a
+   different SHAPE from stopped rather than a different shade of the same one.
+
+   The tip is CSS-only (hover/focus on the button reveals it) rather than a
+   positioned popover: the rows it lives in scroll, and a portalled tip would
+   have to track them. It is deliberately allowed to overflow the sidebar —
+   `.svc-meta` and friends do not clip — because a truncated reason would defeat
+   the point of showing it without a click. */
+.failure-mark {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--danger);
+  flex-shrink: 0;
+}
+button.failure-mark {
+  cursor: pointer;
+}
+.failure-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* A failure is the one thing in a quiet list that should catch the eye — but
+   twice, then still, rather than a pulse that never stops nagging. */
+.failure-glyph > svg {
+  animation: failureAlert 2.4s ease-out 2;
+}
+@keyframes failureAlert {
+  0%, 70%, 100% { transform: scale(1); }
+  76%           { transform: scale(1.22); }
+  84%           { transform: scale(0.96); }
+}
+button.failure-mark:hover .failure-glyph,
+button.failure-mark:focus-visible .failure-glyph {
+  filter: brightness(1.15);
+}
+.failure-tip {
+  /* Fixed, and placed from a measured rect — see the note in primitives.tsx. */
+  position: fixed;
+  z-index: 60;
+  width: max-content;
+  max-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: var(--tip-bg, var(--card-bg-hover));
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 22px rgb(0 0 0 / 0.32);
+  text-align: left;
+  /* Hoverable, so the reason can be read at leisure and selected to copy. The
+     tip is a DOM child of the button, so the pointer moving onto it never
+     counts as leaving the button. */
+  pointer-events: auto;
+  user-select: text;
+  /* Hidden until the measured pass has corrected the placement — otherwise the
+     first frame paints it off the window edge and it visibly jumps. */
+  visibility: hidden;
+}
+.failure-tip.settled {
+  visibility: visible;
+  animation: tipIn 0.1s ease-out;
+}
+/* `top` is the glyph's edge either way, so each placement pulls itself back
+   past that edge rather than the caller doing the arithmetic. */
+.failure-tip.above {
+  transform: translate(-50%, -100%);
+}
+.failure-tip.below {
+  transform: translate(-50%, 0);
+}
+/* The visual gap is bridged by a transparent strip belonging to the tip. Cross
+   a plain gap and the pointer is over the row underneath — not a descendant of
+   the button — which fires mouseleave and closes the tip before it can be
+   read. This strip means the pointer never leaves. */
+.failure-tip::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 10px;
+}
+.failure-tip.above::after {
+  top: 100%;
+}
+.failure-tip.below::after {
+  bottom: 100%;
+}
+@keyframes tipIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.failure-tip-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--danger);
+}
+.failure-tip-exit {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.failure-tip-body {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text);
+  /* Three lines of the summary, then an ellipsis — the drawer holds the rest. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.failure-tip-more {
+  font-size: 9.5px;
   color: var(--text-faint);
 }
-.dot-sep {
-  opacity: 0.5;
+@media (prefers-reduced-motion: reduce) {
+  .failure-glyph > svg {
+    animation: none;
+  }
 }
+
+/* Both figures — runner and walker — share this canvas. */
+.figure {
+  display: block;
+  overflow: visible;
+  flex-shrink: 0;
+}
+/* Stopping walks back out the way it came. Mirroring the whole figure (rather
+   than reversing the gait, which moonwalks) keeps the stride natural. */
+.figure-rev {
+  transform: scaleX(-1);
+}
+.runner-thigh,
+.runner-shin,
+.runner-uarm,
+.runner-fore {
+  transform-box: view-box;
+}
+.runner-thigh {
+  transform-origin: 11px 13.4px;
+  transform: rotate(-38deg);
+  animation: runThigh 0.7s linear infinite;
+}
+.runner-shin {
+  transform-origin: 11px 17.7px;
+  transform: rotate(25deg);
+  animation: runShin 0.7s linear infinite;
+}
+.runner-uarm {
+  transform-origin: 13.3px 7.6px;
+  transform: rotate(45deg);
+  animation: runUarm 0.7s linear infinite;
+}
+.runner-fore {
+  transform-origin: 13.3px 11px;
+  transform: rotate(-75deg);
+  animation: runFore 0.7s linear infinite;
+}
+.runner-far .runner-thigh {
+  transform: rotate(18deg);
+  animation-delay: -0.35s;
+}
+.runner-far .runner-shin {
+  transform: rotate(105deg);
+  animation-delay: -0.35s;
+}
+.runner-far .runner-uarm {
+  transform: rotate(-40deg);
+  animation-delay: -0.35s;
+}
+.runner-far .runner-fore {
+  transform: rotate(-90deg);
+  animation-delay: -0.35s;
+}
+/* Two bobs per stride — the body rides lowest in stance, lifts in flight. */
+.runner-bob {
+  animation: runGaitBob 0.7s linear infinite;
+}
+/* Negative = limb swung forward (the figure faces +x). */
+@keyframes runThigh {
+  0%      { transform: rotate(-38deg); } /* strike — reaching for the ground */
+  16.67%  { transform: rotate(-8deg); }  /* stance — under the body */
+  33.33%  { transform: rotate(22deg); }  /* toe-off — pushing behind */
+  50%     { transform: rotate(18deg); }  /* fold — heel toward the glute */
+  66.67%  { transform: rotate(-15deg); } /* drive — knee through */
+  83.33%  { transform: rotate(-42deg); } /* reach — unfolding to strike */
+  100%    { transform: rotate(-38deg); }
+}
+@keyframes runShin {
+  0%      { transform: rotate(25deg); }  /* near-straight at strike */
+  16.67%  { transform: rotate(30deg); }
+  33.33%  { transform: rotate(35deg); }
+  50%     { transform: rotate(105deg); } /* deep knee bend in the fold */
+  66.67%  { transform: rotate(115deg); }
+  83.33%  { transform: rotate(55deg); }
+  100%    { transform: rotate(25deg); }
+}
+@keyframes runUarm {
+  0%      { transform: rotate(45deg); }  /* backswing — fist by the hip */
+  16.67%  { transform: rotate(25deg); }
+  33.33%  { transform: rotate(-15deg); }
+  50%     { transform: rotate(-40deg); } /* front pump — fist at chin height */
+  66.67%  { transform: rotate(-15deg); }
+  83.33%  { transform: rotate(25deg); }
+  100%    { transform: rotate(45deg); }
+}
+@keyframes runFore {
+  0%      { transform: rotate(-75deg); } /* elbow stays pumped through the cycle */
+  16.67%  { transform: rotate(-80deg); }
+  33.33%  { transform: rotate(-85deg); }
+  50%     { transform: rotate(-90deg); }
+  66.67%  { transform: rotate(-85deg); }
+  83.33%  { transform: rotate(-80deg); }
+  100%    { transform: rotate(-75deg); }
+}
+@keyframes runGaitBob {
+  0%, 50%, 100%   { transform: translateY(0); }
+  16.67%, 66.67%  { transform: translateY(0.35px); }
+  33.33%, 83.33%  { transform: translateY(-0.55px); }
+}
+/* ── Walking-man glyph (starting / stopping) ─────────────────────────────────
+   The transient twin of the runner, same rig technique: nested pivots, CSS
+   transforms only. What differs is the gait — the posture is near-upright, the
+   cadence is half again as long (1.05s vs 0.7s), the swings are smaller, and a
+   foot is always on the ground, so the two never read as the same motion at
+   speed. Base transforms pose the contact frame (far side: mid-stance), which
+   is also the frame a reduced-motion walker holds. */
+.walker-thigh,
+.walker-shin,
+.walker-uarm,
+.walker-fore {
+  transform-box: view-box;
+}
+.walker-thigh {
+  transform-origin: 11.9px 13.5px;
+  transform: rotate(-24deg);
+  animation: walkThigh 1.05s linear infinite;
+}
+.walker-shin {
+  transform-origin: 11.9px 18px;
+  transform: rotate(6deg);
+  animation: walkShin 1.05s linear infinite;
+}
+.walker-uarm {
+  transform-origin: 12.4px 7.6px;
+  transform: rotate(26deg);
+  animation: walkUarm 1.05s linear infinite;
+}
+.walker-fore {
+  transform-origin: 12.4px 11px;
+  transform: rotate(-16deg);
+  animation: walkFore 1.05s linear infinite;
+}
+/* Depth by displacement, not just by dimming: a walk passes through frames
+   where near and far limbs line up, and at 14px that reads as a single thick
+   bar rather than a figure. Half a stroke of offset keeps them apart. */
+.walker-far {
+  transform: translateX(-1.2px);
+}
+.walker-far .walker-thigh {
+  transform: rotate(16deg);
+  animation-delay: -0.42s;
+}
+.walker-far .walker-shin {
+  transform: rotate(12deg);
+  animation-delay: -0.42s;
+}
+.walker-far .walker-uarm {
+  transform: rotate(-22deg);
+  animation-delay: -0.42s;
+}
+.walker-far .walker-fore {
+  transform: rotate(-20deg);
+  animation-delay: -0.42s;
+}
+/* Stance is the long half and swing the short one — a real walk spends 60% of
+   the cycle with the foot planted, and that asymmetry is also what keeps the
+   two legs from mirroring each other into one stroke at small sizes. */
+@keyframes walkThigh {
+  0%    { transform: rotate(-24deg); } /* contact — heel lands ahead */
+  20%   { transform: rotate(-13deg); }
+  40%   { transform: rotate(3deg); }   /* mid-stance — under the body */
+  60%   { transform: rotate(21deg); }  /* toe-off — leg trailing */
+  74%   { transform: rotate(4deg); }   /* swing, fast: knee through */
+  88%   { transform: rotate(-17deg); }
+  100%  { transform: rotate(-24deg); }
+}
+@keyframes walkShin {
+  0%    { transform: rotate(7deg); }   /* near-straight at contact */
+  20%   { transform: rotate(4deg); }
+  40%   { transform: rotate(10deg); }
+  60%   { transform: rotate(22deg); }
+  74%   { transform: rotate(48deg); }  /* knee tucks to clear the ground */
+  88%   { transform: rotate(22deg); }
+  100%  { transform: rotate(7deg); }
+}
+@keyframes walkUarm {
+  0%    { transform: rotate(28deg); }  /* anti-phase with the near leg */
+  20%   { transform: rotate(16deg); }
+  40%   { transform: rotate(-6deg); }
+  60%   { transform: rotate(-26deg); } /* full forward reach */
+  74%   { transform: rotate(-8deg); }
+  88%   { transform: rotate(18deg); }
+  100%  { transform: rotate(28deg); }
+}
+@keyframes walkFore {
+  0%    { transform: rotate(-16deg); } /* a walk barely bends the elbow */
+  25%   { transform: rotate(-13deg); }
+  50%   { transform: rotate(-20deg); }
+  70%   { transform: rotate(-25deg); }
+  85%   { transform: rotate(-18deg); }
+  100%  { transform: rotate(-16deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runner-thigh,
+  .runner-shin,
+  .runner-uarm,
+  .runner-fore,
+  .runner-bob,
+  .walker-thigh,
+  .walker-shin,
+  .walker-uarm,
+  .walker-fore {
+    animation: none;
+  }
+}
+
+/* ── Systems group rows (engine + docker daemon) ─────────────────────────── */
+.sys-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 2px 4px;
+}
+.sys-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+}
+.sys-row:hover {
+  background: var(--card-bg);
+}
+.sys-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.sys-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  display: inline-block;
+  background: var(--text-faint);
+}
+.sys-dot.up {
+  background: var(--success);
+}
+.sys-dot.warn {
+  background: var(--warning);
+}
+.sys-dot.down {
+  background: var(--danger);
+}
+/* The card's facts, as chips: port, resources, environment. Each one is a whole
+   reading — `:5432`, `5.4% • 24MB` — so a chip per fact, and a fact with nothing
+   to say has no chip rather than a chip saying nothing. */
+.svc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  /* Under the row's own 10.5px, and deliberately: four readings and three
+     controls share 320px of sidebar, and this is the difference between the
+     strip fitting and the environment falling off the end of it. */
+  font-size: 9.5px;
+  line-height: 1.6;
+  white-space: nowrap;
+  flex-shrink: 0;
+  border: 0;
+}
+.chip-sep {
+  margin: 0 2px;
+  opacity: 0.45;
+}
+
+/* The environment is the one chip that is also a control — everything else on
+   the row is a reading. The chevron is what says so. */
+.svc-chip.env {
+  cursor: pointer;
+  padding-right: 4px;
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+.svc-chip.env:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+/* Locked while the project is up: the vars were read at spawn, so offering the
+   switch here would show one environment and run another. */
+.svc-chip.env.locked {
+  cursor: default;
+  opacity: 0.75;
+}
+
 .svc-health {
-  margin-left: auto;
   color: var(--text-faint);
   display: inline-flex;
   align-items: center;
@@ -770,16 +1503,38 @@ button {
   color: var(--warning);
 }
 
-.svc-actions {
+/* Kill, start/stop, manage — always present, always in that order. These are
+   the row's verbs; hiding them until hover (as the old secondary actions were)
+   would mean the card's shape changed under the pointer, and a control you
+   cannot see is a control you cannot plan a click on. They rest dim instead. */
+.svc-controls {
   display: inline-flex;
   align-items: center;
   gap: 1px;
-  opacity: 0;
-  transition: opacity 0.12s;
+  flex-shrink: 0;
 }
-.svc-row:hover .svc-actions,
-.svc-row.active .svc-actions {
-  opacity: 1;
+/* Trimmed from the 24/32 the rest of the app uses: three controls plus the
+   chips have to share 320px, and the row is the one place they compete. */
+.svc-controls .ico {
+  width: 20px;
+  height: 20px;
+  color: var(--text-faint);
+}
+.svc-controls .ico-primary {
+  width: 26px;
+  height: 26px;
+}
+.svc-row:hover .svc-controls .ico,
+.svc-row.active .svc-controls .ico {
+  color: var(--text-muted);
+}
+.svc-controls .ico:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.svc-controls .ico:disabled:hover {
+  background: transparent;
+  color: var(--text-faint);
 }
 
 .ico {
@@ -807,20 +1562,15 @@ button {
   background: var(--danger-soft);
 }
 
-.svc-primary-action {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-}
 .ico-primary {
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   flex-shrink: 0;
   transition: all 0.12s;
 }
@@ -864,13 +1614,21 @@ button {
   flex: 1;
 }
 
-/* Indeterminate spinner, used wherever a lifecycle transition is in flight. */
+/* Indeterminate spinner, used wherever a lifecycle transition is in flight.
+   Amber, like every other in-transition signal (the walking figure, the
+   pulsing dot) — a transition is neither the green it wants nor the red it
+   came from. */
 .spinner {
+  color: var(--warning);
   display: inline-block;
   border-radius: 50%;
   border: 2px solid currentColor;
   border-top-color: transparent;
-  animation: spin 0.6s linear infinite;
+  /* 1.6s, not the 0.6s this was. A fast spinner reads as "working hard" and
+     makes a slow transition feel stuck; these waits are seconds long (a drain,
+     a docker pull), so the ring should turn at the pace of the thing it is
+     reporting rather than race ahead of it. */
+  animation: spin 1.6s linear infinite;
   flex-shrink: 0;
   opacity: 0.9;
 }
@@ -881,7 +1639,7 @@ button {
 }
 @media (prefers-reduced-motion: reduce) {
   .spinner {
-    animation-duration: 2s;
+    animation-duration: 4s;
   }
 }
 
@@ -1052,9 +1810,6 @@ button {
 .url-chip .url-copy {
   color: var(--text-dim);
 }
-.url-chip.muted {
-  color: var(--text-dim);
-}
 .url-chip .url-copied-badge {
   position: absolute;
   top: -22px;
@@ -1167,6 +1922,50 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Hover-revealed pill actions, same contract as the environment pill's tools:
+   the resting row is numbers only, and the controls collapse to zero width so
+   nothing beside them shifts when they appear. */
+.stat-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  width: 0;
+  overflow: hidden;
+  opacity: 0;
+  flex-shrink: 0;
+  transition:
+    width 0.14s,
+    opacity 0.12s;
+}
+.stat-pill:hover .stat-tools,
+.stat-pill:focus-within .stat-tools {
+  width: var(--stat-tools-w, 18px);
+  opacity: 1;
+  margin-left: 2px;
+}
+/* The path pill carries two. */
+.stat-pill.wide:hover .stat-tools,
+.stat-pill.wide:focus-within .stat-tools {
+  width: 37px;
+}
+.stat-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-faint);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.stat-ico:hover {
+  color: var(--text);
+  background: var(--chip-bg);
+}
 /* A truncated path should keep its tail — the leaf is the part you read. */
 .stat-pill.wide .stat-val {
   direction: rtl;
@@ -1209,7 +2008,7 @@ button {
 
 .term-region {
   flex: 1;
-  min-height: 320px;
+  min-height: 500px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1241,24 +2040,6 @@ button {
   border: 1px solid var(--border-soft);
   padding: 1px 7px;
   border-radius: 999px;
-}
-.term-add {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 11px;
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 500;
-  transition: all 0.14s;
-  box-shadow: var(--shadow-inset);
-}
-.term-add:hover {
-  background: var(--card-bg-hover);
-  border-color: var(--border-strong);
 }
 .term-spacer {
   flex: 1;
@@ -1419,6 +2200,13 @@ button {
   overflow: hidden;
   position: relative;
 }
+/* The slot is React's; the surface inside it is built once per pane and moved
+   between slots by hand, so a dock never rebuilds the terminal. Both just fill
+   the body's content box. */
+.term-slot,
+.term-surface {
+  height: 100%;
+}
 /* xterm paints its own background; keep it transparent so the card shows. */
 .term-body .xterm,
 .term-body .xterm-viewport {
@@ -1438,8 +2226,37 @@ button {
   background-clip: content-box;
 }
 
+/* Jump-to-latest: floats over the scroll region, shown only while detached
+   from the tail. The glyph carries its own ring, so the disc behind it is a
+   plain opaque surface (no border) — one circle, not two. */
+.jump-bottom {
+  position: absolute;
+  bottom: 12px;
+  right: 14px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  color: var(--accent);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-pop);
+  cursor: pointer;
+  transition: transform 0.14s, color 0.14s, background 0.14s;
+}
+.jump-bottom:hover {
+  color: var(--accent);
+  background: var(--card-bg-hover);
+  transform: translateY(-1px);
+}
+
 /* ---- read-only log pane (docker / compose run panes) ---- */
 .log-view {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -1607,6 +2424,169 @@ button {
 /* ══════════════════════════════════════════════════════════════════════════
    Dialogs + forms (pgform BYOC surface)
    ══════════════════════════════════════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Anchored menus — the ••• and the environment chip
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Below the dialog scrim (60): a menu can open a dialog, and the dialog has to
+   land on top of whatever opened it. */
+.menu {
+  position: fixed;
+  z-index: 55;
+  min-width: 168px;
+  max-width: 260px;
+  padding: 4px;
+  background: var(--window-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  animation: menu-in 0.1s ease;
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* A row can carry a trailing control of its own, so the row is the container
+   and the label is a button inside it — not the other way round. */
+.menu-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.1s,
+    color 0.1s;
+}
+.menu-item:hover:not(:disabled) {
+  background: var(--card-bg-hover);
+}
+.menu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.menu-item.danger {
+  color: var(--danger);
+}
+.menu-item.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+.menu-ico {
+  display: inline-flex;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.menu-item:hover:not(:disabled) .menu-ico {
+  color: var(--text-muted);
+}
+.menu-item.danger .menu-ico {
+  color: inherit;
+}
+.menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.menu-note {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+/* Reserved for the whole menu as soon as one item is selectable, so choosing a
+   different item never shifts the labels sideways. */
+.menu-check {
+  width: 8px;
+  flex-shrink: 0;
+  font-size: 8px;
+  line-height: 1;
+  color: var(--accent);
+}
+.menu-item.selected .menu-label {
+  color: var(--accent);
+}
+
+/* Status light — the same three colours the rest of the app uses for the same
+   three meanings, so a menu row reads like a card row. Occupies the check's
+   column, never both. */
+.menu-dot {
+  width: 5px;
+  height: 5px;
+  /* Centred in the 8px column the check reserves, so a menu that mixes checks
+     and dots keeps one alignment. */
+  margin: 0 1.5px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: var(--text-faint);
+}
+.menu-dot.success {
+  background: var(--success);
+}
+.menu-dot.warning {
+  background: var(--warning);
+}
+.menu-dot.danger {
+  background: var(--danger);
+}
+
+/* The verb, dim: the row says what it will DO, and the name is what you scan
+   for — so the name keeps the weight. */
+.menu-verb {
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+/* Independent of the row's own action, and it says so by sitting outside the
+   label button with its own hover. */
+.menu-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition:
+    background 0.1s,
+    color 0.1s;
+}
+.menu-action:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.menu-action:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
 
 /* Fixed, not absolute: the scrim renders inside the scrolling main column, and
    an absolute one centres itself in the SCROLL height — so opening a dialog
@@ -2041,10 +3021,10 @@ button {
   border-radius: 8px;
 }
 
-/* A transition owns the control until it settles — neither green nor red,
+/* A transition owns the control until it settles — amber, not green or red,
    because it is on its way to one of them. */
 .ico-primary.busy {
-  color: var(--text-dim);
+  color: var(--warning);
   cursor: default;
 }
 .ico-primary:disabled {
@@ -2059,6 +3039,17 @@ button {
 }
 .hero-actions .ico-primary:disabled {
   opacity: 0.45;
+}
+/* A system whose Start this window cannot perform (the engine serves the page)
+   keeps the control in place and greys it — the slot never changes shape, and
+   the tooltip says why it will not act. */
+.sys-actions .ico-primary:disabled:not(.busy) {
+  opacity: 0.35;
+  cursor: default;
+}
+.sys-actions .ico-primary {
+  width: 26px;
+  height: 26px;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -2090,19 +3081,264 @@ button {
   border-bottom-color: transparent;
 }
 
+/* Quick-select, beside the card's title. Deliberately small and quiet: it is a
+   shortcut to what the open card already offers, so it must not compete with
+   the card's own actions on the right. */
+.card-quick {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 8px;
+  padding: 2px 4px 2px 5px;
+  background: var(--chip-bg);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background 0.12s,
+    color 0.12s,
+    border-color 0.12s;
+}
+.card-quick:hover {
+  color: var(--success);
+  border-color: var(--border-soft);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
    Environment pills
    base is the floor every environment inherits, so its pill has no rename and
    no delete. The rest are added inline through a dotted pill that becomes a
    field.
    ══════════════════════════════════════════════════════════════════════════ */
+/* The strip scrolls sideways instead of wrapping, so the card head stays one
+   row tall no matter how many environments a project has. The scrollbar is
+   hidden — 26px pills leave no room for it. */
 .env-pills {
   display: flex;
   align-items: center;
   gap: 5px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
   margin-left: 10px;
+  padding: 2px 0;
+  scrollbar-width: none;
 }
+.env-pills::-webkit-scrollbar {
+  display: none;
+}
+.env-pills > * {
+  flex-shrink: 0;
+}
+/* Only the pill strip absorbs the squeeze; the title and actions hold size. */
+.card-head > *:not(.env-pills) {
+  flex-shrink: 0;
+}
+/* ── Environment: stacked groups (base + active), read / edit per group ──────
+   Each environment is a bordered group of read-only KEY=value lines that flips
+   into a free-text editor in place. Keys read info-blue, values green, `=`
+   dimmed — env-file colouring. The edited group is highlighted; base lines the
+   active layer overrides are struck through. */
+.env-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 12px 12px;
+}
+.env-group {
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--card-bg);
+  overflow: hidden;
+}
+.env-group.editing {
+  background: var(--titlebar-bg);
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+.env-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px 7px 7px;
+}
+.env-group-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.env-group-toggle:hover {
+  color: var(--text);
+}
+.env-group-toggle > svg {
+  align-self: center;
+}
+.env-group-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.env-group-sub {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.link-btn {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--accent);
+  cursor: pointer;
+}
+.link-btn:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.link-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.env-group-body {
+  padding: 2px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Read-only line: KEY = value (+ eye for secrets). */
+.env-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+}
+.env-line.struck {
+  opacity: 0.5;
+  text-decoration: line-through;
+  text-decoration-color: var(--text-dim);
+}
+.env-key {
+  color: var(--info);
+  flex-shrink: 0;
+}
+.env-eq {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.env-val {
+  color: var(--success);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.env-val.masked {
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+}
+.env-line .ico.xs {
+  margin-left: 2px;
+}
+.env-line.secret > .ico.xs.danger-hover {
+  margin-left: auto;
+}
+.ico.xs {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+}
+
+/* Edit mode: free-text .env block + secret rows + Save. */
+.env-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+.env-pad {
+  width: 100%;
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 11px;
+  tab-size: 2;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.env-pad::placeholder {
+  color: var(--text-faint);
+}
+.env-pad:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.env-pad.invalid:focus {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+.env-pad:disabled {
+  opacity: 0.6;
+}
+.env-errors {
+  margin: 0;
+  padding: 8px 10px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-radius: 7px;
+}
+.env-secrets {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border-soft);
+}
+.env-editor-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.btn.sm.primary {
+  color: var(--accent-fg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.btn.sm.primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.card-empty.sm {
+  padding: 4px 2px;
+  font-size: 11px;
+}
+/* Show-all toggle in the card header reads as engaged when on. */
+.btn.sm.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
 .env-pill {
   display: inline-flex;
   align-items: center;
@@ -2127,8 +3363,24 @@ button {
   border-color: var(--accent-tint-bot);
   color: var(--accent);
 }
+/* The variable count reads as a soft coin inside the pill: tinted from the
+   pill's own colour so it sits right on both the resting and active states,
+   and flex-centred so the digits are optically dead centre. */
+.env-pill .tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: color-mix(in oklab, currentColor 12%, transparent);
+  color: inherit;
+  opacity: 0.6;
+  line-height: 1;
+}
 .env-pill.active .tab-count {
-  color: var(--accent);
+  opacity: 0.55;
 }
 .env-pill:disabled,
 .env-pill.disabled {

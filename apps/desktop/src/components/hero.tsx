@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react"
 import type { ProjectWithState } from "@matisa/core"
 import { useEngine } from "~/store/store.engine"
+import { revealPath } from "~/store/store.picker"
 import { Icons } from "./icons"
 import { useLifecycleState } from "~/hooks/use-lifecycle-state"
 import {
   formatMB,
   formatUptime,
+  KillButton,
   KindIcon,
   LifecycleButton,
   primaryPort,
   ProjectAvatar,
-  StatusDot
+  StatusFigure
 } from "./primitives"
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -40,23 +42,42 @@ const Sparkline = ({ data, width = 84, height = 26 }: { data: ReadonlyArray<numb
   )
 }
 
+/** One hover-revealed action on a pill. Same contract as the environment pill's
+ *  tools: absent from the resting row, so the numbers stay the thing you read. */
+const StatTool = ({
+  icon,
+  title,
+  onClick
+}: {
+  icon: React.ReactNode
+  title: string
+  onClick: () => void
+}) => (
+  <button className="stat-ico" title={title} aria-label={title} onClick={onClick}>
+    {icon}
+  </button>
+)
+
 const StatPill = ({
   label,
   value,
   title,
   wide = false,
+  tools,
   children
 }: {
   label: string
   value?: string | number
   title?: string
   wide?: boolean
+  tools?: React.ReactNode
   children?: React.ReactNode
 }) => (
   <span className={`stat-pill ${wide ? "wide" : ""}`} title={title}>
     <span className="stat-key">{label}</span>
     {value !== undefined && <span className="stat-val">{value}</span>}
     {children}
+    {tools !== undefined && <span className="stat-tools">{tools}</span>}
   </span>
 )
 
@@ -79,19 +100,56 @@ const StatPills = ({ project }: { project: ProjectWithState }) => {
 
   return (
     <span className="stat-pills">
-      <StatPill label="port" value={port ?? "—"} title="Declared port" />
-      <StatPill label="pid" value={project.pid ?? "—"} title="Leader process" />
+      {/* A portless project is a worker, not a broken server — an em-dash where
+          a port would be reads as "missing", so the pill is absent instead. */}
+      {port !== undefined && <StatPill label="port" value={port} title="Declared port" />}
+      <StatPill
+        label="pid"
+        value={project.pid ?? "—"}
+        title="Leader process"
+        // Nothing to copy until there is a process — the tools stay off rather
+        // than offering a button that would put "—" on the clipboard.
+        tools={
+          project.pid === undefined ? undefined : (
+            <StatTool
+              icon={<Icons.Copy size={11} />}
+              title="Copy PID"
+              onClick={() => void navigator.clipboard?.writeText(String(project.pid))}
+            />
+          )
+        }
+      />
       <StatPill label="cpu" value={`${(sample?.cpuPercent ?? 0).toFixed(1)}%`} title="Process group CPU">
         <Sparkline data={series} width={34} height={12} />
       </StatPill>
       <StatPill label="mem" value={`${formatMB(sample?.rssBytes ?? 0)}MB`} title="Resident memory" />
-      <StatPill label="path" value={project.root} title={project.root} wide />
+      <StatPill
+        label="path"
+        value={project.root}
+        title={project.root}
+        wide
+        tools={
+          <>
+            <StatTool
+              icon={<Icons.Copy size={11} />}
+              title="Copy path"
+              onClick={() => void navigator.clipboard?.writeText(project.root)}
+            />
+            <StatTool
+              icon={<Icons.FolderOpen size={11} />}
+              title="Reveal in Finder"
+              onClick={() => void revealPath(project.root)}
+            />
+          </>
+        }
+      />
     </span>
   )
 }
 
 export const ProjectHero = ({ project, onEdit }: { project: ProjectWithState; onEdit: () => void }) => {
   const restart = useEngine((s) => s.restart)
+  const kill = useEngine((s) => s.kill)
   const session = useEngine((s) => s.runSessions[project.id])
   const [copied, setCopied] = useState(false)
 
@@ -113,7 +171,7 @@ export const ProjectHero = ({ project, onEdit }: { project: ProjectWithState; on
           <ProjectAvatar project={project} size={20} className="hero-icon" />
           <div className="hero-id-text">
             <div className="hero-status-row">
-              <StatusDot state={project.state} size={8} />
+              <StatusFigure state={project.state} projectId={project.id} size={16} dotSize={8} />
               {/* `running` while the port is still unbound is up-but-not-usable.
                   Said plainly rather than shown as a settled green. */}
               <span className={`hero-status-label ${warmingUp ? "warming" : project.state}`}>
@@ -147,22 +205,29 @@ export const ProjectHero = ({ project, onEdit }: { project: ProjectWithState; on
       </div>
 
       <div className="hero-url-row">
-        <button className={`url-chip ${url === null ? "muted" : ""}`} onClick={copy} disabled={url === null}>
-          <Icons.Globe size={13} />
-          <span className="url-text">{url ?? "no port declared"}</span>
-          {url !== null && (
+        {/* No port means nothing to visit, so the chip is absent rather than a
+            disabled one announcing an absence. The row keeps its shape: the
+            stat pills flow left and the actions stay pinned right. */}
+        {url !== null && (
+          <button className="url-chip" onClick={copy}>
+            <Icons.Globe size={13} />
+            <span className="url-text">{url}</span>
             <span className="url-copy">
               <Icons.Copy size={12} />
             </span>
-          )}
-          {copied && <span className="url-copied-badge">Copied</span>}
-        </button>
+            {copied && <span className="url-copied-badge">Copied</span>}
+          </button>
+        )}
 
         <StatPills project={project} />
 
-        {/* The same 26px control the sidebar draws, so a project's primary
+        {/* The same 32px control the sidebar draws, so a project's primary
             action is the same shape and size wherever you meet it. */}
         <div className="hero-actions">
+          {/* Kill sits beside start/stop here exactly as it does on the card —
+              same order, same neighbours — so the control you reach for when a
+              stop will not finish is never somewhere new. */}
+          <KillButton enabled={running || busy} onKill={() => void kill(project.id)} size={16} />
           <LifecycleButton project={project} />
           <button
             className="ico-primary"
@@ -170,7 +235,7 @@ export const ProjectHero = ({ project, onEdit }: { project: ProjectWithState; on
             onClick={() => void restart(project.id)}
             disabled={busy}
           >
-            <Icons.Restart size={14} />
+            <Icons.Restart size={18} />
           </button>
           <span className="actions-divider" />
           <button

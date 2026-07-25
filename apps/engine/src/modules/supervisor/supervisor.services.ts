@@ -25,6 +25,7 @@ import { stateChanged } from "../../shared/events.js"
 import { toEngineError } from "../../shared/error-map.js"
 import { DockerDaemon } from "../docker/docker.daemon.js"
 import { PtyManager } from "../pty/pty.services.js"
+import { hardKill } from "./supervisor.kill.js"
 import { foreignListener } from "./supervisor.probe.js"
 import { runProject, type RunnerDeps } from "./supervisor.runner.js"
 
@@ -40,6 +41,8 @@ export interface SupervisorShape {
   readonly start: (id: ProjectId) => Effect.Effect<Accepted, EngineError>
   readonly stop: (id: ProjectId) => Effect.Effect<Accepted, EngineError>
   readonly restart: (id: ProjectId) => Effect.Effect<Accepted, EngineError>
+  /** Force down, no drain and no waiting. See supervisor.kill.ts. */
+  readonly kill: (id: ProjectId) => Effect.Effect<Accepted, EngineError>
   readonly status: (id: ProjectId) => Effect.Effect<RuntimeStatus, EngineError>
 }
 
@@ -89,12 +92,19 @@ const make = Effect.gen(function* () {
         for (const p of project.ports) {
           const holder = yield* foreignListener(p.number)
           if (holder !== undefined) {
+            const message = `port ${p.number} is already in use by ${holder.processName ?? "an unknown process"}${holder.pid !== undefined ? ` (pid ${holder.pid})` : ""} — not managed by matisa`
+            // Refused before any runner exists, so this is the only chance to
+            // write it down. Without the record the refusal lived in one toast:
+            // dismiss it and nothing anywhere said why the start did nothing.
+            yield* runtimeRepo
+              .recordCrash({ projectId: id, kind: "error", summary: message })
+              .pipe(Effect.ignore)
             return yield* Effect.fail(
               new PortBusy({
                 port: p.number,
                 pid: holder.pid,
                 processName: holder.processName,
-                message: `port ${p.number} is already in use by ${holder.processName ?? "an unknown process"}${holder.pid !== undefined ? ` (pid ${holder.pid})` : ""} — not managed by matisa`
+                message
               })
             )
           }
@@ -104,8 +114,12 @@ const make = Effect.gen(function* () {
       const fiber = yield* runProject(project, deps).pipe(
         Effect.catchAllCause((cause) =>
           Effect.gen(function* () {
+            const reason = Cause.pretty(cause)
             yield* runtimeRepo.setState(id, { state: "errored" }).pipe(Effect.ignore)
-            yield* events.emit(stateChanged(id, "starting", "errored", Cause.pretty(cause)))
+            yield* runtimeRepo
+              .recordCrash({ projectId: id, kind: "error", summary: reason })
+              .pipe(Effect.ignore)
+            yield* events.emit(stateChanged(id, "starting", "errored", reason))
           })
         ),
         Effect.forkIn(scope)
@@ -138,6 +152,36 @@ const make = Effect.gen(function* () {
 
   const restart: SupervisorShape["restart"] = (id) => stop(id).pipe(Effect.flatMap(() => start(id)))
 
+  // The whole point is that this returns. `stop` awaits `Fiber.interrupt`,
+  // which runs the runner's finalizers — the graceful teardown, the drain, the
+  // wait — and that wait is exactly what strands a project in `stopping`. Here
+  // the child is killed FIRST, so by the time the runner is interrupted its
+  // finalizer finds a corpse and completes immediately; `interruptFork` then
+  // declines to wait even for that. Nothing between the click and `idle` can
+  // block.
+  const kill: SupervisorShape["kill"] = (id) =>
+    Effect.gen(function* () {
+      const project = yield* projects.get(id).pipe(Effect.mapError(toEngineError))
+      const persisted = yield* runtimeRepo.getState(id).pipe(Effect.mapError(toEngineError))
+      const before = Option.getOrUndefined(persisted)
+
+      yield* hardKill(project, before?.pid)
+
+      const map = yield* SynchronizedRef.get(runners)
+      const existing = HashMap.get(map, id as string)
+      if (Option.isSome(existing)) {
+        yield* Fiber.interruptFork(existing.value)
+        yield* SynchronizedRef.update(runners, HashMap.remove(id as string))
+      }
+
+      // `idle`, not `crashed`: the process did not fail, it was ended on
+      // purpose. A kill that reported a crash would fill the Failures tab with
+      // the user's own decisions.
+      yield* runtimeRepo.setState(id, { state: "idle" }).pipe(Effect.ignore)
+      yield* events.emit(stateChanged(id, before?.state ?? "running", "idle", "killed"))
+      return { id, state: "idle" as const }
+    })
+
   const status: SupervisorShape["status"] = (id) =>
     runtimeRepo.getState(id).pipe(
       Effect.mapError(toEngineError),
@@ -156,7 +200,7 @@ const make = Effect.gen(function* () {
       )
     )
 
-  return Supervisor.of({ start, stop, restart, status })
+  return Supervisor.of({ start, stop, restart, kill, status })
 })
 
 export const SupervisorLive = Layer.scoped(Supervisor, make)

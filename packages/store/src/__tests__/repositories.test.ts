@@ -170,6 +170,44 @@ describe("RuntimeRepo — state-is-truth persistence", () => {
     assert.equal(r.live[0]?.pid, 9001)
     assert.equal(r.afterReap.length, 0, "reaped spawn must leave the live set")
   })
+
+  it("failure history keeps crashes and engine errors apart, newest first", async () => {
+    const r = await runtime(
+      Effect.gen(function* () {
+        const projects = yield* ProjectsRepo
+        const rt = yield* RuntimeRepo
+        const p = yield* projects.create(newProject("failing"))
+        // An engine error: nothing ran, so there is no exit code to carry.
+        yield* rt.recordCrash({
+          projectId: p.id,
+          kind: "error",
+          summary: "spawn failed: ENOENT"
+        })
+        // A crash: the child ran and exited badly.
+        yield* rt.recordCrash({
+          projectId: p.id,
+          kind: "crash",
+          exitCode: 1,
+          signal: "SIGTERM",
+          summary: "exit code 1",
+          logTail: "boom"
+        })
+        // Omitted kind must read back as a crash — that is what every row
+        // written before the column existed was.
+        yield* rt.recordCrash({ projectId: p.id, summary: "legacy row" })
+        return yield* rt.recentCrashes(p.id, 10)
+      })
+    )
+    assert.equal(r.length, 3)
+    const error = r.find((f) => f.summary === "spawn failed: ENOENT")
+    assert.equal(error?.kind, "error")
+    assert.equal(error?.exitCode, undefined, "an engine error has no exit code")
+    const crash = r.find((f) => f.summary === "exit code 1")
+    assert.equal(crash?.kind, "crash")
+    assert.equal(crash?.exitCode, 1)
+    assert.equal(crash?.logTail, "boom")
+    assert.equal(r.find((f) => f.summary === "legacy row")?.kind, "crash", "kind must default to crash")
+  })
 })
 
 describe("CommandsRepo — named commands with env override layers", () => {

@@ -29,7 +29,20 @@ export interface SessionEntry {
   rows: number
   exited: boolean
   exitCode: number | null
+  /** How many clients are bridged to this session right now. */
+  attachments: number
+  /** When the last client went away (or the session was created). Only
+   *  meaningful while `attachments` is 0 — it is what the reaper reads. */
+  detachedAt: number
 }
+
+/** Shell sessions from `pty.open`. Interactive terminals: reapable once nothing
+ *  is attached, because nothing is watching them and nothing depends on them. */
+export const SHELL_PREFIX = "sh:"
+/** `commands.run` sessions. Real work — never reaped for being unattended. */
+export const COMMAND_PREFIX = "cmd:"
+/** The supervised process itself. Owned by the supervisor, never by a client. */
+export const RUN_PREFIX = "run:"
 
 /** Byte-capped ring of seq-numbered base64 chunks (drops from the front). */
 export class Scrollback {
@@ -60,6 +73,14 @@ export class Scrollback {
 
   snapshot(): ReadonlyArray<{ seq: number; data: string }> {
     return this.chunks.map(({ seq, data }) => ({ seq, data }))
+  }
+
+  /** Forget the history without disturbing the sequence. Seq numbers keep
+   *  climbing so an attached pump's `skip seq ≤ last replayed` dedupe still
+   *  holds — reusing numbers would make it swallow live output. */
+  clear(): void {
+    this.chunks = []
+    this.total = 0
   }
 }
 

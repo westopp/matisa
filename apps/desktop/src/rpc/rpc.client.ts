@@ -35,10 +35,40 @@ export class RpcError extends Error {
 interface Pending {
   resolve: (value: unknown) => void
   reject: (err: unknown) => void
+  timer: ReturnType<typeof setTimeout>
 }
 
 const RECONNECT_BASE_MS = 300
 const RECONNECT_CAP_MS = 5_000
+
+// ── request deadlines ───────────────────────────────────────────────────────
+//
+// A promise that can never settle is worse than an error: the caller waits
+// forever, the spinner never resolves, and nothing in the UI can tell the
+// difference between "slow" and "never". A dropped socket rejects everything in
+// flight, but an engine that ACCEPTS a call and then never answers it — a
+// wedged handler, a deadlocked finalizer — leaves the request hanging on an
+// otherwise healthy connection. Every call gets a deadline.
+//
+// The deadlines are per-method because the honest durations differ by orders of
+// magnitude: a catalog read is milliseconds, a cold `docker pull` is minutes.
+// Each one sits comfortably above the engine's own internal budget for that
+// work, so a timeout here means something is genuinely wrong rather than slow.
+const DEFAULT_TIMEOUT_MS = 15_000
+
+const TIMEOUTS: Partial<Record<Method, number>> = {
+  // Bounded by the image pull, which the engine allows 300s for.
+  "lifecycle.start": 330_000,
+  "lifecycle.restart": 330_000,
+  // Bounded by the graceful stop (8s + kill) or compose down (300s + kill).
+  "lifecycle.stop": 360_000,
+  "docker.daemon.start": 120_000,
+  "docker.daemon.stop": 120_000,
+  "commands.run": 60_000,
+  "logs.tail": 30_000
+}
+
+const timeoutFor = (method: Method): number => TIMEOUTS[method] ?? DEFAULT_TIMEOUT_MS
 
 export class RpcClient {
   private ws: WebSocket | null = null
@@ -82,7 +112,10 @@ export class RpcClient {
     ws.onclose = () => {
       // Every in-flight call dies with the socket; the caller decides whether to
       // retry once `onOpen` fires again.
-      for (const [, p] of this.pending) p.reject(new RpcError(-32000, "engine disconnected"))
+      for (const [, p] of this.pending) {
+        clearTimeout(p.timer)
+        p.reject(new RpcError(-32000, "engine disconnected"))
+      }
       this.pending.clear()
       this.ws = null
       this.setStatus("closed")
@@ -129,6 +162,7 @@ export class RpcClient {
     const pending = this.pending.get(f.id)
     if (pending === undefined) return
     this.pending.delete(f.id)
+    clearTimeout(pending.timer)
 
     if (f.error !== undefined && f.error !== null) {
       const e = f.error as { code?: number; message?: string; data?: unknown }
@@ -141,8 +175,13 @@ export class RpcClient {
   // —— outbound ——
 
   /** Typed call. Params/result schemas come straight from the core registry, so
-   *  renaming a method or changing a field fails to compile at the call site. */
-  call<M extends Method>(method: M, params: Params<M>): Promise<Result<M>> {
+   *  renaming a method or changing a field fails to compile at the call site.
+   *  Rejects with `E_ENGINE_TIMEOUT` if the engine never answers. */
+  call<M extends Method>(
+    method: M,
+    params: Params<M>,
+    opts?: { readonly timeoutMs?: number }
+  ): Promise<Result<M>> {
     const entry = methods[method] as unknown as {
       params: Schema.Schema<unknown, unknown, never>
       result: Schema.Schema<unknown, unknown, never>
@@ -164,6 +203,20 @@ export class RpcClient {
       }
 
       const id = this.nextId++
+      const timeoutMs = opts?.timeoutMs ?? timeoutFor(method)
+      const timer = setTimeout(() => {
+        // Drop the entry: a late reply for an abandoned id must not resolve a
+        // promise the caller has already given up on.
+        this.pending.delete(id)
+        reject(
+          new RpcError(
+            -32001,
+            `${method} did not respond within ${Math.round(timeoutMs / 1000)}s`,
+            { code: "E_ENGINE_TIMEOUT" }
+          )
+        )
+      }, timeoutMs)
+
       this.pending.set(id, {
         resolve: (value) => {
           try {
@@ -172,7 +225,8 @@ export class RpcClient {
             reject(new RpcError(-32603, `undecodable result for ${method}`, cause))
           }
         },
-        reject
+        reject,
+        timer
       })
 
       ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params: encoded }))

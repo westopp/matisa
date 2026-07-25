@@ -17,6 +17,7 @@ const ctx = (id: string, vars: Record<string, string>): EnvContext => ({
 
 const repoWith = (contexts: ReadonlyArray<EnvContext>): EnvRepoShape => ({
   set: () => Effect.die("unused"),
+  unsetVar: () => Effect.die("unused"),
   list: () => Effect.succeed(contexts),
   useContext: () => Effect.die("unused"),
   createContext: () => Effect.die("unused"),

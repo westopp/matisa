@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Option } from "effect"
 import { and, desc, eq, isNull } from "drizzle-orm"
-import { ProjectId, SessionId, type RuntimeState } from "@matisa/core"
+import { ProjectId, SessionId, type FailureKind, type RuntimeState } from "@matisa/core"
 import { crashHistory } from "../db.schema/db.crashes.js"
 import { runtimeState, type RuntimeStateRow } from "../db.schema/db.runtime.js"
 import { spawns, type SpawnRow } from "../db.schema/db.spawns.js"
@@ -46,6 +46,9 @@ export interface SpawnRecord {
 
 export interface CrashInput {
   readonly projectId: ProjectId
+  /** Defaults to "crash" — the child ran and exited badly. Pass "error" when
+   *  the engine never got it running at all. */
+  readonly kind?: FailureKind
   readonly exitCode?: number
   readonly signal?: string
   readonly summary?: string
@@ -56,6 +59,7 @@ export interface CrashInput {
 export interface CrashRecordRow {
   readonly projectId: ProjectId
   readonly ts: number
+  readonly kind: FailureKind
   readonly exitCode?: number
   readonly signal?: string
   readonly summary?: string
@@ -208,6 +212,7 @@ export const RuntimeRepoLive = Layer.effect(
           .values({
             projectId: input.projectId,
             ts: Date.now(),
+            kind: input.kind ?? "crash",
             exitCode: input.exitCode ?? null,
             signal: input.signal ?? null,
             summary: input.summary ?? null,
@@ -228,6 +233,7 @@ export const RuntimeRepoLive = Layer.effect(
         return rows.map((r) => ({
           projectId: ProjectId.make(r.projectId),
           ts: r.ts,
+          kind: r.kind,
           exitCode: r.exitCode ?? undefined,
           signal: r.signal ?? undefined,
           summary: r.summary ?? undefined,

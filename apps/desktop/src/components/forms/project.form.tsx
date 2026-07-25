@@ -13,6 +13,7 @@ import { useEngine } from "~/store/store.engine"
 import { checkDirectoryExists } from "~/store/store.picker"
 import { Icons } from "../icons"
 import { baseComponents } from "./form.components"
+import { ConfirmDialog } from "./confirm"
 import { Dialog } from "./dialog"
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -63,9 +64,21 @@ const ProjectDialog = ({
   const groups = useEngine((s) => s.groups)
   const addProject = useEngine((s) => s.addProject)
   const updateProject = useEngine((s) => s.updateProject)
+  const removeProject = useEngine((s) => s.removeProject)
   const [submitting, setSubmitting] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   const editing = existing !== undefined
+
+  const remove = async (): Promise<void> => {
+    if (existing === undefined) return
+    setSubmitting(true)
+    try {
+      if (await removeProject(existing.id)) onClose()
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   // Group options are captured at open time; the dialog is mounted per-open.
   const fields = useMemo(
@@ -236,6 +249,15 @@ const ProjectDialog = ({
       onClose={onClose}
       footer={
         <>
+          {/* Delete lives with edit, not on the row: removing a project is a
+              decision you make while looking at what it is, and it must never
+              be one pixel from the button you press to open it. */}
+          {editing && (
+            <button className="btn danger" disabled={submitting} onClick={() => setConfirmingDelete(true)}>
+              <Icons.Trash size={12} /> Delete
+            </button>
+          )}
+          <span style={{ flex: 1 }} />
           <button className="btn" onClick={onClose}>
             Cancel
           </button>
@@ -247,6 +269,23 @@ const ProjectDialog = ({
       }
     >
       <GeneratePgForm generateFormProps={form.generateFormProps} components={baseComponents} />
+
+      {confirmingDelete && existing !== undefined && (
+        <ConfirmDialog
+          title={`Remove ${existing.name}?`}
+          confirmLabel="Remove project"
+          danger
+          onCancel={() => setConfirmingDelete(false)}
+          onConfirm={() => {
+            setConfirmingDelete(false)
+            void remove()
+          }}
+        >
+          It disappears from the catalog along with its commands. Files on disk are untouched — this removes the
+          project from matisa, not from your machine.
+          {existing.state === "running" && " It is running now; the engine stops it first."}
+        </ConfirmDialog>
+      )}
     </Dialog>
   )
 }

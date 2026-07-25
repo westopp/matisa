@@ -3,12 +3,12 @@ import type { Project } from "@matisa/core"
 import { crashed, logLine } from "../../shared/events.js"
 import { resolveEnv } from "../catalog/catalog.env-resolve.js"
 import {
-  composeDown,
+  composeDownHard,
   composeUp,
   containerLogTail,
   containerName,
   inlineRun,
-  inlineStop,
+  inlineStopHard,
   inspectPid
 } from "../docker/docker.actions.js"
 import { watchContainer } from "../docker/docker.events.js"
@@ -109,7 +109,7 @@ export const runDocker = (project: Project, deps: RunnerDeps): Effect.Effect<voi
         // Surface the docker CLI's stderr tail — the user always knows WHY.
         yield* driver.apply(Event.Fault({ reason: ran.left.stderrTail }))
         yield* deps.runtimeRepo
-          .recordCrash({ projectId: project.id, summary: ran.left.stderrTail })
+          .recordCrash({ projectId: project.id, kind: "error", summary: ran.left.stderrTail })
           .pipe(Effect.ignore)
         return
       }
@@ -146,6 +146,7 @@ export const runDocker = (project: Project, deps: RunnerDeps): Effect.Effect<voi
                 yield* deps.runtimeRepo
                   .recordCrash({
                     projectId: project.id,
+                    kind: "crash",
                     exitCode: ev.exitCode ?? undefined,
                     summary,
                     logTail: tail
@@ -158,9 +159,19 @@ export const runDocker = (project: Project, deps: RunnerDeps): Effect.Effect<voi
       })
 
       // Stay alive observing until lifecycle.stop interrupts the fiber; the
-      // scope release then stops the container (errors tolerated — the daemon
-      // may already be down, in which case the container is down with it).
-      yield* Effect.addFinalizer(() => inlineStop(project.name).pipe(Effect.ignore))
+      // scope release then stops the container — escalating to a kill if the
+      // graceful stop is refused, and saying so out loud if even that fails.
+      // A silent failure here would leave a running container behind a state
+      // row that says `idle`.
+      yield* Effect.addFinalizer(() =>
+        inlineStopHard(project.name).pipe(
+          Effect.catchAll((e) =>
+            Effect.logError(
+              `could not stop container ${containerName(project.name)}: ${e.stderrTail} — it may still be running`
+            )
+          )
+        )
+      )
       yield* Effect.never
     })
   )
@@ -176,7 +187,7 @@ export const runCompose = (project: Project, deps: RunnerDeps): Effect.Effect<vo
       if (Either.isLeft(up)) {
         yield* driver.apply(Event.Fault({ reason: up.left.stderrTail }))
         yield* deps.runtimeRepo
-          .recordCrash({ projectId: project.id, summary: up.left.stderrTail })
+          .recordCrash({ projectId: project.id, kind: "error", summary: up.left.stderrTail })
           .pipe(Effect.ignore)
         return
       }
@@ -186,7 +197,15 @@ export const runCompose = (project: Project, deps: RunnerDeps): Effect.Effect<vo
       yield* probeReadiness(project, driver).pipe(Effect.forkScoped)
       yield* streamComposeLogs(project, file, deps)
 
-      yield* Effect.addFinalizer(() => composeDown(file).pipe(Effect.ignore))
+      yield* Effect.addFinalizer(() =>
+        composeDownHard(file).pipe(
+          Effect.catchAll((e) =>
+            Effect.logError(
+              `could not bring down stack ${file}: ${e.stderrTail} — containers may still be running`
+            )
+          )
+        )
+      )
       yield* Effect.never
     })
   )

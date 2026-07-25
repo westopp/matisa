@@ -46,6 +46,11 @@ export interface EnvSetInput {
 export interface EnvRepoShape {
   /** Upsert a context and one of its vars; returns the full context. */
   readonly set: (input: EnvSetInput) => Effect.Effect<EnvContext, StoreQueryError>
+  /** Delete one var from a context; returns the updated context. */
+  readonly unsetVar: (
+    contextId: ContextId,
+    key: string
+  ) => Effect.Effect<EnvContext, NotFound | StoreQueryError>
   readonly list: () => Effect.Effect<ReadonlyArray<EnvContext>, StoreQueryError>
   /** Point a project at the context whose vars apply on (re)spawn. */
   readonly useContext: (
@@ -208,6 +213,18 @@ export const EnvRepoLive = Layer.effect(
         return { ...existing, name: trimmed }
       })
 
+    const unsetVar: EnvRepoShape["unsetVar"] = (contextId, key) =>
+      Effect.gen(function* () {
+        yield* q(() => {
+          sqlite.prepare("DELETE FROM env_vars WHERE context_id = ? AND key = ?").run(contextId, key)
+        })
+        const ctx = yield* readById(contextId)
+        if (ctx === undefined) {
+          return yield* Effect.fail(new NotFound({ entity: "env_context", id: contextId }))
+        }
+        return ctx
+      })
+
     const removeContext: EnvRepoShape["removeContext"] = (contextId) =>
       Effect.gen(function* () {
         const existing = yield* readById(contextId)
@@ -233,6 +250,6 @@ export const EnvRepoLive = Layer.effect(
         return affected.map((r) => ProjectId.make(r.id))
       })
 
-    return EnvRepo.of({ set, list, useContext, createContext, renameContext, removeContext })
+    return EnvRepo.of({ set, unsetVar, list, useContext, createContext, renameContext, removeContext })
   })
 )

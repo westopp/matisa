@@ -8,7 +8,8 @@ import {
   type ChooseDirParams,
   type ChooseFileParams,
   type ListDirParams,
-  type ReadIconParams
+  type ReadIconParams,
+  type RevealParams
 } from "@matisa/core"
 import type { Handlers } from "../server.dispatcher.js"
 
@@ -113,9 +114,23 @@ const MIME_BY_EXT: Readonly<Record<string, string>> = {
   ".icns": "image/x-icns"
 }
 
+/** Hand a path to the OS file manager, selected in its parent folder. `open -R`
+ *  takes the path as an argument, never as shell text, so a folder name with a
+ *  space, a quote or a `;` in it is data — there is no shell to confuse. */
+const revealInFileManager = (path: string): Promise<void> =>
+  new Promise((resolvePromise, rejectPromise) => {
+    execFile("open", ["-R", path], (error, _stdout, stderr) => {
+      if (error !== null) {
+        rejectPromise(new Error(stderr.trim() === "" ? error.message : stderr.trim()))
+        return
+      }
+      resolvePromise()
+    })
+  })
+
 export const fsHandlers = (): Pick<
   Handlers,
-  "fs.listDir" | "fs.chooseDir" | "fs.chooseFile" | "fs.readIcon"
+  "fs.listDir" | "fs.chooseDir" | "fs.chooseFile" | "fs.readIcon" | "fs.reveal"
 > => ({
   "fs.chooseDir": (params) => {
     if (platform() !== "darwin") {
@@ -184,6 +199,29 @@ export const fsHandlers = (): Pick<
         new ValidationError({
           field: "pathToIcon",
           message: cause instanceof Error ? cause.message : `Could not read ${path}`
+        })
+    })
+  },
+
+  "fs.reveal": (params) => {
+    if (platform() !== "darwin") {
+      return Effect.fail(
+        new ValidationError({ field: "path", message: "Reveal needs macOS" })
+      )
+    }
+
+    const path = resolve((params as RevealParams).path)
+    return Effect.tryPromise({
+      try: async () => {
+        // Stat first so a stale root fails with "no such folder" rather than
+        // whatever the file manager decides to do with a path that is not there.
+        await fs.stat(path)
+        await revealInFileManager(path)
+      },
+      catch: (cause) =>
+        new ValidationError({
+          field: "path",
+          message: cause instanceof Error ? cause.message : `Could not reveal ${path}`
         })
     })
   },

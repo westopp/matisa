@@ -185,3 +185,30 @@ export const sendInput = (sessionId: SessionId, text: string): void => {
 export const resizeSession = (sessionId: SessionId, cols: number, rows: number): void => {
   void rpc.call("pty.resize", { sessionId, cols, rows }).catch(() => {})
 }
+
+/** Close a session for good: the engine kills the pty, and the local registry
+ *  entry goes with it so a later attach cannot resurrect a dead id.
+ *
+ *  Detaching alone is not closing. Sessions deliberately outlive their panes —
+ *  that is what makes a pane reopen where it left off — so the ONLY thing that
+ *  ends an ad-hoc shell is this call. Without it, every terminal ever opened
+ *  stayed a live $SHELL process on the engine.
+ *
+ *  Run sessions are the supervisor's; the engine rejects closing them, and
+ *  callers must not offer it. */
+export const closeSession = (sessionId: SessionId): void => {
+  entries.delete(sessionId)
+  void rpc.call("pty.close", { sessionId }).catch(() => {})
+}
+
+/** Drop the engine's scrollback for a session, so a later attach replays nothing
+ *  from before now. The process is untouched, and unlike `closeSession` this is
+ *  valid for a `run:` session too — clearing a view cannot stop a project.
+ *
+ *  The local xterm is cleared by the caller: this only forgets the RECORD, and
+ *  without it a reload would faithfully restore everything just cleared. */
+export const clearSession = (sessionId: SessionId): Promise<void> =>
+  rpc.call("pty.clear", { sessionId }).then(
+    () => undefined,
+    () => undefined
+  )

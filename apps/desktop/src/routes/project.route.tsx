@@ -1,10 +1,10 @@
-import { lazy, Suspense, useState } from "react"
-import { useParams } from "@tanstack/react-router"
+import { lazy, Suspense, useEffect, useRef, useState } from "react"
+import { useNavigate, useParams } from "@tanstack/react-router"
 import { useEngine } from "~/store/store.engine"
 import { useUi } from "~/store/store.ui"
 import { Icons } from "~/components/icons"
 import { ProjectHero } from "~/components/hero"
-import { CommandsCard, EnvironmentCard, FailuresCard } from "~/components/panels"
+import { CommandsCard, EnvironmentCard } from "~/components/panels"
 import { EditProjectDialog } from "~/components/forms/lazy"
 
 // The terminal emulator is the heaviest dependency in the app and is reachable
@@ -41,7 +41,20 @@ export const ProjectRoute = () => {
   const project = useEngine((s) => s.projects.find((p) => p.id === projectId))
   const status = useEngine((s) => s.status)
   const theme = useUi((s) => s.theme)
+  const navigate = useNavigate()
   const [editing, setEditing] = useState(false)
+
+  // A project removed from the catalog leaves this route pointing at nothing.
+  // Fall back to the index rather than parking the user on a tombstone — but
+  // only for a project this mount has actually SEEN. An empty catalog is the
+  // normal state between connecting and the first `catalog.list`, and treating
+  // that as a removal bounces every reload of a project route to the index.
+  const seen = useRef(false)
+  if (project !== undefined) seen.current = true
+
+  useEffect(() => {
+    if (seen.current && project === undefined) void navigate({ to: "/" })
+  }, [project, navigate])
 
   if (project === undefined) {
     return (
@@ -60,7 +73,9 @@ export const ProjectRoute = () => {
     <main className="main">
       {(project.kind === "docker" || project.kind === "compose") && <DaemonBanner />}
       <ProjectHero project={project} onEdit={() => setEditing(true)} />
-      <FailuresCard project={project} />
+      {/* Failures moved to the inspector drawer — they are consulted after
+          something goes wrong, and do not deserve permanent vertical space
+          above the configuration that is read on every visit. */}
       {/* Configuration before output: what the project runs WITH is read far
           more often than the terminals are scrolled, and both collapse. */}
       <EnvironmentCard project={project} />

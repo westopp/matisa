@@ -17,7 +17,10 @@ import type { Handlers } from "../server.dispatcher.js"
 
 export const ptyHandlers = (
   pty: PtyManagerShape
-): Pick<Handlers, "pty.open" | "pty.attach" | "pty.input" | "pty.resize"> => ({
+): Pick<
+  Handlers,
+  "pty.open" | "pty.attach" | "pty.input" | "pty.resize" | "pty.close" | "pty.clear"
+> => ({
   "pty.open": (params, conn) =>
     Effect.gen(function* () {
       const session = yield* pty.open(params as PtyOpenParams)
@@ -27,5 +30,7 @@ export const ptyHandlers = (
   "pty.attach": (params, conn) =>
     bridgeSessionToConnection(pty, (params as BySessionId).sessionId, conn),
   "pty.input": (params) => pty.input(params as PtyInputParams),
-  "pty.resize": (params) => pty.resize(params as PtyResizeParams)
+  "pty.resize": (params) => pty.resize(params as PtyResizeParams),
+  "pty.close": (params) => pty.close((params as BySessionId).sessionId),
+  "pty.clear": (params) => pty.clear((params as BySessionId).sessionId)
 })

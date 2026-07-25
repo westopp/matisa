@@ -9,6 +9,7 @@ import type {
   EnvCreateParams,
   EnvRenameParams,
   EnvSetParams,
+  EnvUnsetParams,
   EnvUseParams,
   GroupSetParams,
   NewProject
@@ -29,7 +30,7 @@ export const catalogHandlers = (
 ): Pick<
   Handlers,
   | "catalog.add" | "catalog.list" | "catalog.update" | "catalog.remove"
-  | "env.set" | "env.list" | "env.use" | "env.create" | "env.rename" | "env.remove"
+  | "env.set" | "env.unset" | "env.list" | "env.use" | "env.create" | "env.rename" | "env.remove"
   | "commands.set" | "commands.list" | "commands.remove" | "commands.run"
   | "groups.set" | "groups.list" | "groups.remove"
 > => ({
@@ -41,6 +42,7 @@ export const catalogHandlers = (
   },
   "catalog.remove": (params) => catalog.remove((params as ById).id),
   "env.set": (params) => catalog.envSet(params as EnvSetParams),
+  "env.unset": (params) => catalog.envUnset(params as EnvUnsetParams),
   "env.list": () => catalog.envList(),
   "env.use": (params) => catalog.envUse(params as EnvUseParams),
   "env.create": (params) => catalog.envCreate(params as EnvCreateParams),

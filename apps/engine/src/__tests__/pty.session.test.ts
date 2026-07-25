@@ -44,6 +44,35 @@ describe("Scrollback", () => {
     assert.equal(second, first + 1)
     assert.equal(exitSeq, second + 1)
   })
+
+  it("clear() drops the history so a later attach replays nothing", () => {
+    const sb = new Scrollback(1024)
+    sb.push("before the clear")
+    sb.clear()
+    assert.deepEqual(sb.snapshot(), [])
+  })
+
+  // The dedupe in the attach pump skips seq ≤ last replayed. Restarting the
+  // counter at 1 would make it swallow post-clear output as already-seen.
+  it("clear() does NOT rewind seqs — post-clear output still outranks pre-clear", () => {
+    const sb = new Scrollback(1024)
+    const beforeSeq = sb.push("before").seq
+    sb.clear()
+    const afterSeq = sb.push("after").seq
+    assert.equal(afterSeq, beforeSeq + 1)
+  })
+
+  it("clear() frees the byte budget, so the cap applies to post-clear output only", () => {
+    const sb = new Scrollback(40)
+    sb.push("aaaaaaaaaa")
+    sb.clear()
+    sb.push("bbbbbbbbbb")
+    const decoded = sb
+      .snapshot()
+      .map((c) => Buffer.from(c.data, "base64").toString("utf8"))
+      .join("")
+    assert.equal(decoded, "bbbbbbbbbb")
+  })
 })
 
 describe("signalName", () => {

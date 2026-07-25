@@ -6,6 +6,7 @@ import { useEngine } from "~/store/store.engine"
 import { useUi } from "~/store/store.ui"
 import { Icons } from "~/components/icons"
 import { Sidebar } from "~/components/sidebar"
+import { RightDrawer } from "~/components/drawer"
 import { AddProjectDialog } from "~/components/forms/lazy"
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -16,18 +17,18 @@ import { AddProjectDialog } from "~/components/forms/lazy"
 // ────────────────────────────────────────────────────────────────────────────
 
 const Titlebar = () => {
-  const status = useEngine((s) => s.status)
-  const daemon = useEngine((s) => s.daemon)
-  const engine = useEngine((s) => s.engine)
   const refreshCatalog = useEngine((s) => s.refreshCatalog)
+  const failureCount = useEngine((s) => s.failures.length)
 
   const theme = useUi((s) => s.theme)
   const toggleTheme = useUi((s) => s.toggleTheme)
   const sidebarCollapsed = useUi((s) => s.sidebarCollapsed)
   const toggleSidebar = useUi((s) => s.toggleSidebar)
+  const drawerOpen = useUi((s) => s.drawerOpen)
+  const toggleDrawer = useUi((s) => s.toggleDrawer)
 
-  const label = status === "open" ? `engine ${engine?.version ?? ""}`.trim() : status
-
+  // Engine + Docker status moved into the sidebar's Systems group — the titlebar
+  // no longer mirrors them.
   return (
     <div className="titlebar">
       <div className="traffic">
@@ -41,14 +42,6 @@ const Titlebar = () => {
         <span className="title-sub">Local Services</span>
       </div>
       <div className="title-right">
-        {daemon.state === "running" && (
-          <span className="conn-pill open" title="Docker daemon is running">
-            <Icons.Docker size={11} /> docker
-          </span>
-        )}
-        <span className={`conn-pill ${status}`} title={status === "open" ? "Connected to the engine" : "No engine"}>
-          {label}
-        </span>
         <button
           className="theme-toggle"
           onClick={toggleTheme}
@@ -68,6 +61,16 @@ const Titlebar = () => {
           onClick={toggleSidebar}
         >
           <Icons.PanelLeft size={14} />
+        </button>
+        {/* A crash that happened while you were elsewhere is the one thing the
+            chrome must not stay silent about once its toast has gone. */}
+        <button
+          className={`ico-btn ${drawerOpen ? "active" : ""}`}
+          title={drawerOpen ? "Hide inspector" : "Show inspector"}
+          onClick={toggleDrawer}
+        >
+          <Icons.PanelRight size={14} />
+          {failureCount > 0 && !drawerOpen && <span className="ico-badge" />}
         </button>
       </div>
     </div>
@@ -101,6 +104,9 @@ export const RootLayout = () => {
             />
           </div>
           <Outlet />
+          {/* Overlaid, not docked: the drawer is absolutely positioned inside
+              the body, so opening it never reflows the terminals. */}
+          <RightDrawer selectedId={selectedId} />
         </div>
         {addingProject && <AddProjectDialog onClose={() => setAddingProject(false)} />}
 

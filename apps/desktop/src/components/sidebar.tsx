@@ -1,18 +1,12 @@
 import { useMemo, useState } from "react"
 import { Collapsible } from "@westopp/react-collapsible"
-import type { Group, ProjectId, ProjectKind, ProjectWithState } from "@matisa/core"
+import type { Group, ProjectId, ProjectKind, ProjectWithState, RuntimeState } from "@matisa/core"
 import { useEngine } from "~/store/store.engine"
 import { Icons } from "./icons"
-import { intentLabel, useLifecycleState } from "~/hooks/use-lifecycle-state"
-import {
-  COLLAPSE_DURATION,
-  formatMB,
-  LifecycleButton,
-  primaryPort,
-  ProjectAvatar,
-  Spinner,
-  StatusDot
-} from "./primitives"
+import { ConfirmDialog } from "./forms/confirm"
+import { GroupDialog } from "./forms/lazy"
+import { ProjectCard } from "./project.card"
+import { COLLAPSE_DURATION, formatUptime, Spinner, StatusDot, StatusFigure } from "./primitives"
 
 // ────────────────────────────────────────────────────────────────────────────
 // Two-level tree, as designed: kind buckets at the top, groups beneath.
@@ -32,6 +26,10 @@ interface Section {
   readonly key: string
   readonly title: string
   readonly projects: ReadonlyArray<ProjectWithState>
+  /** The group row behind this section, when there is one. Absent for
+   *  "Ungrouped" and for sections standing in for a group that no longer
+   *  exists — neither can be renamed or deleted. */
+  readonly group?: Group
 }
 
 const sectionsFor = (
@@ -47,7 +45,7 @@ const sectionsFor = (
   }
   const titled = groups
     .filter((g) => byGroup.has(g.slug))
-    .map<Section>((g) => ({ key: g.slug, title: g.title, projects: byGroup.get(g.slug) ?? [] }))
+    .map<Section>((g) => ({ key: g.slug, title: g.title, projects: byGroup.get(g.slug) ?? [], group: g }))
 
   // A project may reference a group that no longer exists; never hide it.
   const orphaned = [...byGroup.keys()].filter(
@@ -84,7 +82,7 @@ const GroupTools = ({ projects }: { projects: ReadonlyArray<ProjectWithState> })
   if (settled.length === 0) {
     return (
       <button className="ico-primary busy" title="Transition in progress" disabled>
-        <Spinner size={12} />
+        <Spinner />
       </button>
     )
   }
@@ -97,7 +95,7 @@ const GroupTools = ({ projects }: { projects: ReadonlyArray<ProjectWithState> })
           title={`Start ${runnable.length} in group`}
           onClick={() => runnable.forEach((p) => void start(p.id))}
         >
-          <Icons.Play size={14} />
+          <Icons.Play size={18} />
         </button>
       )}
       {stoppable.length > 0 && (
@@ -106,74 +104,161 @@ const GroupTools = ({ projects }: { projects: ReadonlyArray<ProjectWithState> })
           title={`Stop ${stoppable.length} in group`}
           onClick={() => stoppable.forEach((p) => void stop(p.id))}
         >
-          <Icons.Stop size={14} />
+          <Icons.Stop size={18} />
         </button>
       )}
     </>
   )
 }
 
-const ProjectRow = ({
-  project,
-  active,
-  onSelect
+// ────────────────────────────────────────────────────────────────────────────
+// Systems — the infrastructure the projects run ON, not projects themselves:
+// the engine this client is talking to, and the Docker daemon the containers
+// need. Lives at the foot of the tree (parity with the old app's system group)
+// instead of as pills in the titlebar, so status sits with everything else it
+// governs. Caddy/tunnels will join here as those modules land.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** The systems' start/stop control. Deliberately the same shape, size and slot
+ *  as a project's `LifecycleButton`: Docker being up is not a different KIND of
+ *  fact from a project being up, so it should not read as one. A transition
+ *  fills the same slot with a spinner rather than swapping the control out. */
+const SystemButton = ({
+  state,
+  startTitle,
+  stopTitle,
+  canStart = true,
+  onStart,
+  onStop
 }: {
-  project: ProjectWithState
-  active: boolean
-  onSelect: () => void
+  state: RuntimeState
+  startTitle: string
+  stopTitle: string
+  canStart?: boolean
+  onStart: () => void
+  onStop: () => void
 }) => {
-  const sample = useEngine((s) => s.resources[project.id])
-  const { busy, intent, running, warmingUp } = useLifecycleState(project)
-  const port = primaryPort(project)
+  if (state === "starting" || state === "stopping") {
+    return (
+      <button className="ico-primary busy" title={state === "starting" ? "Starting…" : "Stopping…"} disabled>
+        <Spinner size={14} />
+      </button>
+    )
+  }
+  return state === "running" ? (
+    <button className="ico-primary danger" title={stopTitle} onClick={onStop}>
+      <Icons.Stop size={16} />
+    </button>
+  ) : (
+    <button className="ico-primary success" title={startTitle} disabled={!canStart} onClick={onStart}>
+      <Icons.Play size={16} />
+    </button>
+  )
+}
+
+const SystemsGroup = ({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) => {
+  const status = useEngine((s) => s.status)
+  const engine = useEngine((s) => s.engine)
+  const daemon = useEngine((s) => s.daemon)
+  const startDaemon = useEngine((s) => s.startDaemon)
+  const stopDaemon = useEngine((s) => s.stopDaemon)
+  const shutdownEngine = useEngine((s) => s.shutdownEngine)
+  const [confirmShutdown, setConfirmShutdown] = useState(false)
+
+  // Systems speak the same status vocabulary as projects — a running daemon is
+  // as running as a running project, and reads the same: the figure for its
+  // state, running/walking/at rest, and a dot only when something has failed.
+  const engineState: RuntimeState = status === "open" ? "running" : status === "connecting" ? "starting" : "crashed"
+  const dockerState: RuntimeState =
+    daemon.state === "running"
+      ? "running"
+      : daemon.state === "starting"
+        ? "starting"
+        : daemon.state === "start_failed"
+          ? "errored"
+          : "idle"
+
+  const engineUp = status === "open"
+  const dockerUp = daemon.state === "running"
 
   return (
-    <div className={`svc-row ${active ? "active" : ""} ${busy ? "busy" : ""}`} onClick={onSelect} role="button" tabIndex={0}>
-      <ProjectAvatar project={project} className="svc-icon" />
-      <span className="svc-body">
-        <span className="svc-name">{project.name}</span>
-        <span className="svc-meta">
-          <StatusDot state={project.state} size={6} />
-          {port !== undefined && <span className="svc-port">:{port}</span>}
-          {running && sample !== undefined && (
-            <span className="svc-stat">
-              <span className="dot-sep">·</span>
-              {sample.cpuPercent.toFixed(1)}%<span className="dot-sep">·</span>
-              {formatMB(sample.rssBytes)}M
+    <div className="parent-group">
+      <button className="parent-head" onClick={onToggle}>
+        {collapsed ? <Icons.ChevronRight size={11} sw={2} /> : <Icons.ChevronDown size={11} sw={2} />}
+        <span>Systems</span>
+        <span className="parent-count">{(engineUp ? 1 : 0) + (dockerUp ? 1 : 0)}</span>
+      </button>
+
+      <Collapsible id="bucket-systems" open={!collapsed} transitionDuration={COLLAPSE_DURATION} initialOpen>
+        <div className="sys-body">
+          <div className="sys-row">
+            <span className="sys-icon">
+              <Icons.Cpu size={14} />
             </span>
-          )}
-          {busy ? (
-            <span className="svc-health waiting">{intentLabel(intent!).toLowerCase()}</span>
-          ) : warmingUp ? (
-            <span className="svc-health waiting">starting up</span>
-          ) : (
-            project.health !== undefined &&
-            project.health !== "unknown" && (
-              <span className={`svc-health ${project.health}`}>{project.health}</span>
-            )
-          )}
-        </span>
-      </span>
-      <span className="svc-primary-action" onClick={(e) => e.stopPropagation()}>
-        <LifecycleButton project={project} />
-      </span>
-      <span className="svc-actions" onClick={(e) => e.stopPropagation()}>
-        {port !== undefined && (
-          <button
-            className="ico"
-            title="Open in browser"
-            onClick={() => window.open(`http://localhost:${port}`, "_blank", "noopener")}
-          >
-            <Icons.Compass size={13} />
-          </button>
-        )}
-        <button
-          className="ico"
-          title="Copy path"
-          onClick={() => void navigator.clipboard?.writeText(project.root)}
+            <span className="svc-body">
+              <span className="svc-name">Engine</span>
+              <span className="svc-meta">
+                <StatusFigure state={engineState} size={12} />
+                {/* Uptime, not the version: the version is a constant compiled
+                    into the engine and never told anyone anything. */}
+                <span className="svc-port">{engineUp ? formatUptime(engine?.startedAt) : status}</span>
+              </span>
+            </span>
+            {/* Same control as a project: one slot, three states. Start is the
+                one thing a renderer genuinely cannot do — the engine is what
+                serves this page — so it is present and disabled rather than
+                absent, with the reason on it. */}
+            <span className="sys-actions">
+              <SystemButton
+                state={engineState}
+                startTitle="Start the engine from a terminal — nothing in this window can"
+                stopTitle="Shut down the engine"
+                canStart={false}
+                onStart={() => {}}
+                onStop={() => setConfirmShutdown(true)}
+              />
+            </span>
+          </div>
+
+          <div className="sys-row">
+            <span className="sys-icon">
+              <Icons.Docker size={14} />
+            </span>
+            <span className="svc-body">
+              <span className="svc-name">Docker</span>
+              <span className="svc-meta">
+                <StatusFigure state={dockerState} size={12} />
+                <span className="svc-port trunc">{daemon.state}</span>
+              </span>
+            </span>
+            <span className="sys-actions">
+              <SystemButton
+                state={dockerState}
+                startTitle="Start Docker"
+                stopTitle="Stop Docker"
+                onStart={() => void startDaemon()}
+                onStop={() => void stopDaemon()}
+              />
+            </span>
+          </div>
+        </div>
+      </Collapsible>
+
+      {confirmShutdown && (
+        <ConfirmDialog
+          title="Shut down the engine?"
+          confirmLabel="Shut down"
+          danger
+          onCancel={() => setConfirmShutdown(false)}
+          onConfirm={() => {
+            void shutdownEngine()
+            setConfirmShutdown(false)
+          }}
         >
-          <Icons.Copy size={12} />
-        </button>
-      </span>
+          Every supervised project is stopped and this window loses its connection. Nothing here can start the
+          engine again — you will need `pnpm engine` or the CLI.
+        </ConfirmDialog>
+      )}
     </div>
   )
 }
@@ -192,9 +277,13 @@ export const Sidebar = ({ selectedId, onSelect, theme, onToggleTheme, onCollapse
   const groups = useEngine((s) => s.groups)
   const resources = useEngine((s) => s.resources)
 
+  const removeGroup = useEngine((s) => s.removeGroup)
+
   const [query, setQuery] = useState("")
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [bucketCollapsed, setBucketCollapsed] = useState<Record<string, boolean>>({})
+  const [editingGroup, setEditingGroup] = useState<Group | "new" | null>(null)
+  const [deletingGroup, setDeletingGroup] = useState<Group | null>(null)
 
   const matching = useMemo(
     () => projects.filter((p) => query === "" || p.name.toLowerCase().includes(query.toLowerCase())),
@@ -232,6 +321,9 @@ export const Sidebar = ({ selectedId, onSelect, theme, onToggleTheme, onCollapse
           </button>
           <button className="ico-btn" title="Toggle theme" onClick={onToggleTheme}>
             {theme === "dark" ? <Icons.Sun size={14} /> : <Icons.Moon size={14} />}
+          </button>
+          <button className="ico-btn" title="New group" onClick={() => setEditingGroup("new")}>
+            <Icons.FolderPlus size={14} />
           </button>
           <button className="ico-btn" title="Add project" onClick={onAddProject}>
             <Icons.Plus size={14} />
@@ -300,6 +392,27 @@ export const Sidebar = ({ selectedId, onSelect, theme, onToggleTheme, onCollapse
                       )}
                       <span className="section-spacer" />
                       <span className="section-tools" onClick={(e) => e.stopPropagation()}>
+                        {/* Rename/delete belong to a real group row. "Ungrouped"
+                            is a rendering of the projects with no group, not a
+                            thing that can be edited. */}
+                        {section.group !== undefined && (
+                          <span className="section-edit">
+                            <button
+                              className="ico"
+                              title={`Rename ${section.title}`}
+                              onClick={() => setEditingGroup(section.group ?? null)}
+                            >
+                              <Icons.Edit size={12} />
+                            </button>
+                            <button
+                              className="ico danger-hover"
+                              title={`Delete ${section.title}`}
+                              onClick={() => setDeletingGroup(section.group ?? null)}
+                            >
+                              <Icons.Trash size={12} />
+                            </button>
+                          </span>
+                        )}
                         <GroupTools projects={section.projects} />
                       </span>
                     </div>
@@ -312,7 +425,7 @@ export const Sidebar = ({ selectedId, onSelect, theme, onToggleTheme, onCollapse
                     >
                       <div className="section-body">
                         {section.projects.map((p) => (
-                          <ProjectRow
+                          <ProjectCard
                             key={p.id}
                             project={p}
                             active={selectedId === p.id}
@@ -331,6 +444,11 @@ export const Sidebar = ({ selectedId, onSelect, theme, onToggleTheme, onCollapse
         {buckets.length === 0 && (
           <div className="empty-row">{projects.length === 0 ? "No projects yet" : "No projects match"}</div>
         )}
+
+        <SystemsGroup
+          collapsed={bucketCollapsed["systems"] === true}
+          onToggle={() => setBucketCollapsed((c) => ({ ...c, systems: !c["systems"] }))}
+        />
         <div style={{ height: 24 }} />
       </div>
 
@@ -342,6 +460,33 @@ export const Sidebar = ({ selectedId, onSelect, theme, onToggleTheme, onCollapse
         <span className="foot-spacer" />
         <span className="foot-mem">{(totalRss / (1024 * 1024 * 1024)).toFixed(1)} GB</span>
       </div>
+
+      {editingGroup !== null && (
+        <GroupDialog
+          {...(editingGroup === "new" ? {} : { existing: editingGroup })}
+          onClose={() => setEditingGroup(null)}
+        />
+      )}
+
+      {deletingGroup !== null && (
+        <ConfirmDialog
+          title={`Delete ${deletingGroup.title}?`}
+          confirmLabel="Delete group"
+          danger
+          onCancel={() => setDeletingGroup(null)}
+          onConfirm={() => {
+            void removeGroup(deletingGroup.slug)
+            setDeletingGroup(null)
+          }}
+        >
+          {(() => {
+            const members = projects.filter((p) => p.groupSlug === deletingGroup.slug).length
+            return members === 0
+              ? "The group is empty. Nothing else changes."
+              : `${members} project${members === 1 ? "" : "s"} will move to Ungrouped. Nothing is deleted or stopped.`
+          })()}
+        </ConfirmDialog>
+      )}
     </aside>
   )
 }

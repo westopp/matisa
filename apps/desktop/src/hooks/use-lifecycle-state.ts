@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react"
 import type { ProjectWithState } from "@matisa/core"
 import { useEngine, type Intent } from "~/store/store.engine"
 
@@ -12,7 +13,19 @@ import { useEngine, type Intent } from "~/store/store.engine"
 //
 // Readiness is NOT one of them. A worker with no declared port never becomes
 // `ready`, so gating on it would leave that project loading forever.
+//
+// Neither source is trusted forever. The optimistic flag has its own backstop
+// in the store; this adds one for the engine-reported half, because a
+// transition that never settles used to disable the control PERMANENTLY — the
+// project sat in `stopping`, the only button that could act on it was greyed
+// out, and restarting the engine was the sole way out. A transition that
+// overruns every budget the engine has is no longer evidence of work in
+// progress, so the control comes back and the user can act.
 // ────────────────────────────────────────────────────────────────────────────
+
+/** Comfortably beyond the engine's own worst case (compose down: ~300s + kill).
+ *  Past this, "still transitioning" is not a claim worth believing. */
+const TRANSITION_STUCK_MS = 6 * 60 * 1000
 
 export interface LifecycleState {
   /** A transition is in progress; controls should be disabled. */
@@ -24,6 +37,9 @@ export interface LifecycleState {
   /** Up, but the declared port has not accepted a connection yet. Presentation
    *  only — never a reason to disable a control. */
   readonly warmingUp: boolean
+  /** The engine has reported the same transition for longer than it could
+   *  plausibly take. Controls are live again; say so rather than pretending. */
+  readonly stalled: boolean
 }
 
 export const useLifecycleState = (project: ProjectWithState): LifecycleState => {
@@ -32,16 +48,28 @@ export const useLifecycleState = (project: ProjectWithState): LifecycleState => 
   const fromState: Intent | null =
     project.state === "starting" ? "starting" : project.state === "stopping" ? "stopping" : null
 
+  const [stalled, setStalled] = useState(false)
+
+  // The clock restarts whenever the reported transition changes — and whenever
+  // it ends, which is what clears the flag on a normal settle.
+  useEffect(() => {
+    setStalled(false)
+    if (fromState === null) return
+    const timer = setTimeout(() => setStalled(true), TRANSITION_STUCK_MS)
+    return () => clearTimeout(timer)
+  }, [fromState, project.id])
+
   // The optimistic intent wins while set: during a restart the engine reports
   // `stopping` then `starting`, but the user asked for a restart and the label
   // should say so throughout.
   const intent = optimistic ?? fromState
 
   return {
-    busy: intent !== null,
+    busy: intent !== null && !stalled,
     intent,
     running: project.state === "running",
-    warmingUp: project.state === "running" && project.health === "waiting"
+    warmingUp: project.state === "running" && project.health === "waiting",
+    stalled: stalled && fromState !== null
   }
 }
 

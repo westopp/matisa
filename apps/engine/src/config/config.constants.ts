@@ -42,3 +42,26 @@ export const SCROLLBACK_MAX_BYTES = 256 * 1024
 export const START_TIMEOUT_MS = 10_000
 /** How long to wait for a child to exit after SIGTERM before SIGKILL. */
 export const STOP_TIMEOUT_MS = 8_000
+/** After SIGKILL, how long to wait for the REAPED exit before giving up on the
+ * wait entirely. SIGKILL cannot be caught, so overshooting this means the exit
+ * notification itself was lost — waiting longer would only wedge the caller. */
+export const REAP_GRACE_MS = 2_000
+
+/** Grace passed to `docker stop`/`compose down` (seconds) before the daemon
+ * kills the container itself. Kept below the CLI timeouts so the daemon's own
+ * escalation always fires first. */
+export const DOCKER_STOP_GRACE_S = 10
+
+/** A shell session (`sh:`) nobody has been attached to for this long is
+ * unreachable — no client is coming back for it — and gets reaped. Command
+ * (`cmd:`) and supervised (`run:`) sessions are NEVER reaped: they are doing
+ * real work whether or not a terminal is pointed at them. */
+export const SHELL_IDLE_REAP_MS = 15 * 60 * 1000
+export const SHELL_REAP_INTERVAL_MS = 60_000
+
+/** Boot orphan sweep: a spawn row whose pid is still alive is a leftover from an
+ * engine that died without teardown. The pid is only killed when the process's
+ * age agrees with the recorded start time — a reused pid belongs to someone
+ * else, and killing it would be an act of vandalism. */
+export const ORPHAN_PID_AGE_TOLERANCE_MS = 120_000
+export const ORPHAN_TERM_GRACE_MS = 2_000

@@ -162,6 +162,15 @@ const runProcess = (project: Project, deps: RunnerDeps): Effect.Effect<void> =>
           const spawned = yield* spawnChild(project, env).pipe(Effect.either)
           if (Either.isLeft(spawned)) {
             yield* driver.apply(Event.Fault({ reason: spawned.left.errorMessage }))
+            // Nothing ran, so no crash record would ever be written — and the
+            // reason (bad program, missing cwd) is exactly what the user needs.
+            yield* deps.runtimeRepo
+              .recordCrash({
+                projectId: project.id,
+                kind: "error",
+                summary: spawned.left.errorMessage
+              })
+              .pipe(Effect.ignore)
             return
           }
           const child = spawned.right
@@ -230,6 +239,7 @@ const runProcess = (project: Project, deps: RunnerDeps): Effect.Effect<void> =>
         yield* deps.runtimeRepo
           .recordCrash({
             projectId: project.id,
+            kind: "crash",
             exitCode: state.code ?? undefined,
             signal: state.signal ?? undefined,
             summary,
@@ -238,7 +248,13 @@ const runProcess = (project: Project, deps: RunnerDeps): Effect.Effect<void> =>
           .pipe(Effect.ignore)
 
         if (attempt + 1 >= deps.config.backoff.maxAttempts) {
-          yield* driver.apply(Event.Fault({ reason: "max restart attempts reached" }))
+          const reason = `gave up after ${deps.config.backoff.maxAttempts} restart attempts`
+          yield* driver.apply(Event.Fault({ reason }))
+          // The individual crashes are on record; the decision to stop trying
+          // is what explains why the project is sitting there errored.
+          yield* deps.runtimeRepo
+            .recordCrash({ projectId: project.id, kind: "error", summary: reason, logTail: tail })
+            .pipe(Effect.ignore)
           return
         }
 

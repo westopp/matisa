@@ -50,6 +50,14 @@ export const EnvSetParams = Schema.Struct({
 })
 export type EnvSetParams = typeof EnvSetParams.Type
 
+/** Delete one variable from a context. Distinct from env.remove, which drops an
+ *  entire context — this is the notepad's line-deletion primitive. */
+export const EnvUnsetParams = Schema.Struct({
+  contextId: ContextId,
+  key: Schema.String
+})
+export type EnvUnsetParams = typeof EnvUnsetParams.Type
+
 export const EnvUseParams = Schema.Struct({
   projectId: ProjectId,
   contextId: ContextId
@@ -94,10 +102,22 @@ export const RuntimeStatus = Schema.Struct({
 })
 export type RuntimeStatus = typeof RuntimeStatus.Type
 
+/** Which half of the failure vocabulary a record belongs to. `crash` — the
+ *  child ran and exited non-zero. `error` — the engine could not manage it at
+ *  all (spawn refused, port held, docker/compose declined, restarts exhausted),
+ *  which is the `errored` runtime state rather than `crashed`. The two are
+ *  actioned differently, so the record says which it was instead of leaving a
+ *  client to infer it from a missing exit code. */
+export const FailureKind = Schema.Literal("crash", "error")
+export type FailureKind = typeof FailureKind.Type
+
 /** A persisted launch failure — queryable so clients can always show WHY. */
 export const CrashRecord = Schema.Struct({
   projectId: ProjectId,
   ts: Schema.Number,
+  /** Defaulted, not required: rows written before the column existed are
+   *  process crashes, which is what the table originally held. */
+  kind: Schema.optionalWith(FailureKind, { default: () => "crash" as const }),
   exitCode: Schema.optional(Schema.Int),
   signal: Schema.optional(Schema.String),
   summary: Schema.optional(Schema.String),
@@ -192,6 +212,11 @@ export type ChooseFileParams = typeof ChooseFileParams.Type
 
 export const ReadIconParams = Schema.Struct({ path: Schema.String })
 export type ReadIconParams = typeof ReadIconParams.Type
+
+/** Show a path in the OS file manager. Selects the entry in its parent folder
+ *  rather than opening it — "reveal", not "open with". */
+export const RevealParams = Schema.Struct({ path: Schema.String })
+export type RevealParams = typeof RevealParams.Type
 
 /** An icon as a data URI. The client runs in a browser sandbox and cannot read
  *  `file://`, so the engine — which does have disk access — inlines the bytes. */
@@ -335,6 +360,7 @@ export const methods = {
   "catalog.remove": { params: ById, result: Schema.Void },
 
   "env.set": { params: EnvSetParams, result: EnvContext },
+  "env.unset": { params: EnvUnsetParams, result: EnvContext },
   "env.list": { params: Schema.Void, result: Schema.Array(EnvContext) },
   "env.use": { params: EnvUseParams, result: ProjectWithState },
   "env.create": { params: EnvCreateParams, result: EnvContext },
@@ -344,6 +370,13 @@ export const methods = {
   "lifecycle.start": { params: ById, result: Accepted },
   "lifecycle.stop": { params: ById, result: Accepted },
   "lifecycle.restart": { params: ById, result: Accepted },
+  /** Force a project down NOW: SIGKILL the group (or `rm -f` the container)
+   *  without a drain, then drop the runner without waiting on it. The escape
+   *  hatch for a stop that will not finish — `lifecycle.stop` is the polite
+   *  door and this is the one that always opens. Unclean by construction: the
+   *  process gets no chance to flush, so it is a user's decision, never the
+   *  engine's. */
+  "lifecycle.kill": { params: ById, result: Accepted },
   "lifecycle.status": { params: ById, result: RuntimeStatus },
 
   "events.subscribe": { params: SubscribeParams, result: SubscribeResult },
@@ -353,6 +386,13 @@ export const methods = {
   "pty.attach": { params: BySessionId, result: Attached },
   "pty.input": { params: PtyInputParams, result: Schema.Void },
   "pty.resize": { params: PtyResizeParams, result: Schema.Void },
+  /** Kill a shell/command session. Never valid for a `run:` session — a project
+   *  is stopped through lifecycle.stop, not by closing a terminal. */
+  "pty.close": { params: BySessionId, result: Schema.Void },
+  /** Drop a session's scrollback. The process is untouched — this clears the
+   *  RECORD, so a later attach replays nothing from before the clear. Valid for
+   *  every session kind: clearing a view never affects what is running. */
+  "pty.clear": { params: BySessionId, result: Schema.Void },
 
   "commands.set": { params: CommandSetParams, result: NamedCommand },
   "commands.list": { params: ById, result: Schema.Array(NamedCommand) },
@@ -367,6 +407,7 @@ export const methods = {
   "fs.chooseDir": { params: ChooseDirParams, result: ChooseDirResult },
   "fs.chooseFile": { params: ChooseFileParams, result: ChooseDirResult },
   "fs.readIcon": { params: ReadIconParams, result: ReadIconResult },
+  "fs.reveal": { params: RevealParams, result: Schema.Void },
 
   "logs.tail": { params: LogsTailParams, result: LogsTailResult },
   "lifecycle.failures": { params: FailuresParams, result: Schema.Array(CrashRecord) },

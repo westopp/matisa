@@ -18,7 +18,8 @@ const resolveDbPath = (): string => process.env.MATISA_DB ?? DEFAULT_DB
 // transaction, and recorded in schema_migrations. Add new files here in order.
 const MIGRATIONS: ReadonlyArray<{ readonly version: string; readonly file: string }> = [
   { version: "0001_init", file: "0001_init.sql" },
-  { version: "0002_project_icons", file: "0002_project_icons.sql" }
+  { version: "0002_project_icons", file: "0002_project_icons.sql" },
+  { version: "0004_crash_kind", file: "0004_crash_kind.sql" }
 ]
 
 const migrationsDir = (): string =>

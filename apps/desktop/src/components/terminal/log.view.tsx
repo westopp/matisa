@@ -43,9 +43,12 @@ export const LogView = ({ project }: { project: ProjectWithState }) => {
   const hidden = shown.length - visible.length
 
   // Stick to the bottom unless the user has scrolled up to read — the same
-  // contract xterm gives the PTY panes.
+  // contract xterm gives the PTY panes. `pinnedRef` drives the auto-scroll
+  // synchronously; `detached` is the reactive mirror that surfaces the
+  // jump-to-latest control (and only surfaces it when there is a tail to jump to).
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const pinnedRef = useRef(true)
+  const [detached, setDetached] = useState(false)
   useEffect(() => {
     const el = bodyRef.current
     if (el !== null && pinnedRef.current) el.scrollTop = el.scrollHeight
@@ -54,7 +57,17 @@ export const LogView = ({ project }: { project: ProjectWithState }) => {
   const onScroll = (): void => {
     const el = bodyRef.current
     if (el === null) return
-    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+    const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+    pinnedRef.current = pinned
+    setDetached(!pinned)
+  }
+
+  const jumpToBottom = (): void => {
+    const el = bodyRef.current
+    if (el === null) return
+    el.scrollTop = el.scrollHeight
+    pinnedRef.current = true
+    setDetached(false)
   }
 
   // A stale filter must not silently show nothing: if the buffer was cleared or
@@ -114,6 +127,12 @@ export const LogView = ({ project }: { project: ProjectWithState }) => {
           </>
         )}
       </div>
+
+      {detached && (
+        <button className="jump-bottom" title="Jump to latest" onClick={jumpToBottom} aria-label="Jump to latest">
+          <Icons.ArrowDownCircle size={20} />
+        </button>
+      )}
     </div>
   )
 }
