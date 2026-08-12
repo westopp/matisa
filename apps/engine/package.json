@@ -5,18 +5,21 @@
   "type": "module",
   "main": "./src/main.ts",
   "scripts": {
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "build": "node scripts/build.mjs"
   },
   "dependencies": {
     "@effect/platform": "^0.97.0",
     "@effect/platform-node": "^0.108.0",
     "@matisa/core": "workspace:*",
     "@matisa/store": "workspace:*",
+    "better-sqlite3": "^12.11.1",
     "effect": "^3.22.0",
     "node-pty": "^1.1.0",
     "ws": "^8.21.1"
   },
   "devDependencies": {
-    "@types/ws": "^8.18.1"
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.28.2"
   }
 }

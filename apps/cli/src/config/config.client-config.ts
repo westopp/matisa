@@ -1,4 +1,5 @@
 import { Context, Duration, Effect, FiberRef, Layer, Option } from "effect"
+import * as os from "node:os"
 import * as path from "node:path"
 import { InvalidClientConfig } from "./config.errors.js"
 
@@ -35,9 +36,11 @@ export class ClientConfig extends Context.Tag("matisa-cli/ClientConfig")<
   ClientConfigService
 >() {}
 
-/** Default socket location the engine listens on when MATISA_SOCK is unset. */
+/** Default socket location the engine listens on when MATISA_SOCK is unset —
+ * the same MATISA_ROOT resolution the engine uses, so a bare `matisa` finds a
+ * bare engine no matter which directory either was started from. */
 export const defaultSocketPath = (): string =>
-  path.join(process.cwd(), ".matisa", "engine.sock")
+  path.join(process.env.MATISA_ROOT ?? path.join(os.homedir(), ".matisa"), "engine.sock")
 
 const resolveTimeout = (
   raw: string | undefined

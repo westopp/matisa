@@ -1,7 +1,13 @@
 // Platform path + protocol constants. Pure — no Effect. The AppConfig service
 // reads env overrides on top of these defaults and validates the result.
 
-export const MATISA_ROOT = "/Users/thulanekhumalo/Desktop/dev/tools/matisa/.matisa"
+import { homedir } from "node:os"
+import { join } from "node:path"
+
+/** Where all engine state lives (socket, db, log, secrets). MATISA_ROOT
+ * relocates the whole root at once; the per-file env overrides in AppConfig
+ * still win over it individually. */
+export const MATISA_ROOT = process.env.MATISA_ROOT ?? join(homedir(), ".matisa")
 
 export const DEFAULT_SOCKET_PATH = `${MATISA_ROOT}/engine.sock`
 export const DEFAULT_DB_PATH = `${MATISA_ROOT}/matisa.db`

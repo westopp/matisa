@@ -1,30 +1,28 @@
 import { Context, Effect, Layer } from "effect"
 import Database from "better-sqlite3"
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
-import { fileURLToPath } from "node:url"
+import { homedir } from "node:os"
 import { dirname, join } from "node:path"
-import { mkdirSync, readFileSync } from "node:fs"
+import { mkdirSync } from "node:fs"
 import * as schema from "./db.schema/db.index.js"
+import { MIGRATIONS } from "./migrations/migrations.embedded.js"
 import { MigrationError, StoreQueryError } from "./store.errors.js"
 
 type Sqlite = Database.Database
 type Db = BetterSQLite3Database<typeof schema>
 
-const DEFAULT_DB = "/Users/thulanekhumalo/Desktop/dev/tools/matisa/.matisa/matisa.db"
+// MATISA_DB pins the file exactly; otherwise the DB lives under the matisa
+// root (MATISA_ROOT, default ~/.matisa) — the same resolution the engine's
+// AppConfig performs, repeated here because the store must also open the right
+// DB when run standalone (tests, one-off scripts).
+const resolveDbPath = (): string =>
+  process.env.MATISA_DB ??
+  join(process.env.MATISA_ROOT ?? join(homedir(), ".matisa"), "matisa.db")
 
-const resolveDbPath = (): string => process.env.MATISA_DB ?? DEFAULT_DB
-
-// Forward-only migration ledger. Each entry is applied once, inside a single
-// transaction, and recorded in schema_migrations. Add new files here in order.
-const MIGRATIONS: ReadonlyArray<{ readonly version: string; readonly file: string }> = [
-  { version: "0001_init", file: "0001_init.sql" },
-  { version: "0002_project_icons", file: "0002_project_icons.sql" },
-  { version: "0004_crash_kind", file: "0004_crash_kind.sql" }
-]
-
-const migrationsDir = (): string =>
-  join(dirname(fileURLToPath(import.meta.url)), "..", "migrations")
-
+// Forward-only migration ledger, embedded as strings (migrations.embedded.ts,
+// generated from the .sql files) so the bundled engine carries its schema with
+// it. Each entry is applied once, inside a single transaction, and recorded in
+// schema_migrations.
 const runMigrations = (sqlite: Sqlite): Effect.Effect<void, MigrationError> =>
   Effect.try({
     try: () => {
@@ -35,15 +33,13 @@ const runMigrations = (sqlite: Sqlite): Effect.Effect<void, MigrationError> =>
       const has = new Set(
         (applied.all() as ReadonlyArray<{ version: string }>).map((r) => r.version)
       )
-      const dir = migrationsDir()
       for (const m of MIGRATIONS) {
         if (has.has(m.version)) continue
-        const sql = readFileSync(join(dir, m.file), "utf8")
         const record = sqlite.prepare(
           "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)"
         )
         sqlite.transaction(() => {
-          sqlite.exec(sql)
+          sqlite.exec(m.sql)
           record.run(m.version, Date.now())
         })()
       }

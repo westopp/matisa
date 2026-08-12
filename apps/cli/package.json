@@ -8,7 +8,8 @@
     "matisa": "./src/main.ts"
   },
   "scripts": {
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "build": "node scripts/build.mjs"
   },
   "dependencies": {
     "@effect/cli": "^0.76.0",
@@ -16,5 +17,8 @@
     "@effect/platform-node": "^0.108.0",
     "@matisa/core": "workspace:*",
     "effect": "^3.22.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

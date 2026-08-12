@@ -25,3 +25,8 @@ dist/
 
 # lighthouse CI artifacts
 .lighthouseci/
+
+# electron packaging staging + output
+apps/shell/vendor/
+apps/shell/release/
+apps/shell/resources/bin/

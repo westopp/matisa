@@ -8,9 +8,11 @@
     "postinstall": "chmod +x node_modules/.pnpm/node-pty*/node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
     "typecheck": "tsc -b && tsc -p apps/desktop --noEmit",
     "desktop": "pnpm --filter @matisa/desktop dev",
+    "shell": "pnpm --filter @matisa/shell dev",
+    "package": "pnpm --filter @matisa/shell package",
     "test": "node --import tsx --test packages/*/src/__tests__/*.test.ts apps/*/src/__tests__/*.test.ts",
-    "engine": "node --import tsx apps/engine/src/main.ts",
-    "cli": "node --import tsx apps/cli/src/main.ts"
+    "engine": "MATISA_ROOT=$PWD/.matisa node --import tsx apps/engine/src/main.ts",
+    "cli": "MATISA_ROOT=$PWD/.matisa node --import tsx apps/cli/src/main.ts"
   },
   "devDependencies": {
     "@types/node": "^22",
@@ -21,7 +23,9 @@
     "onlyBuiltDependencies": [
       "better-sqlite3",
       "node-pty",
-      "esbuild"
+      "esbuild",
+      "electron",
+      "electron-winstaller"
     ]
   }
 }
