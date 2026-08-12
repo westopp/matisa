@@ -96,6 +96,11 @@ export const Icons = {
   ),
   PanelLeft: (p: IconProps) => <Icon {...p} d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Zm6 0v16" />,
   PanelRight: (p: IconProps) => <Icon {...p} d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Zm12 0v16" />,
+  /** The middle pane — the same frame as its two neighbours, ruled on both
+   *  sides, so the three toggles read as one row of three panes. */
+  PanelCenter: (p: IconProps) => (
+    <Icon {...p} d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Zm5 0v16m8-16v16" />
+  ),
   FolderOpen: (p: IconProps) => (
     <Icon {...p} d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2H3Zm0 0v10a2 2 0 0 0 2 2h13a2 2 0 0 0 1.9-1.4L22 11H6.5a2 2 0 0 0-1.9 1.4L3 17" />
   ),

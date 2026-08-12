@@ -4,6 +4,7 @@ import { closeSession } from "~/rpc/rpc.pty"
 import { useEngine } from "~/store/store.engine"
 import { revealPath } from "~/store/store.picker"
 import { useCommandRunner, type CommandRunner } from "~/hooks/use-command-run"
+import { cardName } from "~/lib/view-transition"
 import { useLifecycleState } from "~/hooks/use-lifecycle-state"
 import { useTerminals, type Pane } from "~/store/store.terminals"
 import { Icons } from "./icons"
@@ -311,7 +312,13 @@ export const ProjectCard = ({
     // than on the card, so the pills take the same fill: they are part of what
     // is selected, not grey satellites of it. No state class — the fill says
     // selected and nothing else.
-    <div className={`svc-cell ${active ? "active" : ""}`}>
+    // Named for the view transition: the board and the rail are the same cards
+    // at two widths, so the browser tweens each one from its grid slot to its
+    // place in the column rather than crossfading the two layouts.
+    <div
+      className={`svc-cell ${active ? "active" : ""}`}
+      style={{ viewTransitionName: cardName(project.id) }}
+    >
     {/* The state rides on the card itself: a selected card is FILLED with the
         tone of what it is doing — lavender running, coral broken — and every
         chip and control inside it inverts onto that surface.

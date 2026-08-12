@@ -13,14 +13,17 @@ export type DrawerTab = "failures" | "activity" | "resources" | "logs"
 
 interface UiState {
   theme: Theme
-  sidebarCollapsed: boolean
+  /** The left pane. The centre pane's collapse is the URL — there is no project
+   *  in it — and the right pane's is `drawerOpen`, so this is the only one of
+   *  the three that needs a flag of its own. */
+  fleetCollapsed: boolean
   drawerOpen: boolean
   drawerTab: DrawerTab
   /** Narrow the drawer to the project in the URL. Off = the whole network. */
   drawerScoped: boolean
   toggleTheme: () => void
-  toggleSidebar: () => void
-  collapseSidebar: () => void
+  toggleFleet: () => void
+  collapseFleet: () => void
   toggleDrawer: () => void
   closeDrawer: () => void
   /** Opens the drawer on that tab — clicking a tab you cannot see is not a thing
@@ -44,7 +47,7 @@ const rememberTab = (tab: DrawerTab): DrawerTab => {
 
 export const useUi = create<UiState>()((set) => ({
   theme: stored(),
-  sidebarCollapsed: false,
+  fleetCollapsed: false,
   drawerOpen: false,
   drawerTab: storedTab(),
   drawerScoped: true,
@@ -55,8 +58,8 @@ export const useUi = create<UiState>()((set) => ({
       document.documentElement.setAttribute("data-theme", theme)
       return { theme }
     }),
-  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-  collapseSidebar: () => set({ sidebarCollapsed: true }),
+  toggleFleet: () => set((s) => ({ fleetCollapsed: !s.fleetCollapsed })),
+  collapseFleet: () => set({ fleetCollapsed: true }),
   toggleDrawer: () => set((s) => ({ drawerOpen: !s.drawerOpen })),
   closeDrawer: () => set({ drawerOpen: false }),
   openDrawer: (tab) => set({ drawerOpen: true, drawerTab: rememberTab(tab) }),

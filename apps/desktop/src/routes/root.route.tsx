@@ -5,26 +5,46 @@ import type { ProjectId } from "@matisa/core"
 import { useEngine } from "~/store/store.engine"
 import { useUi } from "~/store/store.ui"
 import { isSystemId } from "~/store/store.systems"
+import { withTransition } from "~/lib/view-transition"
 import { Icons } from "~/components/icons"
 import { Sidebar } from "~/components/sidebar"
 import { RightDrawer } from "~/components/drawer"
 import { AddProjectDialog } from "~/components/forms/lazy"
 
 // ────────────────────────────────────────────────────────────────────────────
-// The window chrome: titlebar, sidebar, and the routed detail pane.
+// The window chrome and the three panes it frames: the fleet on the left, the
+// routed detail pane in the middle, the inspector on the right. Each collapses,
+// and that is the whole layout — there is no fourth mode.
+//
+// The board of project cards is not one either. Only the CENTRE pane has a
+// width of its own; the fleet takes whatever is left. Collapse the centre and
+// the fleet inherits the window, its container query trips, and the same cards
+// reflow from a rail into the board. One state, two proportions.
 //
 // The selected project lives in the URL, not in component state, so a reload
 // lands back where you were and the terminals re-attach to the same sessions.
+// Collapsing the centre pane therefore means clearing the URL: "no project
+// open" and "detail pane collapsed" are one fact, and storing it twice is how
+// they drift.
 // ────────────────────────────────────────────────────────────────────────────
 
-const Titlebar = ({ hasSelection }: { hasSelection: boolean }) => {
+const Titlebar = ({
+  hasSelection,
+  canReopen,
+  onToggleDetail
+}: {
+  hasSelection: boolean
+  /** There is a project to put back in the centre pane when it is expanded. */
+  canReopen: boolean
+  onToggleDetail: () => void
+}) => {
   const refreshCatalog = useEngine((s) => s.refreshCatalog)
   const failureCount = useEngine((s) => s.failures.length)
 
   const theme = useUi((s) => s.theme)
   const toggleTheme = useUi((s) => s.toggleTheme)
-  const sidebarCollapsed = useUi((s) => s.sidebarCollapsed)
-  const toggleSidebar = useUi((s) => s.toggleSidebar)
+  const fleetCollapsed = useUi((s) => s.fleetCollapsed)
+  const toggleFleet = useUi((s) => s.toggleFleet)
   const drawerOpen = useUi((s) => s.drawerOpen)
   const toggleDrawer = useUi((s) => s.toggleDrawer)
 
@@ -56,33 +76,50 @@ const Titlebar = ({ hasSelection }: { hasSelection: boolean }) => {
         <button className="ico-btn" title="Refresh" onClick={() => void refreshCatalog()}>
           <Icons.Refresh size={14} />
         </button>
-        {/* With nothing selected the fleet IS the view — there is no second
-            column to give its width to, so the control says so rather than
-            leaving the window empty. */}
-        <button
-          className={`ico-btn ${sidebarCollapsed || !hasSelection ? "" : "active"}`}
-          title={
-            hasSelection
-              ? sidebarCollapsed
-                ? "Show project list"
-                : "Hide project list"
-              : "Open a project to hide the list"
-          }
-          disabled={!hasSelection}
-          onClick={toggleSidebar}
-        >
-          <Icons.PanelLeft size={14} />
-        </button>
-        {/* A crash that happened while you were elsewhere is the one thing the
-            chrome must not stay silent about once its toast has gone. */}
-        <button
-          className={`ico-btn ${drawerOpen ? "active" : ""}`}
-          title={drawerOpen ? "Hide inspector" : "Show inspector"}
-          onClick={toggleDrawer}
-        >
-          <Icons.PanelRight size={14} />
-          {failureCount > 0 && !drawerOpen && <span className="ico-badge" />}
-        </button>
+
+        {/* The three panes, in the order they sit on screen. */}
+        <span className="pane-toggles">
+          {/* Collapsing the fleet with nothing in the centre would leave an
+              empty window, so it is the one toggle with a precondition. */}
+          <button
+            className={`ico-btn ${fleetCollapsed || !hasSelection ? "" : "active"}`}
+            title={
+              hasSelection
+                ? fleetCollapsed
+                  ? "Show project list"
+                  : "Hide project list"
+                : "Open a project to hide the list"
+            }
+            disabled={!hasSelection}
+            onClick={() => withTransition(toggleFleet)}
+          >
+            <Icons.PanelLeft size={14} />
+          </button>
+          <button
+            className={`ico-btn ${hasSelection ? "active" : ""}`}
+            title={
+              hasSelection
+                ? "Close the project — expand the board"
+                : canReopen
+                  ? "Reopen the last project"
+                  : "Nothing to open yet"
+            }
+            disabled={!hasSelection && !canReopen}
+            onClick={onToggleDetail}
+          >
+            <Icons.PanelCenter size={14} />
+          </button>
+          {/* A crash that happened while you were elsewhere is the one thing the
+              chrome must not stay silent about once its toast has gone. */}
+          <button
+            className={`ico-btn ${drawerOpen ? "active" : ""}`}
+            title={drawerOpen ? "Hide inspector" : "Show inspector"}
+            onClick={toggleDrawer}
+          >
+            <Icons.PanelRight size={14} />
+            {failureCount > 0 && !drawerOpen && <span className="ico-badge" />}
+          </button>
+        </span>
       </div>
     </div>
   )
@@ -92,8 +129,8 @@ export const RootLayout = () => {
   const [addingProject, setAddingProject] = useState(false)
   const theme = useUi((s) => s.theme)
   const toggleTheme = useUi((s) => s.toggleTheme)
-  const sidebarCollapsed = useUi((s) => s.sidebarCollapsed)
-  const collapseSidebar = useUi((s) => s.collapseSidebar)
+  const fleetCollapsed = useUi((s) => s.fleetCollapsed)
+  const collapseFleet = useUi((s) => s.collapseFleet)
 
   const navigate = useNavigate()
   const params = useParams({ strict: false }) as { projectId?: string; systemId?: string }
@@ -102,29 +139,31 @@ export const RootLayout = () => {
   const selectedId = (params.projectId ??
     (params.systemId === undefined ? null : `sys:${params.systemId}`)) as ProjectId | null
 
-  // One view, two proportions. With nothing selected the fleet is the whole
-  // window and the routed pane renders nothing; selecting a project turns the
-  // same fleet into a rail beside it. Nothing mounts or unmounts across the
-  // change — the board reflows, the pane takes the rest of the width.
   const focused = selectedId !== null
 
-  // Highlight and route are two different things now. Clicking a card moves the
+  // Highlight and route are two different things. Clicking a card moves the
   // highlight and nothing else; the card's chevron is what puts a project in
   // the URL. The highlight outlives the route, so expanding back to the board
   // leaves the card you came from lit — a board that forgets makes you find
-  // your place again every time.
+  // your place again every time. It is also what the centre pane's toggle
+  // reopens, which is what makes that toggle a toggle rather than a close
+  // button that cannot undo itself.
   const [highlighted, setHighlighted] = useState<ProjectId | null>(selectedId)
   useEffect(() => {
     if (selectedId !== null) setHighlighted(selectedId)
   }, [selectedId])
 
-  const expand = useCallback((): void => void navigate({ to: "/" }), [navigate])
+  // Every route change that moves the layout asks the router to wrap its commit
+  // in a view transition — a navigation lands asynchronously, and this is the
+  // only place that can capture the before and after around it.
+  const expand = useCallback((): void => void navigate({ to: "/", viewTransition: true }), [navigate])
 
   const open = useCallback(
     (id: ProjectId): void => {
       setHighlighted(id)
-      if (isSystemId(id)) void navigate({ to: "/system/$systemId", params: { systemId: id.slice(4) } })
-      else void navigate({ to: "/project/$projectId", params: { projectId: id } })
+      if (isSystemId(id))
+        void navigate({ to: "/system/$systemId", params: { systemId: id.slice(4) }, viewTransition: true })
+      else void navigate({ to: "/project/$projectId", params: { projectId: id }, viewTransition: true })
     },
     [navigate]
   )
@@ -134,13 +173,23 @@ export const RootLayout = () => {
     (id: ProjectId): void => {
       if (id === selectedId) {
         setHighlighted(id)
-        void navigate({ to: "/" })
+        expand()
         return
       }
       open(id)
     },
-    [navigate, open, selectedId]
+    [expand, open, selectedId]
   )
+
+  // The centre pane's own control. Collapsed, it puts back whatever was last
+  // highlighted; there is nothing else it could mean.
+  const toggleDetail = useCallback((): void => {
+    if (focused) {
+      expand()
+      return
+    }
+    if (highlighted !== null) open(highlighted)
+  }, [expand, focused, highlighted, open])
 
   // Escape gives the fleet the window back, the way it does in the design.
   // Ignored while a dialog, a menu or a field has the focus — Escape belongs to
@@ -161,9 +210,13 @@ export const RootLayout = () => {
   return (
     <div className="desktop">
       <div className="window">
-        <Titlebar hasSelection={focused} />
+        <Titlebar hasSelection={focused} canReopen={highlighted !== null} onToggleDetail={toggleDetail} />
         <div className="window-body">
-          <div className={`fleet ${focused ? "as-rail" : ""} ${focused && sidebarCollapsed ? "hidden" : ""}`}>
+          {/* `inert`, not `visibility: hidden`: both take the rail's controls
+              out of the tab order, but an invisible element is not captured for
+              a view transition, so the pane would vanish rather than slide
+              shut. */}
+          <div className={`fleet ${focused && fleetCollapsed ? "collapsed" : ""}`} inert={focused && fleetCollapsed}>
             <Sidebar
               selectedId={highlighted}
               openId={selectedId}
@@ -172,14 +225,21 @@ export const RootLayout = () => {
               onToggleOpen={toggleOpen}
               theme={theme}
               onToggleTheme={toggleTheme}
-              onCollapse={collapseSidebar}
+              onCollapse={() => withTransition(collapseFleet)}
               onAddProject={() => setAddingProject(true)}
               compact={focused}
               onExpand={expand}
             />
           </div>
-          <Outlet />
-          {/* Overlaid, not docked: the drawer is absolutely positioned inside
+          {/* The centre pane's width is what drives the whole layout: the fleet
+              takes the remainder, so one basis moves both. */}
+          <div
+            className={`pane-wrap ${focused ? (fleetCollapsed ? "solo" : "open") : ""}`}
+            aria-hidden={!focused}
+          >
+            <Outlet />
+          </div>
+          {/* Overlaid, not docked: the inspector is absolutely positioned inside
               the body, so opening it never reflows the terminals. */}
           <RightDrawer selectedId={selectedId} />
         </div>

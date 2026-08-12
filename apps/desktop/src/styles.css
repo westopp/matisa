@@ -458,43 +458,141 @@ button {
   position: relative;
 }
 
-/* ── Fleet ⇄ detail: one view, two proportions ──────────────────────────────
-   Nothing is mounted or unmounted between them. With no project selected the
-   fleet is the whole window and the detail pane has zero basis; selecting one
-   hands the pane everything but the rail's width, and the SAME board reflows
-   from a grid of tiles into a stacked column. The transition is on the pane's
-   flex-basis, so the board is pushed rather than animated separately — one
-   motion, not two racing each other. */
+/* ── The three panes ────────────────────────────────────────────────────────
+   Left is the fleet, centre is the routed detail pane, right is the inspector
+   (overlaid — see the drawer block). Each collapses, and that is the entire
+   layout.
+
+   Only the CENTRE has a width of its own. The fleet takes the remainder, so
+   there is no "board mode" to switch into: collapse the centre and the fleet
+   inherits the window, its container query trips, and the same cards reflow
+   from a rail into a grid. One basis moves both panes — one motion, not two
+   racing each other. */
 .fleet {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  transition: flex-basis 0.42s cubic-bezier(0.32, 0.86, 0.24, 1);
+  /* What board-vs-rail is measured against. Everything inside the fleet sizes
+     itself from the fleet's own width rather than the window's, which is the
+     only reading that stays right in every combination of collapsed panes. */
+  container: fleet / inline-size;
+  /* Its own transition group, so the browser interpolates the pane's BOX —
+     1280px wide to 318px — instead of leaving it in `root` to be crossfaded in
+     place. Without this the cards morph correctly and the pane they sit in
+     snaps, which reads as the animation being broken. */
+  view-transition-name: fleet;
 }
-.fleet.as-rail {
-  flex: 0 0 318px;
-  background: var(--sheet);
-  border-right: 1px solid var(--line);
-}
-/* Collapsed: only reachable with a project open, since the fleet IS the view
-   otherwise. Width goes, the pane takes the whole body. `visibility` is what
-   takes the rail's controls out of the tab order — zero width alone would
-   leave them focusable in a strip nobody can see. */
-.fleet.as-rail.hidden {
-  flex-basis: 0;
-  border-right: 0;
+/* Collapsed. Width goes and the pane takes the whole body. Reachable only with
+   a project open: the fleet IS the view otherwise.
+   `inert` (on the element, in root.route.tsx) is what takes the rail's controls
+   out of the tab order — `visibility: hidden` would do it too, but an invisible
+   element is not captured for a view transition, so the pane would vanish
+   instead of sliding shut. */
+.fleet.collapsed {
   overflow: hidden;
-  visibility: hidden;
-  transition:
-    flex-basis 0.42s cubic-bezier(0.32, 0.86, 0.24, 1),
-    visibility 0.42s;
+}
+
+/* The centre pane. Zero basis with nothing selected, so the fleet has the whole
+   window; open, it takes everything but the rail's width. */
+.pane-wrap {
+  flex: 0 0 0;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+  /* Same reason as the fleet: the pane has to open and close as a box, not
+     fade in at its final width. */
+  view-transition-name: detail;
+}
+.pane-wrap.open {
+  flex-basis: calc(100% - 318px);
+}
+/* Fleet collapsed: nothing to leave room for. */
+.pane-wrap.solo {
+  flex-basis: 100%;
 }
 @media (max-width: 1080px) {
-  .fleet.as-rail {
-    flex-basis: 272px;
+  .pane-wrap.open {
+    flex-basis: calc(100% - 272px);
   }
+}
+/* The fallback, and ONLY the fallback. Where view transitions exist they own
+   this motion; running both would leave the flex basis still travelling under
+   a snapshot overlay, and the jump when the overlay lifts is the artefact.
+   `no-vt` is set at boot by lib/view-transition.ts. */
+.no-vt .pane-wrap {
+  transition: flex-basis 0.42s cubic-bezier(0.32, 0.86, 0.24, 1);
+}
+.pane-wrap > .main {
+  width: 100%;
+}
+
+/* ── View transitions ───────────────────────────────────────────────────────
+   Three things are named, and everything named gets its own group whose BOX the
+   browser interpolates: the two panes (above) and every card (project.card.tsx).
+   So the panes resize while the cards travel from their slots in the grid to
+   their places in the column — one composed motion.
+
+   Anything NOT named stays in `root`, which can only crossfade in place. That
+   is the right reading for the chrome and wrong for anything that moves, which
+   is why the panes had to come out of it. */
+::view-transition-group(*) {
+  animation-duration: 0.42s;
+  animation-timing-function: cubic-bezier(0.32, 0.86, 0.24, 1);
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.26s;
+}
+/* A pane's snapshot is a picture of a box that is about to be a different
+   width. Stretched to fit — the default — the search field and the band titles
+   visibly squash on the way to rail width. Pinned to their own size at the top
+   left they slide under the pane's edge instead, which is what a pane closing
+   actually looks like. */
+::view-transition-old(fleet),
+::view-transition-new(fleet),
+::view-transition-old(detail),
+::view-transition-new(detail) {
+  height: 100%;
+  width: 100%;
+  object-fit: none;
+  object-position: top left;
+}
+/* The cards inside are their own groups and travel on their own, so the pane's
+   crossfade is only there to cover the chrome reflowing underneath them. */
+::view-transition-old(fleet),
+::view-transition-new(fleet) {
+  animation-duration: 0.3s;
+}
+/* Cut to the destination rather than skipping the transition outright: the flip
+   still happens in one frame, and nothing else has to know it was asked for. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 0.01ms;
+  }
+  .no-vt .pane-wrap {
+    transition: none;
+  }
+}
+/* The three pane toggles, grouped and in screen order, so the row reads as one
+   control over one layout rather than three unrelated buttons that happen to be
+   adjacent. Sunk into the titlebar for the same reason. */
+.pane-toggles {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 6px;
+  padding: 2px;
+  border-radius: 12px;
+  background: var(--sunken);
+}
+.pane-toggles .ico-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
 }
 .ico-btn.active {
   background: var(--raise);
@@ -2034,13 +2132,15 @@ button {
 .cmd-pill:hover .cmd-pill-x:disabled {
   opacity: 0.25;
 }
-.fleet.as-rail .cmd-pills {
-  padding-left: 8px;
-  gap: 6px;
-}
-.fleet.as-rail .cmd-pill {
-  font-size: 10px;
-  padding-left: 10px;
+@container fleet (width < 560px) {
+  .cmd-pills {
+    padding-left: 8px;
+    gap: 6px;
+  }
+  .cmd-pill {
+    font-size: 10px;
+    padding-left: 10px;
+  }
 }
 
 .svc-health {
@@ -2212,118 +2312,131 @@ button {
 /* ── The rail ───────────────────────────────────────────────────────────────
    Everything above, at rail scale. Nothing here changes WHAT is drawn — same
    bands, same groups, same cards, same controls — only the type sizes, the
-   radii and the grid, which collapses to one column so the cards stack. */
-.fleet.as-rail .side-top {
-  padding: 10px 12px 6px;
-  gap: 6px;
-}
-.fleet.as-rail .workspace-pill {
-  font-size: 15px;
-  gap: 7px;
-}
-.fleet.as-rail .ico-btn {
-  width: 28px;
-  height: 28px;
-}
-/* Onto a line of its own: at rail width the title and the tools already fill
-   the first one. */
-.fleet.as-rail .search-wrap {
-  order: 4;
-  flex-basis: 100%;
-  max-width: none;
-  height: 32px;
-  border-radius: 10px;
-}
-.fleet.as-rail .side-list {
-  padding: 8px 14px 22px;
-  gap: 14px;
-}
-.fleet.as-rail .parent-group {
-  gap: 6px;
-}
-.fleet.as-rail .parent-head {
-  font-size: 15px;
-  letter-spacing: -0.02em;
-  padding-left: 8px;
-}
-.fleet.as-rail .parent-count {
-  font-size: 9.5px;
-}
-.fleet.as-rail .band-groups {
-  margin-left: 10px;
-  padding-left: 12px;
-  gap: 2px;
-}
-.fleet.as-rail .section {
-  gap: 7px;
-  padding: 2px 0 8px;
-}
-.fleet.as-rail .section-head {
-  height: 26px;
-}
-.fleet.as-rail .section-title {
-  font-size: 12.5px;
-}
-.fleet.as-rail .section-body,
-.fleet.as-rail .sys-body {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 7px;
-}
-.fleet.as-rail .svc-row {
-  border-radius: 14px;
-  padding: 10px 11px;
-  gap: 7px;
-}
-.fleet.as-rail .svc-row:hover {
-  transform: none;
-}
-.fleet.as-rail .svc-mid {
-  gap: 9px;
-}
-.fleet.as-rail .svc-icon {
-  width: 25px;
-  height: 25px;
-  border-radius: 8px;
-}
-.fleet.as-rail .svc-name {
-  font-size: 16px;
-  letter-spacing: -0.03em;
-}
-/* At rail width the strip cannot wrap without doubling the card's height, so
-   it scrolls sideways instead — same contract as the environment pills. */
-.fleet.as-rail .svc-meta {
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-}
-.fleet.as-rail .svc-meta::-webkit-scrollbar {
-  display: none;
-}
-.fleet.as-rail .svc-chip {
-  font-size: 9.5px;
-  padding: 3px 7px;
-}
-.fleet.as-rail .sys-row {
-  border-radius: 14px;
-  padding: 10px 11px;
-  min-height: 72px;
-  gap: 9px;
-}
-.fleet.as-rail .sys-row .svc-name {
-  font-size: 16px;
-}
-.fleet.as-rail .sys-icon {
-  width: 25px;
-  height: 25px;
-  border-radius: 8px;
-}
-.fleet.as-rail .empty-row {
-  padding: 24px 0;
-  font-size: 16px;
-}
-.fleet.as-rail .side-foot {
-  padding: 0 14px;
+   radii and the grid, which collapses to one column so the cards stack.
+
+   Keyed to the fleet's own width, not the window's and not a mode class: the
+   fleet is narrow whenever the centre pane is open, and it is the board
+   whenever it is not, without either fact having to be named twice. The
+   in-between widths take care of themselves. */
+@container fleet (width < 560px) {
+  /* The rail's own chrome. On `.sidebar` rather than `.fleet` because a
+     container cannot query itself. */
+  .sidebar {
+    background: var(--sheet);
+    border-right: 1px solid var(--line);
+  }
+  .side-top {
+    padding: 10px 12px 6px;
+    gap: 6px;
+  }
+  .workspace-pill {
+    font-size: 15px;
+    gap: 7px;
+  }
+  .ico-btn {
+    width: 28px;
+    height: 28px;
+  }
+  /* Onto a line of its own: at rail width the title and the tools already fill
+     the first one. */
+  .search-wrap {
+    order: 4;
+    flex-basis: 100%;
+    max-width: none;
+    height: 32px;
+    border-radius: 10px;
+  }
+  .side-list {
+    padding: 8px 14px 22px;
+    gap: 14px;
+  }
+  .parent-group {
+    gap: 6px;
+  }
+  .parent-head {
+    font-size: 15px;
+    letter-spacing: -0.02em;
+    padding-left: 8px;
+  }
+  .parent-count {
+    font-size: 9.5px;
+  }
+  .band-groups {
+    margin-left: 10px;
+    padding-left: 12px;
+    gap: 2px;
+  }
+  .section {
+    gap: 7px;
+    padding: 2px 0 8px;
+  }
+  .section-head {
+    height: 26px;
+  }
+  .section-title {
+    font-size: 12.5px;
+  }
+  .section-body,
+  .sys-body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+  }
+  .svc-row {
+    border-radius: 14px;
+    padding: 10px 11px;
+    gap: 7px;
+  }
+  .svc-row:hover {
+    transform: none;
+  }
+  .svc-mid {
+    gap: 9px;
+  }
+  .svc-icon {
+    width: 25px;
+    height: 25px;
+    border-radius: 8px;
+  }
+  .svc-name {
+    font-size: 16px;
+    letter-spacing: -0.03em;
+  }
+  /* At rail width the strip cannot wrap without doubling the card's height, so
+     it scrolls sideways instead — same contract as the environment pills. */
+  .svc-meta {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .svc-meta::-webkit-scrollbar {
+    display: none;
+  }
+  .svc-chip {
+    font-size: 9.5px;
+    padding: 3px 7px;
+  }
+  .sys-row {
+    border-radius: 14px;
+    padding: 10px 11px;
+    min-height: 72px;
+    gap: 9px;
+  }
+  .sys-row .svc-name {
+    font-size: 16px;
+  }
+  .sys-icon {
+    width: 25px;
+    height: 25px;
+    border-radius: 8px;
+  }
+  .empty-row {
+    padding: 24px 0;
+    font-size: 16px;
+  }
+  .side-foot {
+    padding: 0 14px;
+  }
 }
 
 /* Indeterminate spinner, used wherever a lifecycle transition is in flight.
@@ -3816,11 +3929,13 @@ button {
   font-size: 11px;
   color: var(--text-dim);
 }
-.fleet.as-rail .board-empty {
-  padding: 40px 0;
-}
-.fleet.as-rail .board-empty-title {
-  font-size: 18px;
+@container fleet (width < 560px) {
+  .board-empty {
+    padding: 40px 0;
+  }
+  .board-empty-title {
+    font-size: 18px;
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

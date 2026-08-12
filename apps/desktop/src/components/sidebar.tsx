@@ -3,6 +3,7 @@ import { Collapsible } from "@westopp/react-collapsible"
 import type { Group, ProjectId, ProjectKind, ProjectWithState, RuntimeState } from "@matisa/core"
 import { useEngine } from "~/store/store.engine"
 import { SYSTEM_IDS } from "~/store/store.systems"
+import { cardName } from "~/lib/view-transition"
 import { Icons } from "./icons"
 import { ConfirmDialog } from "./forms/confirm"
 import { GroupDialog } from "./forms/lazy"
@@ -213,7 +214,7 @@ const SystemCard = ({
   /** The system's own start/stop control. */
   children: React.ReactNode
 }) => (
-  <div className={`svc-cell ${active ? "active" : ""}`}>
+  <div className={`svc-cell ${active ? "active" : ""}`} style={{ viewTransitionName: cardName(id) }}>
     <div className="sys-row" onClick={openOnSelect ? onOpen : onSelect} role="button" tabIndex={0}>
       <span className="sys-icon">{icon}</span>
       <span className="svc-body">
