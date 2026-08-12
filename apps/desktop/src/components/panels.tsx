@@ -15,7 +15,13 @@ import { useLifecycleState } from "~/hooks/use-lifecycle-state"
 import { useEngine } from "~/store/store.engine"
 import { Icons } from "./icons"
 import { QuickMenu } from "./quick.commands"
-import { COLLAPSE_DURATION, CommandRunButton, commandLine, LifecycleButton } from "./primitives"
+import {
+  COLLAPSE_DURATION,
+  CommandRestartButton,
+  CommandRunButton,
+  commandLine,
+  LifecycleButton
+} from "./primitives"
 import { SetCommandDialog, SetEnvVarDialog } from "./forms/lazy"
 import { ConfirmDialog } from "./forms/confirm"
 
@@ -647,7 +653,7 @@ export const CommandsCard = ({ project }: { project: ProjectWithState }) => {
 
   const list = useProjectCommands(project.id)
   const runner = useCommandRunner(project.id)
-  const { statusOf, run, stop } = runner
+  const { statusOf, run, restart, stop } = runner
 
   return (
     <>
@@ -687,7 +693,7 @@ export const CommandsCard = ({ project }: { project: ProjectWithState }) => {
         <table className="tbl">
           <thead>
             <tr>
-              <th style={{ width: 44 }} />
+              <th style={{ width: 72 }} />
               <th style={{ width: "22%" }}>Name</th>
               <th>Command</th>
               <th style={{ width: 80 }}>Env</th>
@@ -714,11 +720,17 @@ export const CommandsCard = ({ project }: { project: ProjectWithState }) => {
             {list.map((c) => (
               <tr key={c.name}>
                 <td>
-                  <CommandRunButton
-                    status={statusOf(c.name)}
-                    onRun={() => void run(c.name, c.command)}
-                    onStop={() => stop(c.name)}
-                  />
+                  <span className="tbl-controls">
+                    <CommandRestartButton
+                      enabled={statusOf(c.name) === "running"}
+                      onRestart={() => void restart(c.name, c.command)}
+                    />
+                    <CommandRunButton
+                      status={statusOf(c.name)}
+                      onRun={() => void run(c.name, c.command)}
+                      onStop={() => stop(c.name)}
+                    />
+                  </span>
                 </td>
                 <td className="mono">{c.name}</td>
                 <td className="mono trunc" title={c.command}>

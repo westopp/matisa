@@ -67,6 +67,26 @@ const attach = (sessionId: SessionId, entry: Entry): void => {
     })
 }
 
+/** Attach again to a session whose previous attach failed.
+ *
+ *  A run session's id is stable — `run:<projectId>`, the same string for every
+ *  start of that project — so a session that DIED (its engine restarted, or the
+ *  project was not running when the pane last tried) comes back under the id
+ *  that already failed. Nothing in the normal flow re-attaches it: the pane
+ *  reuses its host because the id is unchanged, and the socket never reconnects
+ *  because the engine is the same one. Without this the pane keeps showing the
+ *  old "session not found" and, worse, receives nothing at all — the engine only
+ *  bridges output to a connection that attached.
+ *
+ *  A no-op unless the session is currently detached, so calling it on every
+ *  transition to `running` costs nothing when the pane is already streaming. */
+export const reattachSession = (sessionId: SessionId): void => {
+  const entry = entries.get(sessionId)
+  if (entry === undefined || entry.attachedOn === generation) return
+  for (const l of entry.listeners) l.onReset()
+  attach(sessionId, entry)
+}
+
 /** Register a session the engine ALREADY bridged onto this connection.
  *
  *  `pty.open` and `commands.run` bridge the session as part of the call, so a
@@ -195,10 +215,19 @@ export const resizeSession = (sessionId: SessionId, cols: number, rows: number):
  *  stayed a live $SHELL process on the engine.
  *
  *  Run sessions are the supervisor's; the engine rejects closing them, and
- *  callers must not offer it. */
-export const closeSession = (sessionId: SessionId): void => {
+ *  callers must not offer it.
+ *
+ *  Resolves once the engine has marked the session over, and NEVER rejects — a
+ *  close that failed leaves nothing a caller could do differently, and the
+ *  local entry is gone either way. Callers that only want the session ended can
+ *  ignore the promise; a caller that needs the session's slot freed before
+ *  claiming it again (restarting a command) must await it. */
+export const closeSession = (sessionId: SessionId): Promise<void> => {
   entries.delete(sessionId)
-  void rpc.call("pty.close", { sessionId }).catch(() => {})
+  return rpc.call("pty.close", { sessionId }).then(
+    () => undefined,
+    () => undefined
+  )
 }
 
 /** Drop the engine's scrollback for a session, so a later attach replays nothing

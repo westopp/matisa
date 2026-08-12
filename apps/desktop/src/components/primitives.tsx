@@ -546,6 +546,30 @@ export const CommandRunButton = ({
   )
 }
 
+/** Stop a command and run it again, drawn beside the start/stop control on every
+ *  surface that draws one. Always present and disabled when idle, for the same
+ *  reason KillButton is: a control that appears and disappears under the pointer
+ *  is a control you cannot aim at. Restarting something that is not running is
+ *  just Run, which is already the button to its right. */
+export const CommandRestartButton = ({
+  enabled,
+  onRestart,
+  size = 15
+}: {
+  enabled: boolean
+  onRestart: () => void
+  size?: number
+}) => (
+  <button
+    className="ico"
+    title={enabled ? "Restart — stop it and run it again" : "Nothing to restart"}
+    disabled={!enabled}
+    onClick={onRestart}
+  >
+    <Icons.Restart size={size} />
+  </button>
+)
+
 /** Force-kill, drawn wherever a start/stop control is drawn. Always present so
  *  the row of controls keeps one shape; disabled when there is nothing alive to
  *  kill, rather than appearing and disappearing under the pointer. */

@@ -1,5 +1,5 @@
 import type { SessionId } from "@matisa/core"
-import { resizeSession, sendInput, subscribeSession } from "~/rpc/rpc.pty"
+import { reattachSession, resizeSession, sendInput, subscribeSession } from "~/rpc/rpc.pty"
 import { useTerminals } from "~/store/store.terminals"
 import { createTerminal, type XtermHandle } from "./terminal.xterm"
 
@@ -154,6 +154,20 @@ export const acquireHost = (paneId: string, sessionId: SessionId): TerminalHost 
   const entry = create(sessionId)
   hosts.set(paneId, entry)
   return entry
+}
+
+/** Re-attach a pane whose last attach failed.
+ *
+ *  Called when the thing the pane is watching starts running. A failed attach
+ *  otherwise sticks forever on a RUN pane, because its session id never changes
+ *  between starts — so the pane reuses this host, and neither of the two normal
+ *  re-attach triggers (a new session id, a socket reconnect) ever fires. The
+ *  guard on `attachError` keeps this to the recovery path: a pane that is
+ *  streaming happily is left alone rather than being made to replay. */
+export const retryAttach = (paneId: string): void => {
+  const host = hosts.get(paneId)
+  if (host === undefined || host.attachError === null) return
+  reattachSession(host.sessionId)
 }
 
 /** Wipe a pane's surface, if it has one.

@@ -27,6 +27,10 @@ export interface CommandRunner {
    *  disagree about what happened. */
   readonly stateOf: (name: string) => RuntimeState
   readonly run: (name: string, command: string) => Promise<void>
+  /** Stop it and run it again in the same pane — the command equivalent of the
+   *  project's restart. Ends the old session before starting the new one; see
+   *  the implementation for why that ordering is not optional. */
+  readonly restart: (name: string, command: string) => Promise<void>
   /** Ctrl-C, the same interrupt the pane's own stop button sends. */
   readonly stop: (name: string) => void
   /** End it now: tear the session down rather than asking the process to leave.
@@ -104,6 +108,37 @@ export const useCommandRunner = (projectId: ProjectId): CommandRunner => {
     [bindSession, openPane, projectId, revealTerminals, runCommand]
   )
 
+  // Restart is END-then-START, awaited in that order, and both halves matter:
+  //
+  //   - The engine caps a project at two live command sessions and counts by
+  //     "not exited". Fire the close and start immediately and a project with
+  //     two commands up cannot restart either of them — the replacement is
+  //     rejected for a slot the outgoing session has not yet released.
+  //   - Every run of a command mints a fresh session id while the PANE id stays
+  //     the same, so `run` rebinds the pane to the new session. Skip the close
+  //     and the old pty is still alive with nothing pointing at it, and `cmd:`
+  //     sessions are never idle-reaped — it would sit there until the engine
+  //     went down.
+  //
+  // Ctrl-C is deliberately NOT how this stops: an interrupt is a request, and a
+  // command that ignores it (or takes its time draining) would come back before
+  // the old one was gone. Restart means the new run starts from nothing.
+  const restart = useCallback(
+    async (name: string, command: string): Promise<void> => {
+      const sessionId = panes[commandPaneId(projectId, name)]?.sessionId
+      // Held from here rather than from inside `run`, so the control shows a
+      // spinner for the teardown too — otherwise it reads as an unresponsive
+      // button for as long as the close takes. `run`'s own finally clears it.
+      setStarting((s) => (s.includes(name) ? s : [...s, name]))
+      if (sessionId != null) {
+        await closeSession(sessionId)
+        markExited(sessionId, null)
+      }
+      await run(name, command)
+    },
+    [markExited, panes, projectId, run]
+  )
+
   const stop = useCallback(
     (name: string): void => {
       const pane = panes[commandPaneId(projectId, name)]
@@ -122,5 +157,5 @@ export const useCommandRunner = (projectId: ProjectId): CommandRunner => {
     [markExited, panes, projectId]
   )
 
-  return { statusOf, stateOf, run, stop, kill }
+  return { statusOf, stateOf, run, restart, stop, kill }
 }

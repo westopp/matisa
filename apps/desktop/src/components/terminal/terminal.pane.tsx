@@ -7,8 +7,14 @@ import { useLifecycleState } from "~/hooks/use-lifecycle-state"
 import { useEngine } from "~/store/store.engine"
 import { runPaneId, useTerminals, type DropSide, type Pane } from "~/store/store.terminals"
 import { Icons } from "../icons"
-import { CommandRunButton, KillButton, LifecycleButton, StatusFigure } from "../primitives"
-import { acquireHost, clearHost, type HostView } from "./terminal.hosts"
+import {
+  CommandRestartButton,
+  CommandRunButton,
+  KillButton,
+  LifecycleButton,
+  StatusFigure
+} from "../primitives"
+import { acquireHost, clearHost, retryAttach, type HostView } from "./terminal.hosts"
 import { LogView } from "./log.view"
 import { terminalTheme } from "./terminal.xterm"
 
@@ -53,6 +59,7 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
     statusOf,
     stateOf,
     run: runCommand,
+    restart: restartCommand,
     stop: stopCommand,
     kill: killCommand
   } = useCommandRunner(project.id)
@@ -96,6 +103,22 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
       termRef.current = null
     }
   }, [pane.paneId, sessionId, owns])
+
+  // A failed attach is recoverable, and this is the moment it recovers: whatever
+  // this pane watches is now up, so the session it could not find exists again.
+  //
+  // Nothing else would retry. A run session's id is stable across starts, so the
+  // pane reuses its host (same id) and the socket never reconnects (same
+  // engine) — the two triggers that normally re-attach. Without this the pane
+  // keeps showing "session not found" beside a running project and receives no
+  // output at all, because the engine bridges output only to a connection that
+  // attached. `retryAttach` no-ops unless there is an error to clear.
+  const attachedTo = pane.kind === "run" ? project.state : statusOf(pane.commandName ?? pane.title)
+  useEffect(() => {
+    if (sessionId === null || !owns) return
+    if (attachedTo !== "running") return
+    retryAttach(pane.paneId)
+  }, [attachedTo, pane.paneId, sessionId, owns])
 
   // Re-theme in place on a light/dark flip. Rebuilding the terminal instead
   // would drop the scrollback the engine already replayed into it.
@@ -260,11 +283,18 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
         {pane.kind === "run" ? (
           <LifecycleButton project={project} />
         ) : (
-          <CommandRunButton
-            status={commandStatus}
-            onRun={() => void runCommand(pane.commandName ?? pane.title, pane.subtitle)}
-            onStop={() => stopCommand(pane.commandName ?? pane.title)}
-          />
+          <>
+            <CommandRestartButton
+              enabled={commandStatus === "running"}
+              onRestart={() => void restartCommand(pane.commandName ?? pane.title, pane.subtitle)}
+              size={14}
+            />
+            <CommandRunButton
+              status={commandStatus}
+              onRun={() => void runCommand(pane.commandName ?? pane.title, pane.subtitle)}
+              onStop={() => stopCommand(pane.commandName ?? pane.title)}
+            />
+          </>
         )}
         {/* Never disabled. It used to gate on a live session, which is the one
             state in which there is LEAST to clear — a running project's output

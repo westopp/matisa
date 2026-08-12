@@ -10,6 +10,7 @@ import { ExposureLive } from "./modules/exposure/exposure.index.js"
 import { PtyLive } from "./modules/pty/pty.index.js"
 import { SupervisorLive } from "./modules/supervisor/supervisor.index.js"
 import { EventsHubLive, ServerLive } from "./server/server.index.js"
+import { adoptLoginPath } from "./shared/login-env.js"
 import { LoggingLive } from "./telemetry/logging.js"
 import { MetricsLive } from "./telemetry/metrics.js"
 import { TracingLive } from "./telemetry/tracing.js"
@@ -48,7 +49,20 @@ const MainLive = Root.pipe(
   Layer.provide(AppConfig.Live)
 )
 
-const program = Layer.launch(MainLive).pipe(
+// PATH adoption is sequenced AHEAD of the graph rather than merged into it as a
+// peer layer: peers build concurrently with ServerLive, and the guarantee worth
+// having is that no client can reach a spawn before the environment is right.
+// LoggingLive is provided so this one line is formatted like every other.
+const boot = adoptLoginPath.pipe(Effect.provide(LoggingLive))
+
+const program = boot.pipe(
+  Effect.andThen(Layer.launch(MainLive)),
+).pipe(
+  // Losing the start race is a success: a singleton daemon exists, which is
+  // exactly what whoever spawned us wanted. Exit 0 so supervisors don't retry.
+  Effect.catchTag("EngineAlreadyRunning", (e) =>
+    Effect.logInfo(`another engine already listening on 127.0.0.1:${e.port} — exiting`)
+  ),
   Effect.catchTag("InvalidConfigError", (e) =>
     Effect.logFatal(`invalid configuration: ${e.errorMessage}`).pipe(Effect.andThen(Effect.die(e)))
   ),

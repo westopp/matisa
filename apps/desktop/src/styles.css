@@ -376,6 +376,18 @@ button {
   display: inline-flex;
   gap: 8px;
 }
+/* Inside the Electron shell (hiddenInset chrome) the OS draws real traffic
+   lights over this strip: the mock ones yield their exact footprint, and the
+   strip becomes the window's drag handle — interactive children opt back out. */
+:root[data-shell="electron"] .traffic {
+  visibility: hidden;
+}
+:root[data-shell="electron"] .titlebar {
+  -webkit-app-region: drag;
+}
+:root[data-shell="electron"] .titlebar :is(button, input, [role="button"]) {
+  -webkit-app-region: no-drag;
+}
 .t-light {
   width: 11px;
   height: 11px;
@@ -2195,6 +2207,24 @@ button {
   gap: 2px;
   flex-shrink: 0;
   margin-left: auto;
+}
+/* The same control cluster inside a table cell. Not `.svc-controls`: that one
+   pushes itself to the end of a flex row, which in a fixed-width leading column
+   drags the buttons off the name they belong to. */
+.tbl-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.tbl-controls .ico {
+  width: 22px;
+  height: 22px;
+  border-radius: 8px;
+  color: var(--text-dim);
+}
+.tbl-controls .ico:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover);
 }
 .svc-controls .ico {
   width: 24px;
