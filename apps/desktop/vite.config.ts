@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url"
 // resolves its NodeNext-style `./x.js` specifiers back to `.ts` on its own.
 // The alias is only needed because the package `main` points at a .ts file.
 export default defineConfig({
+  // Relative asset URLs: the same build is served by vite preview AND loaded
+  // via file:// inside the Electron shell, where absolute /assets paths would
+  // resolve to the filesystem root.
+  base: "./",
   plugins: [react(), tailwind()],
   resolve: {
     alias: {

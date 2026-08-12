@@ -7,7 +7,7 @@ import { reconcile } from "../modules/supervisor/supervisor.reconcile.js"
 import { handleConnection } from "./server.connection.js"
 import { makeDispatcher } from "./server.dispatcher.js"
 import { makeHandlers } from "./handlers/handlers.index.js"
-import { wsBridge } from "./server.ws.js"
+import { acquireWsMutex, attachWsBridge } from "./server.ws.js"
 
 // ────────────────────────────────────────────────────────────────────────────
 // SocketServer — the UDS listener as a scoped Layer. Acquire reconciles runtime
@@ -25,6 +25,13 @@ export class SocketServer extends Context.Tag("SocketServer")<SocketServer, Sock
 
 const make = Effect.gen(function* () {
   const config = yield* AppConfig
+
+  // The loopback port is the single-instance mutex, taken BEFORE reconciliation
+  // and before the stale-socket unlink below: a raced second engine must fail
+  // here (EngineAlreadyRunning → clean exit in main.ts) while it has still
+  // touched nothing the winner is using.
+  const wsServer = yield* acquireWsMutex(config.wsPort)
+
   const handlers = yield* makeHandlers
   const dispatch = makeDispatcher(handlers)
   const rt = yield* Effect.runtime<never>()
@@ -57,8 +64,10 @@ const make = Effect.gen(function* () {
       })
   )
 
-  // The GUI's transport. Same dispatcher, same handlers — only the framing differs.
-  yield* wsBridge(config.wsPort, dispatch, rt)
+  // The GUI's transport. Same dispatcher, same handlers — only the framing
+  // differs. The listener has been bound (as the mutex) since before
+  // reconciliation; only now does it start serving upgrades.
+  if (wsServer !== null) yield* attachWsBridge(wsServer, dispatch, rt)
 
   yield* Effect.logInfo(`matisa engine listening on ${socketPath}`)
   if (config.wsPort !== 0) {

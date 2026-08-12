@@ -1,0 +1,19 @@
+{
+  "appId": "dev.thulane.matisa",
+  "productName": "Matisa",
+  "directories": {
+    "output": "release"
+  },
+  "files": ["dist/**", "!dist/**/*.map"],
+  "extraResources": [
+    { "from": "vendor/engine", "to": "engine" },
+    { "from": "resources/bin", "to": "bin" }
+  ],
+  "asar": true,
+  "npmRebuild": false,
+  "mac": {
+    "category": "public.app-category.developer-tools",
+    "identity": null,
+    "target": [{ "target": "dir" }]
+  }
+}

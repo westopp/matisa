@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import type { ProjectWithState } from "@matisa/core"
 import { useEngine } from "~/store/store.engine"
 import { revealPath } from "~/store/store.picker"
+import { openExternal } from "~/lib/native"
 import { Icons } from "./icons"
 import { useLifecycleState } from "~/hooks/use-lifecycle-state"
 import { CollapsibleCard } from "./panels"
@@ -233,7 +234,7 @@ export const ProjectHero = ({ project, onEdit }: { project: ProjectWithState; on
             className="ico-btn"
             title="Open in browser"
             disabled={url === null}
-            onClick={() => url !== null && window.open(url, "_blank", "noopener")}
+            onClick={() => url !== null && openExternal(url)}
           >
             <Icons.Compass size={15} />
           </button>

@@ -3,6 +3,7 @@ import { BASE_CONTEXT_ID, ContextId, type ProjectWithState } from "@matisa/core"
 import { closeSession } from "~/rpc/rpc.pty"
 import { useEngine } from "~/store/store.engine"
 import { revealPath } from "~/store/store.picker"
+import { openExternal } from "~/lib/native"
 import { useCommandRunner, type CommandRunner } from "~/hooks/use-command-run"
 import { cardName } from "~/lib/view-transition"
 import { useLifecycleState } from "~/hooks/use-lifecycle-state"
@@ -13,6 +14,7 @@ import { QuickMenu } from "./quick.commands"
 import { ConfirmDialog } from "./forms/confirm"
 import { EditProjectDialog } from "./forms/lazy"
 import {
+  CommandRestartButton,
   CommandRunButton,
   formatMB,
   KillButton,
@@ -178,6 +180,10 @@ const CommandPill = ({
           onKill={() => runner.kill(name)}
           title="Kill this command — no interrupt, no waiting"
         />
+        <CommandRestartButton
+          enabled={running}
+          onRestart={() => void runner.restart(name, pane.subtitle)}
+        />
         <CommandRunButton
           status={status}
           onRun={() => void runner.run(name, pane.subtitle)}
@@ -281,7 +287,7 @@ export const ProjectCard = ({
             label: "Open in browser",
             icon: <Icons.Compass size={13} />,
             disabled: !running,
-            onSelect: () => window.open(`http://localhost:${port}`, "_blank", "noopener")
+            onSelect: () => openExternal(`http://localhost:${port}`)
           }
         ]),
     {

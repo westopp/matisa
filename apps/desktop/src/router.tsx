@@ -1,7 +1,8 @@
-import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router"
+import { createHashHistory, createRootRoute, createRoute, createRouter } from "@tanstack/react-router"
 import { RootLayout } from "./routes/root.route"
 import { IndexRoute, ProjectRoute } from "./routes/project.route"
 import { SystemRoute } from "./routes/system.route"
+import { inShell } from "./lib/native"
 
 // Code-based route tree — four routes do not justify a codegen plugin.
 
@@ -29,7 +30,13 @@ const systemRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([indexRoute, projectRoute, systemRoute])
 
-export const router = createRouter({ routeTree })
+// Inside the Electron shell the document is a file:// URL, so the pathname is
+// a filesystem path no route can match — state lives in the hash instead. The
+// browser build keeps clean pathnames.
+export const router = createRouter({
+  routeTree,
+  ...(inShell() ? { history: createHashHistory() } : {})
+})
 
 declare module "@tanstack/react-router" {
   interface Register {
