@@ -73,12 +73,13 @@ export const acceptedLine = (a: Accepted): string =>
 
 export const removedLine = (id: string): string => `removed  ${id}`
 
+/** Values are printed as given. Masking a secret is the CALLER's job (see the
+ *  header of commands.env.ts): doing it here too would mean `env reveal` — the
+ *  one command whose entire purpose is to show the value — could not, while
+ *  `--json` still would. One layer decides, and it is the layer that knows
+ *  which command the user asked for. */
 const varsOf = (c: EnvContext): string =>
-  c.vars.length === 0
-    ? "(empty)"
-    : c.vars
-        .map((v) => (v.secret ? `${v.key}=<secret>` : `${v.key}=${v.value}`))
-        .join(" ")
+  c.vars.length === 0 ? "(empty)" : c.vars.map((v) => `${v.key}=${v.value}`).join(" ")
 
 export const envTable = (list: ReadonlyArray<EnvContext>): string => {
   if (list.length === 0) return "no env contexts"
