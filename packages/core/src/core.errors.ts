@@ -72,6 +72,15 @@ export class PortBusy extends Schema.TaggedError<PortBusy>()("PortBusy", {
   message: Schema.String
 }) {}
 
+/** An exposure action needs the Caddy provider and it is not usable — the
+ * binary is missing or the engine-owned instance is down. Clients surface the
+ * message (e.g. "brew install caddy") rather than retrying. */
+export class CaddyUnavailable extends Schema.TaggedError<CaddyUnavailable>()("CaddyUnavailable", {
+  code: stableCode("E_CADDY_UNAVAILABLE"),
+  reason: Schema.Literal("binary_missing", "not_running"),
+  message: Schema.String
+}) {}
+
 /** Union of every error that may cross the wire. */
 export const EngineError = Schema.Union(
   NotFound,
@@ -79,6 +88,7 @@ export const EngineError = Schema.Union(
   ValidationError,
   EngineInternal,
   DockerDaemonRequired,
-  PortBusy
+  PortBusy,
+  CaddyUnavailable
 )
 export type EngineError = typeof EngineError.Type

@@ -5,6 +5,7 @@ import { EventsRepoLive } from "./repositories.events.js"
 import { RuntimeRepoLive } from "./repositories.runtime.js"
 import { CommandsRepoLive } from "./repositories.commands.js"
 import { GroupsRepoLive } from "./repositories.groups.js"
+import { ExposuresRepoLive } from "./repositories.exposures.js"
 
 // Barrel of every repository tag, its Live layer, and the inferred row/param
 // types the engine consumes.
@@ -14,6 +15,7 @@ export * from "./repositories.events.js"
 export * from "./repositories.runtime.js"
 export * from "./repositories.commands.js"
 export * from "./repositories.groups.js"
+export * from "./repositories.exposures.js"
 
 // All repositories over a shared Store. Requires `Store` in context — provided
 // by StoreClientLive in the store.index barrel.
@@ -23,5 +25,6 @@ export const RepositoriesLive = Layer.mergeAll(
   EventsRepoLive,
   RuntimeRepoLive,
   CommandsRepoLive,
-  GroupsRepoLive
+  GroupsRepoLive,
+  ExposuresRepoLive
 )

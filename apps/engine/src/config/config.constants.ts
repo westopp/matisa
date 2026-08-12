@@ -15,8 +15,26 @@ export const DEFAULT_LOG_PATH = `${MATISA_ROOT}/engine.log`
 /** File-backed keychain stub location (dev only). */
 export const DEFAULT_SECRETS_PATH = `${MATISA_ROOT}/secrets.json`
 
-/** Caddy admin API port (exposure module — stubbed). */
+/** Caddy admin API port (loopback-only; the exposure module drives it live). */
 export const CADDY_ADMIN_PORT = 2019
+
+/** The single HTTP listener every stable/LAN hostname routes through
+ * (http://<slug>.localhost:<port>). High port — no privileged bind. */
+export const CADDY_HTTP_PORT = 7777
+
+/** First port of the per-project dedicated LAN listeners — the mDNS-free
+ * fallback address (http://<lan-ip>:<allocated>). Allocated sequentially. */
+export const LAN_PORT_BASE = 7801
+
+/** mDNS domain for same-network hostnames (<slug>.matisa.local). */
+export const MDNS_DOMAIN = "matisa.local"
+
+/** Poll interval for the primary-LAN-IPv4 watcher (no NWPathMonitor on Node). */
+export const LAN_IP_POLL_MS = 5000
+
+/** Bootstrap config Caddy is spawned with (admin endpoint only; routes are
+ * pushed over the admin API right after — never resumed from disk). */
+export const CADDY_BOOTSTRAP_PATH = `${MATISA_ROOT}/caddy.bootstrap.json`
 
 /** Loopback port for the WebSocket bridge that serves the same JSON-RPC surface
  * as the unix socket. Browsers cannot open a UDS, so the GUI speaks this. */

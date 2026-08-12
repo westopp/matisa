@@ -25,6 +25,7 @@ export const RPC_INVALID_PARAMS = -32602
 export const RPC_INTERNAL = -32603
 export const RPC_NOT_FOUND = -32004
 export const RPC_PORT_CONFLICT = -32005
+export const RPC_CADDY_UNAVAILABLE = -32006
 
 const codeFor = (err: EngineError): number => {
   switch (err.code) {
@@ -34,6 +35,8 @@ const codeFor = (err: EngineError): number => {
       return RPC_NOT_FOUND
     case "E_PORT_CONFLICT":
       return RPC_PORT_CONFLICT
+    case "E_CADDY_UNAVAILABLE":
+      return RPC_CADDY_UNAVAILABLE
     case "E_INTERNAL":
     default:
       return RPC_INTERNAL

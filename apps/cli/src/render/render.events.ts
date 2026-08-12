@@ -20,7 +20,9 @@ export const formatEvent = (e: EngineEvent): string => {
       `${ev.payload.health}${ev.payload.message === undefined ? "" : ` (${ev.payload.message})`}`
     ),
     Match.when({ type: "exposure_changed" }, (ev) =>
-      `${ev.payload.exposure.url} ${ev.payload.exposure.enabled ? "up" : "down"}`
+      ev.payload.entries.length === 0
+        ? "cleared"
+        : ev.payload.entries.map((x) => `${x.url} ${x.enabled ? x.state : "off"}`).join(", ")
     ),
     Match.when({ type: "catalog_changed" }, (ev) => ev.payload.action),
     Match.exhaustive

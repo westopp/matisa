@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { Exposure, Health, ProjectId, RuntimeState } from "./core.schemas.js"
+import { ExposureEntry, Health, ProjectId, RuntimeState } from "./core.schemas.js"
 
 // ────────────────────────────────────────────────────────────────────────────
 // EngineEvent — the durable-queue payload contract.
@@ -64,9 +64,10 @@ export const HealthChangedEvent = envelope("health_changed", {
 })
 export type HealthChangedEvent = typeof HealthChangedEvent.Type
 
-/** A project's reverse-proxy exposure came up / changed / went down. */
+/** A project's exposure set changed — carries the FULL current entry list so
+ * clients replace rather than merge (an empty list clears the project). */
 export const ExposureChangedEvent = envelope("exposure_changed", {
-  exposure: Exposure
+  entries: Schema.Array(ExposureEntry)
 })
 export type ExposureChangedEvent = typeof ExposureChangedEvent.Type
 

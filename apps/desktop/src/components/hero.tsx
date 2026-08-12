@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import type { ProjectWithState } from "@matisa/core"
+import type { ExposureEntry, ProjectWithState } from "@matisa/core"
 import { useEngine } from "~/store/store.engine"
 import { revealPath } from "~/store/store.picker"
 import { openExternal } from "~/lib/native"
@@ -149,15 +149,58 @@ const StatPills = ({ project }: { project: ProjectWithState }) => {
   )
 }
 
+/** One reachable address. Direct localhost is client-derived; every other chip
+ *  mirrors an engine-reported ExposureEntry (thin-clients — the engine owns the
+ *  URL derivation). Click = copy. Non-active entries render dimmed with the
+ *  engine's message as the tooltip. */
+const UrlChip = ({
+  url,
+  state,
+  message,
+  warn
+}: {
+  url: string
+  state: ExposureEntry["state"]
+  message?: string
+  warn: boolean
+}) => {
+  const [copied, setCopied] = useState(false)
+  const copy = (): void => {
+    void navigator.clipboard?.writeText(url)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1400)
+  }
+  const cls = state !== "active" ? "muted" : warn ? "warn" : ""
+  return (
+    <button className={`url-chip ${cls}`} onClick={copy} title={message ?? url}>
+      <Icons.Globe size={13} />
+      <span className="url-text">{url}</span>
+      <span className="url-copy">
+        <Icons.Copy size={12} />
+      </span>
+      {copied && <span className="url-copied-badge">Copied</span>}
+    </button>
+  )
+}
+
 export const ProjectHero = ({ project, onEdit }: { project: ProjectWithState; onEdit: () => void }) => {
   const restart = useEngine((s) => s.restart)
   const kill = useEngine((s) => s.kill)
   const session = useEngine((s) => s.runSessions[project.id])
+  const entries = useEngine((s) => s.exposures[project.id])
+  const caddy = useEngine((s) => s.caddy)
+  const setLanShare = useEngine((s) => s.setLanShare)
   const [copied, setCopied] = useState(false)
 
   const { busy, running, warmingUp } = useLifecycleState(project)
   const port = primaryPort(project)
   const url = port === undefined ? null : `http://localhost:${port}`
+
+  // `running + timeout` = the app never bound its declared port, so every
+  // proxied URL below is routing to nothing. Say why, on the chips themselves.
+  const portNeverBound = running && project.health === "timeout"
+  const lanShared = entries?.some((e) => e.kind === "lan" && e.enabled) ?? false
+  const canShare = port !== undefined && (caddy?.available ?? false)
 
   const copy = (): void => {
     if (url === null) return
@@ -231,6 +274,22 @@ export const ProjectHero = ({ project, onEdit }: { project: ProjectWithState; on
           </button>
           <span className="actions-divider" />
           <button
+            className={`ico-btn ${lanShared ? "active" : ""}`}
+            title={
+              !canShare
+                ? port === undefined
+                  ? "Declare a port to share on your network"
+                  : "caddy not installed — brew install caddy"
+                : lanShared
+                  ? "Stop sharing on local network"
+                  : "Share on local network"
+            }
+            disabled={!canShare}
+            onClick={() => void setLanShare(project.id, !lanShared)}
+          >
+            <Icons.Broadcast size={15} />
+          </button>
+          <button
             className="ico-btn"
             title="Open in browser"
             disabled={url === null}
@@ -256,17 +315,40 @@ export const ProjectHero = ({ project, onEdit }: { project: ProjectWithState; on
       }
     >
       <div className="hero-facts">
-        {/* No port means nothing to visit, so the chip is absent rather than a
-            disabled one announcing an absence. */}
-        {url !== null && (
-          <button className="url-chip" onClick={copy}>
+        {/* Every address this project answers on, the direct port first and its
+            exposures after — one row, because "where do I reach this" is one
+            question. A project with no port is told so rather than shown an
+            empty space, since the absence is the reason there is nothing to
+            click. */}
+        {url === null ? (
+          <button className="url-chip muted" disabled>
             <Icons.Globe size={13} />
-            <span className="url-text">{url}</span>
-            <span className="url-copy">
-              <Icons.Copy size={12} />
-            </span>
-            {copied && <span className="url-copied-badge">Copied</span>}
+            <span className="url-text">no port declared</span>
           </button>
+        ) : (
+          <span className="url-chips">
+            <UrlChip
+              url={url}
+              state="active"
+              warn={portNeverBound}
+              {...(portNeverBound
+                ? { message: `port ${port} never bound — app may be choosing its own port` }
+                : {})}
+            />
+            {(entries ?? []).map((e) => (
+              <UrlChip
+                key={e.url}
+                url={e.url}
+                state={e.state}
+                warn={portNeverBound}
+                {...(portNeverBound && e.message === undefined
+                  ? { message: `port ${port} never bound — app may be choosing its own port` }
+                  : e.message !== undefined
+                    ? { message: e.message }
+                    : {})}
+              />
+            ))}
+          </span>
         )}
 
         <StatPills project={project} />

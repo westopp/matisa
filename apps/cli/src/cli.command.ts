@@ -17,6 +17,7 @@ export const cli = globals.pipe(
     C.commandsGroup, // named commands: set | list | rm
     C.run, // run <project> <command> — interactive PTY
     C.group, // group set | list | rm
+    C.exposure, // exposure list | share | unshare (stable URLs + LAN)
     C.engine, // engine status | start | stop
     C.docker, // docker daemon status | start | stop
     C.logs, // logs <id> [--lines N] [-f]

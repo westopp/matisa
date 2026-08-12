@@ -5,6 +5,7 @@ import {
   ContextId,
   DockerDaemonState,
   EnvContext,
+  ExposureEntry,
   Group,
   GroupSlug,
   Health,
@@ -286,6 +287,42 @@ export const ResourcesSnapshot = Schema.Struct({
 })
 export type ResourcesSnapshot = typeof ResourcesSnapshot.Type
 
+// —— exposure ——
+
+/** Runtime status of the Caddy provider. `available` = binary found;
+ * `running` = the engine-owned instance is up and serving routes. */
+export const CaddyStatus = Schema.Struct({
+  available: Schema.Boolean,
+  running: Schema.Boolean,
+  httpPort: Schema.Int,
+  /** Primary non-loopback IPv4, when a LAN interface is up. */
+  lanIp: Schema.optional(Schema.String)
+})
+export type CaddyStatus = typeof CaddyStatus.Type
+
+export const ProjectExposures = Schema.Struct({
+  projectId: ProjectId,
+  entries: Schema.Array(ExposureEntry)
+})
+export type ProjectExposures = typeof ProjectExposures.Type
+
+export const ExposureSnapshot = Schema.Struct({
+  caddy: CaddyStatus,
+  projects: Schema.Array(ProjectExposures)
+})
+export type ExposureSnapshot = typeof ExposureSnapshot.Type
+
+export const ExposureLanSetParams = Schema.Struct({
+  id: ProjectId,
+  enabled: Schema.Boolean
+})
+export type ExposureLanSetParams = typeof ExposureLanSetParams.Type
+
+export const ExposureEntries = Schema.Struct({
+  entries: Schema.Array(ExposureEntry)
+})
+export type ExposureEntries = typeof ExposureEntries.Type
+
 // —— events ——
 
 export const SubscribeParams = Schema.Struct({
@@ -436,7 +473,10 @@ export const methods = {
   "docker.daemon.start": { params: Schema.Void, result: DaemonStatusResult },
   "docker.daemon.stop": { params: Schema.Void, result: DaemonStatusResult },
 
-  "resources.snapshot": { params: Schema.Void, result: ResourcesSnapshot }
+  "resources.snapshot": { params: Schema.Void, result: ResourcesSnapshot },
+
+  "exposure.snapshot": { params: Schema.Void, result: ExposureSnapshot },
+  "exposure.lan.set": { params: ExposureLanSetParams, result: ExposureEntries }
 } as const satisfies Record<string, { params: Schema.Schema.Any; result: Schema.Schema.Any }>
 
 export type Methods = typeof methods

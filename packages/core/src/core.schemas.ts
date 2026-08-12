@@ -150,16 +150,26 @@ export type Group = typeof Group.Type
 
 // ────────────────────────────────────────────────────────────────────────────
 // Exposure
-// How a running project's port is reachable — the reverse-proxy binding.
+// How a project's declared port is reachable beyond localhost:<port>. Rows are
+// per (project, kind): `stable_url` is derived automatically whenever a port
+// is declared (Caddy route on <slug>.localhost); `lan` is the opt-in
+// same-network share (mDNS hostname + dedicated LAN-port listener). `tunnel`
+// (sish) is reserved, not implemented.
 // ────────────────────────────────────────────────────────────────────────────
 
-export const Exposure = Schema.Struct({
-  host: Schema.String,
-  port: Schema.Int,
+export const ExposureKind = Schema.Literal("stable_url", "lan")
+export type ExposureKind = typeof ExposureKind.Type
+
+export const ExposureEntry = Schema.Struct({
+  kind: ExposureKind,
+  /** The address a browser can open, e.g. http://api.localhost:7777. */
   url: Schema.String,
-  enabled: Schema.Boolean
+  enabled: Schema.Boolean,
+  /** `unavailable` = provider missing (no caddy binary / no LAN interface). */
+  state: Schema.Literal("active", "error", "unavailable"),
+  message: Schema.optional(Schema.String)
 })
-export type Exposure = typeof Exposure.Type
+export type ExposureEntry = typeof ExposureEntry.Type
 
 // ────────────────────────────────────────────────────────────────────────────
 // Project
@@ -179,13 +189,17 @@ export type Exposure = typeof Exposure.Type
 export const ProjectKind = Schema.Literal("process", "docker", "compose")
 export type ProjectKind = typeof ProjectKind.Type
 
-const kindFieldsValid = <A extends { kind: ProjectKind; command?: unknown; image?: unknown; composeFile?: unknown }>(p: A): boolean =>
-  (p.kind === "process" && p.command !== undefined) ||
-  (p.kind === "docker" && typeof p.image === "string") ||
-  (p.kind === "compose" && typeof p.composeFile === "string")
+const kindFieldsValid = <A extends { kind: ProjectKind; command?: unknown; image?: unknown; composeFile?: unknown; ports?: ReadonlyArray<unknown> }>(p: A): boolean =>
+  ((p.kind === "process" && p.command !== undefined) ||
+    (p.kind === "docker" && typeof p.image === "string") ||
+    (p.kind === "compose" && typeof p.composeFile === "string")) &&
+  // Process projects run one dev server on one port — the port is a contract
+  // (health probe + reverse-proxy upstream). Docker/compose stacks keep the
+  // array (web + db + admin UI are all legitimate listeners).
+  (p.kind !== "process" || (p.ports?.length ?? 0) <= 1)
 
 const kindMessage =
-  "process requires `command`; docker requires `image`; compose requires `composeFile`"
+  "process requires `command` and at most one port; docker requires `image`; compose requires `composeFile`"
 
 export const Project = Schema.Struct({
   id: ProjectId,
@@ -206,7 +220,6 @@ export const Project = Schema.Struct({
    *  glyph. A path, not the bytes: the engine reads it on demand (fs.readIcon)
    *  so an icon the user swaps on disk is picked up without a re-add. */
   pathToIcon: Schema.optional(Schema.String),
-  exposure: Schema.optional(Exposure),
   createdAt: Schema.Number,
   updatedAt: Schema.Number
 }).pipe(Schema.filter(kindFieldsValid, { message: () => kindMessage }))
@@ -224,7 +237,6 @@ const projectFields = {
   activeContextId: Schema.optional(ContextId),
   groupSlug: Schema.optional(GroupSlug),
   pathToIcon: Schema.optional(Schema.String),
-  exposure: Schema.optional(Exposure),
   createdAt: Schema.Number,
   updatedAt: Schema.Number
 }
@@ -248,8 +260,7 @@ export const NewProject = Schema.Struct({
   composeFile: Schema.optional(Schema.String),
   ports: Schema.optionalWith(Schema.Array(Port), { default: () => [] }),
   groupSlug: Schema.optional(GroupSlug),
-  pathToIcon: Schema.optional(Schema.String),
-  exposure: Schema.optional(Exposure)
+  pathToIcon: Schema.optional(Schema.String)
 }).pipe(Schema.filter(kindFieldsValid, { message: () => kindMessage }))
 export type NewProject = typeof NewProject.Type
 
@@ -263,8 +274,7 @@ export const ProjectPatch = Schema.Struct({
   composeFile: Schema.optional(Schema.String),
   ports: Schema.optional(Schema.Array(Port)),
   groupSlug: Schema.optional(Schema.NullOr(GroupSlug)),
-  pathToIcon: Schema.optional(Schema.NullOr(Schema.String)),
-  exposure: Schema.optional(Exposure)
+  pathToIcon: Schema.optional(Schema.NullOr(Schema.String))
 })
 export type ProjectPatch = typeof ProjectPatch.Type
 

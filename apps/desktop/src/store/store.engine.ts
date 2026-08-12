@@ -11,6 +11,8 @@ import {
   type EngineStatus,
   type EnvContext,
   type EnvSetParams,
+  type ExposureEntry,
+  type ExposureSnapshot,
   type Group,
   type GroupSetParams,
   type GroupSlug,
@@ -115,13 +117,18 @@ const describeEvent = (event: EngineEvent): ActivityEntry | null => {
         label: `crashed (${event.payload.signal ?? event.payload.exitCode ?? "?"})`,
         ...(event.payload.summary !== undefined ? { detail: event.payload.summary } : {})
       }
-    case "exposure_changed":
+    case "exposure_changed": {
+      // The event carries the project's WHOLE entry set, not a delta, so the
+      // line states the resulting shape rather than inventing a transition:
+      // an empty set is the only unambiguous "down".
+      const live = event.payload.entries.filter((e) => e.state === "active")
       return {
         ...base,
         kind: "exposure",
-        label: `exposure ${event.payload.exposure.enabled ? "up" : "down"}`,
-        detail: event.payload.exposure.url
+        label: live.length === 0 ? "exposure down" : `exposure ${live.length} live`,
+        ...(live.length === 0 ? {} : { detail: live.map((e) => e.url).join(", ") })
       }
+    }
     case "catalog_changed":
       return { ...base, kind: "catalog", label: `catalog ${event.payload.action}` }
     case "log_line":
@@ -218,6 +225,10 @@ interface EngineState {
   activity: ReadonlyArray<ActivityEntry>
   daemon: DaemonStatusResult
   engine: EngineStatus | null
+  /** Per-project URL entries + provider status, mirrored from exposure.snapshot
+   *  and patched by exposure_changed events. */
+  exposures: Record<string, ReadonlyArray<ExposureEntry>>
+  caddy: ExposureSnapshot["caddy"] | null
   runSessions: Record<string, RunSession>
   /** Projects with a lifecycle request in flight, by the intent that started it. */
   pending: Record<string, Intent>
@@ -234,6 +245,7 @@ interface EngineState {
   refreshCatalog: () => Promise<void>
   refreshContexts: () => Promise<void>
   refreshResources: () => Promise<void>
+  refreshExposures: () => Promise<void>
   loadCommands: (projectId: ProjectId) => Promise<void>
   ensureRunSession: (projectId: ProjectId) => Promise<SessionId | null>
 
@@ -293,6 +305,7 @@ interface EngineState {
   setCommand: (params: CommandSetParams) => Promise<boolean>
   removeCommand: (projectId: ProjectId, name: string) => Promise<void>
   runCommand: (params: CommandRunParams) => Promise<PtySession | null>
+  setLanShare: (projectId: ProjectId, enabled: boolean) => Promise<boolean>
 
   applyEvent: (raw: unknown) => void
 }
@@ -308,6 +321,8 @@ export const useEngine = create<EngineState>()((set, get) => ({
   activity: [],
   daemon: { state: "unknown" },
   engine: null,
+  exposures: {},
+  caddy: null,
   runSessions: {},
   pending: {},
 
@@ -361,6 +376,7 @@ export const useEngine = create<EngineState>()((set, get) => ({
       rpc.call("engine.status", undefined).then((engine) => set({ engine })),
       rpc.call("docker.daemon.status", undefined).then((daemon) => set({ daemon })),
       rpc.call("lifecycle.failures", { limit: 20 }).then((failures) => set({ failures })),
+      get().refreshExposures(),
       // History, not liveness: the live subscription starts at `cursor`, so this
       // reaches BACK of it. A pull that fails costs the Activity tab its
       // backfill and nothing else — never the whole handshake.
@@ -385,6 +401,19 @@ export const useEngine = create<EngineState>()((set, get) => ({
   refreshCatalog: async () => set({ projects: await rpc.call("catalog.list", undefined) }),
 
   refreshContexts: async () => set({ contexts: await rpc.call("env.list", undefined) }),
+
+  refreshExposures: async () => {
+    // Tolerate an engine that predates the exposure module (version skew during
+    // an upgrade): no URLs is degraded, not a failed handshake.
+    try {
+      const snapshot = await rpc.call("exposure.snapshot", undefined)
+      const next: Record<string, ReadonlyArray<ExposureEntry>> = {}
+      for (const p of snapshot.projects) next[p.projectId] = p.entries
+      set({ exposures: next, caddy: snapshot.caddy })
+    } catch {
+      set({ exposures: {}, caddy: null })
+    }
+  },
 
   refreshResources: async () => {
     const snapshot = await rpc.call("resources.snapshot", undefined)
@@ -756,6 +785,17 @@ export const useEngine = create<EngineState>()((set, get) => ({
     }
   },
 
+  setLanShare: async (projectId, enabled) => {
+    try {
+      const { entries } = await rpc.call("exposure.lan.set", { id: projectId, enabled })
+      set((s) => ({ exposures: { ...s.exposures, [projectId]: entries } }))
+      return true
+    } catch (cause) {
+      reportError(cause, enabled ? "could not share on network" : "could not stop sharing")
+      return false
+    }
+  },
+
   // ────────── events ──────────
 
   applyEvent: (raw) => {
@@ -825,7 +865,15 @@ export const useEngine = create<EngineState>()((set, get) => ({
         break
       }
       case "exposure_changed": {
-        patch(event.projectId, (p) => ({ ...p, exposure: event.payload.exposure }))
+        const entries = event.payload.entries
+        set((s) => {
+          if (entries.length === 0) {
+            const next = { ...s.exposures }
+            delete next[event.projectId]
+            return { exposures: next }
+          }
+          return { exposures: { ...s.exposures, [event.projectId]: entries } }
+        })
         break
       }
       case "log_line":

@@ -137,7 +137,7 @@ const TextField = (props: PgFormTextFieldProps) => {
 const NumberField = (props: PgFormNumberFieldProps) => {
   const error = props.fieldApi.firstError
   return (
-    <div className="field">
+    <div className="field" data-field={props.fieldKey}>
       <FieldLabel metadata={props.metadata} required={props.fieldApi.isRequired} />
       <input
         type="number"
@@ -205,8 +205,11 @@ const ToggleField = (props: PgFormToggleGroupFieldProps) => (
 // own wrapper. Rendering the row here is the one place that works for both
 // scalar arrays (`ports`) and group arrays (`vars`).
 
-const ArrayContainer = (props: PgFormArrayComponentProps) => (
-  <div className="field">
+const ArrayContainer = (props: PgFormArrayComponentProps) => {
+  // Scalar field slots get hidden for free from GeneratePgForm; the array
+  // container renders its own wrapper, so it must honor `hidden` itself.
+  return (
+  <div className="field" data-field={props.fieldKey}>
     {props.metadata.label !== undefined && <span className="field-label">{props.metadata.label}</span>}
     <div className="arr">
       {props.items.map((item) => (
@@ -232,7 +235,8 @@ const ArrayContainer = (props: PgFormArrayComponentProps) => (
     </div>
     {props.fieldApi.firstError !== undefined && <span className="field-error">{props.fieldApi.firstError}</span>}
   </div>
-)
+  )
+}
 
 export const baseComponents: BasePgFormFieldComponents = {
   textFields: TextField,

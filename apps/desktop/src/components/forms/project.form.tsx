@@ -69,6 +69,7 @@ const ProjectDialog = ({
   const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   const editing = existing !== undefined
+  const initialKind: ProjectKind = existing?.kind ?? "process"
 
   const remove = async (): Promise<void> => {
     if (existing === undefined) return
@@ -129,6 +130,19 @@ const ProjectDialog = ({
           ...onlyForKind("compose"),
           metadata: { label: "Compose file", placeholder: "/Users/me/dev/stack/docker-compose.yml", mono: true }
         },
+        // Process projects declare ONE port — a contract, not a hint: health is
+        // probed on it and every stable/LAN URL reverse-proxies to it. Shown for
+        // process, hidden (via the kind wrapper class) for docker/compose.
+        port: {
+          type: "number",
+          defaultValue: existing?.ports[0]?.number ?? ("" as unknown as number),
+          metadata: {
+            label: "Port",
+            placeholder: "3000",
+            description:
+              "Your app must run strictly on this port (e.g. --port 3000 with strictPort) — stable URLs and health checks depend on it."
+          }
+        },
         ports: {
           type: "number-array",
           defaultValue: existing?.ports.map((p) => p.number) ?? [],
@@ -175,6 +189,13 @@ const ProjectDialog = ({
     }
   })
 
+  // port ⇄ ports visibility. pgform's dynamic `hidden` handler never runs for
+  // an ARRAY PARENT key (`ports`) — only its `ports[n]` items — so the
+  // onlyForKind pattern can't drive it. Both fields stay registered (values
+  // survive a kind switch, living in the pgform store); a wrapper class keyed
+  // on the live kind hides the one that doesn't apply, purely in CSS.
+  const kindValue = ((form.use("values.kind") as ProjectKind | "") || initialKind) as ProjectKind
+
   const submit = async (values: Record<string, unknown>): Promise<void> => {
     const root = String(values["root"] ?? "").trim()
 
@@ -190,7 +211,13 @@ const ProjectDialog = ({
       }
 
       const kind = (existing?.kind ?? String(values["kind"] ?? "process")) as ProjectKind
-      const rawPorts = Array.isArray(values["ports"]) ? (values["ports"] as Array<number>) : []
+      // process: the single `port` field; docker/compose: the `ports` array.
+      const rawPorts =
+        kind === "process"
+          ? [Number(values["port"])]
+          : Array.isArray(values["ports"])
+            ? (values["ports"] as Array<number>)
+            : []
       const ports: ReadonlyArray<Port> = rawPorts
         .filter((n) => Number.isInteger(n) && n > 0 && n <= 65535)
         .map((number) => ({ number, protocol: "tcp" as const }))
@@ -268,7 +295,9 @@ const ProjectDialog = ({
         </>
       }
     >
-      <GeneratePgForm generateFormProps={form.generateFormProps} components={baseComponents} />
+      <div className={`pf-kind-${kindValue}`}>
+        <GeneratePgForm generateFormProps={form.generateFormProps} components={baseComponents} />
+      </div>
 
       {confirmingDelete && existing !== undefined && (
         <ConfirmDialog

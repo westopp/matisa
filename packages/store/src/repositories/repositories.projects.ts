@@ -5,7 +5,6 @@ import {
   GroupSlug,
   ProjectId,
   type Command,
-  type Exposure,
   type NewProject,
   type PortProtocol,
   type Project,
@@ -25,7 +24,6 @@ interface ProjectRowRaw {
   readonly group_slug: string | null
   readonly active_context_id: string | null
   readonly path_to_icon: string | null
-  readonly exposure_json: string | null
   readonly created_at: number
   readonly updated_at: number
 }
@@ -45,7 +43,11 @@ const toPort = (p: PortRowRaw): Project["ports"][number] => ({
 /** Ports arrive pre-fetched: `list` gets them in one grouped query, `get` in
  *  one lookup. buildProject issuing its own query per row made `list` an N+1 —
  *  fine at rest, but scheduleCatalogRefresh drives it at up to 5/s during a
- *  mass start. */
+ *  mass start.
+ *
+ *  No `exposure` field: exposure is per (project, kind) in its own table now,
+ *  read through ExposuresRepo. `projects.exposure_json` still exists in the
+ *  schema and is deliberately left unread. */
 const buildProject = (row: ProjectRowRaw, ports: ReadonlyArray<PortRowRaw>): Project => ({
   id: ProjectId.make(row.id),
   name: row.name,
@@ -58,7 +60,6 @@ const buildProject = (row: ProjectRowRaw, ports: ReadonlyArray<PortRowRaw>): Pro
   ports: ports.map(toPort),
   activeContextId: row.active_context_id ? ContextId.make(row.active_context_id) : undefined,
   pathToIcon: row.path_to_icon ?? undefined,
-  exposure: row.exposure_json ? (JSON.parse(row.exposure_json) as Exposure) : undefined,
   createdAt: row.created_at,
   updatedAt: row.updated_at
 })
@@ -148,7 +149,7 @@ export const ProjectsRepoLive = Layer.effect(
         const now = Date.now()
         yield* transaction((s) => {
           s.prepare(
-            "INSERT INTO projects (id, name, root, kind, command_json, image, compose_file, group_slug, active_context_id, path_to_icon, exposure_json, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            "INSERT INTO projects (id, name, root, kind, command_json, image, compose_file, group_slug, active_context_id, path_to_icon, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
           ).run(
             id,
             input.name,
@@ -160,7 +161,6 @@ export const ProjectsRepoLive = Layer.effect(
             input.groupSlug ?? null,
             null,
             input.pathToIcon ?? null,
-            input.exposure ? JSON.stringify(input.exposure) : null,
             now,
             now
           )
@@ -181,7 +181,6 @@ export const ProjectsRepoLive = Layer.effect(
           ports: input.ports,
           activeContextId: undefined,
           pathToIcon: input.pathToIcon,
-          exposure: input.exposure,
           createdAt: now,
           updatedAt: now
         } satisfies Project
@@ -208,11 +207,10 @@ export const ProjectsRepoLive = Layer.effect(
           patch.groupSlug === undefined ? (existing.groupSlug ?? null) : patch.groupSlug
         const pathToIcon =
           patch.pathToIcon === undefined ? (existing.pathToIcon ?? null) : patch.pathToIcon
-        const exposure = patch.exposure !== undefined ? patch.exposure : existing.exposure
         const now = Date.now()
         yield* transaction((s) => {
           s.prepare(
-            "UPDATE projects SET name=?, root=?, command_json=?, image=?, compose_file=?, group_slug=?, path_to_icon=?, exposure_json=?, updated_at=? WHERE id=?"
+            "UPDATE projects SET name=?, root=?, command_json=?, image=?, compose_file=?, group_slug=?, path_to_icon=?, updated_at=? WHERE id=?"
           ).run(
             name,
             root,
@@ -221,7 +219,6 @@ export const ProjectsRepoLive = Layer.effect(
             composeFile ?? null,
             groupSlug,
             pathToIcon,
-            exposure ? JSON.stringify(exposure) : null,
             now,
             id
           )

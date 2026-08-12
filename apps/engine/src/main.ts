@@ -20,8 +20,8 @@ import { TracingLive } from "./telemetry/tracing.js"
 //
 // The socket (ServerLive) opens LAST, after every service it depends on is
 // built and reconciliation has run, so clients never observe incoherent state.
-// The Discovery/Exposure stubs are merged as peers purely so their boot log
-// fires. The whole graph is launched with Layer.launch under NodeRuntime.runMain,
+// The Discovery stub is merged as a peer purely so its boot log fires. The
+// whole graph is launched with Layer.launch under NodeRuntime.runMain,
 // which turns SIGINT/SIGTERM into fiber interruption → Scope teardown (children
 // signalled, socket unlinked, DB closed). Fatal config/store faults are caught at
 // the top and turned into a logged die.
@@ -33,9 +33,10 @@ import { TracingLive } from "./telemetry/tracing.js"
 // are skipped, orphaning children and leaving a stale socket.
 // ────────────────────────────────────────────────────────────────────────────
 
-const Root = Layer.mergeAll(ServerLive, DiscoveryLive, ExposureLive)
+const Root = Layer.mergeAll(ServerLive, DiscoveryLive)
 
 const MainLive = Root.pipe(
+  Layer.provide(ExposureLive),
   Layer.provide(SupervisorLive),
   Layer.provide(CatalogLive),
   Layer.provide(PtyLive),

@@ -16,6 +16,9 @@ const ConfigSchema = Schema.Struct({
   dbPath: Schema.String,
   logLevel: Schema.Literal("debug", "info", "warn", "error"),
   caddyAdminPort: Schema.Number,
+  caddyHttpPort: Schema.Number,
+  lanPortBase: Schema.Number,
+  mdnsDomain: Schema.String,
   sish: Schema.Struct({
     server: Schema.String,
     keyPath: Schema.String
@@ -30,6 +33,9 @@ const gatherEnvAndDefaults = (): unknown => ({
   dbPath: process.env.MATISA_DB ?? C.DEFAULT_DB_PATH,
   logLevel: process.env.MATISA_LOG_LEVEL ?? "info",
   caddyAdminPort: Number(process.env.MATISA_CADDY_PORT ?? C.CADDY_ADMIN_PORT),
+  caddyHttpPort: Number(process.env.MATISA_CADDY_HTTP_PORT ?? C.CADDY_HTTP_PORT),
+  lanPortBase: Number(process.env.MATISA_LAN_PORT_BASE ?? C.LAN_PORT_BASE),
+  mdnsDomain: process.env.MATISA_MDNS_DOMAIN ?? C.MDNS_DOMAIN,
   sish: {
     server: process.env.MATISA_SISH_SERVER ?? "tuns.sh",
     keyPath: process.env.MATISA_SISH_KEY ?? `${C.MATISA_ROOT}/sish_ed25519`

@@ -1,4 +1,4 @@
-import type { Health, ProjectId, RuntimeState } from "@matisa/core"
+import type { ExposureEntry, Health, ProjectId, RuntimeState } from "@matisa/core"
 import type { NewEvent } from "@matisa/store"
 
 // Typed builders for the engine-event envelopes. `seq` is assigned by the store
@@ -58,6 +58,16 @@ export const healthChanged = (
   projectId,
   type: "health_changed",
   payload: message !== undefined ? { health, message } : { health }
+})
+
+export const exposureChanged = (
+  projectId: ProjectId,
+  entries: ReadonlyArray<ExposureEntry>
+): NewEvent => ({
+  ts: Date.now(),
+  projectId,
+  type: "exposure_changed",
+  payload: { entries }
 })
 
 export const catalogChanged = (

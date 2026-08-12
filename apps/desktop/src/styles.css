@@ -2699,6 +2699,27 @@ button {
 .url-chip .url-copy {
   color: var(--text-dim);
 }
+/* All of a project's addresses wrap together, ahead of the stat pills. */
+.url-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.url-chip.muted {
+  color: var(--text-dim);
+}
+.url-chip.muted svg:first-child {
+  color: var(--text-dim);
+}
+/* Proxied URLs that route to a port the app never bound — reachable, but 502. */
+.url-chip.warn {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+.url-chip.warn svg:first-child {
+  color: var(--warning);
+}
 .url-chip .url-copied-badge {
   position: absolute;
   top: -22px;
@@ -3583,6 +3604,13 @@ button {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+/* Port model per project kind: process declares a single `port`, docker/compose
+   the `ports` array. Both fields stay registered; the active kind hides one. */
+.pf-kind-process [data-field="ports"],
+.pf-kind-docker [data-field="port"],
+.pf-kind-compose [data-field="port"] {
+  display: none;
 }
 .field-label {
   font-size: 11.5px;

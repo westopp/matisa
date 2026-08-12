@@ -3,6 +3,7 @@ import { EventsRepo, RuntimeRepo } from "@matisa/store"
 import { AppConfig } from "../../config/config.app-config.js"
 import { Catalog } from "../../modules/catalog/catalog.services.js"
 import { DockerDaemon } from "../../modules/docker/docker.daemon.js"
+import { Exposure } from "../../modules/exposure/exposure.index.js"
 import { PtyManager } from "../../modules/pty/pty.services.js"
 import { Resources } from "../../modules/resources/resources.services.js"
 import { Supervisor } from "../../modules/supervisor/supervisor.services.js"
@@ -11,6 +12,7 @@ import type { Handlers } from "../server.dispatcher.js"
 import { catalogHandlers } from "./handlers.catalog.js"
 import { engineHandlers } from "./handlers.engine.js"
 import { eventsHandlers } from "./handlers.events.js"
+import { exposureHandlers } from "./handlers.exposure.js"
 import { fsHandlers } from "./handlers.fs.js"
 import { lifecycleHandlers } from "./handlers.lifecycle.js"
 import { ptyHandlers } from "./handlers.pty.js"
@@ -25,6 +27,7 @@ export const makeHandlers: Effect.Effect<
   never,
   | Catalog
   | Supervisor
+  | Exposure
   | EventsHub
   | PtyManager
   | DockerDaemon
@@ -35,6 +38,7 @@ export const makeHandlers: Effect.Effect<
 > = Effect.gen(function* () {
   const catalog = yield* Catalog
   const supervisor = yield* Supervisor
+  const exposure = yield* Exposure
   const hub = yield* EventsHub
   const pty = yield* PtyManager
   const daemon = yield* DockerDaemon
@@ -50,6 +54,7 @@ export const makeHandlers: Effect.Effect<
     ...eventsHandlers(hub),
     ...ptyHandlers(pty),
     ...engineHandlers(config, startedAt, daemon, resources, catalog, supervisor, pty),
+    ...exposureHandlers(exposure),
     ...fsHandlers()
   }
   return handlers

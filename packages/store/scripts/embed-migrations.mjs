@@ -6,8 +6,7 @@
 //
 //   node packages/store/scripts/embed-migrations.mjs
 //
-// Only files registered in the LEDGER below are embedded (0003 was authored
-// but never registered, and embedding it would silently apply it).
+// Only files registered in the LEDGER below are embedded.
 import { readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -19,6 +18,9 @@ const out = join(here, "..", "src", "migrations", "migrations.embedded.ts")
 const LEDGER = [
   { version: "0001_init", file: "0001_init.sql" },
   { version: "0002_project_icons", file: "0002_project_icons.sql" },
+  // Registered on the exposure branch: command vars stopped being context-scoped
+  // in code long before the column went, and nothing has read context_id since.
+  { version: "0003_command_vars_unscoped", file: "0003_command_vars_unscoped.sql" },
   { version: "0004_crash_kind", file: "0004_crash_kind.sql" }
 ]
 

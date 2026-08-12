@@ -1,6 +1,8 @@
 import type {
   Accepted,
   EnvContext,
+  ExposureEntry,
+  ExposureSnapshot,
   Project,
   ProjectWithState,
   RuntimeStatus
@@ -90,3 +92,37 @@ export const envTable = (list: ReadonlyArray<EnvContext>): string => {
 
 export const envContextLine = (c: EnvContext): string =>
   `${c.id}  ${c.name}  ${varsOf(c)}`
+
+// ── exposure ────────────────────────────────────────────────────────────────
+
+const entryLine = (e: ExposureEntry): string => {
+  // `active` reads clean; anything else carries the engine's message so the
+  // user sees WHY a URL isn't live (caddy down, no LAN, port never bound).
+  const suffix =
+    e.state === "active"
+      ? ""
+      : `  (${e.state}${e.message === undefined ? "" : `: ${e.message}`})`
+  return `  ${pad(e.kind, 11)}  ${e.url}${suffix}`
+}
+
+export const exposureTable = (snap: ExposureSnapshot): string => {
+  const caddy = snap.caddy.available
+    ? `caddy running=${snap.caddy.running} http=:${snap.caddy.httpPort}${
+        snap.caddy.lanIp === undefined ? "" : ` lan=${snap.caddy.lanIp}`
+      }`
+    : "caddy not installed — brew install caddy"
+  if (snap.projects.length === 0) return `${caddy}\nno exposed projects`
+  const blocks = snap.projects.map(
+    (p) => `${p.projectId}\n${p.entries.map(entryLine).join("\n")}`
+  )
+  return [caddy, "", ...blocks].join("\n")
+}
+
+/** One project's entries — for `exposure share`/`unshare` results. */
+export const exposureEntriesLines = (
+  id: string,
+  entries: ReadonlyArray<ExposureEntry>
+): string =>
+  entries.length === 0
+    ? `${id}\n  (no exposure — declare a port first)`
+    : `${id}\n${entries.map(entryLine).join("\n")}`

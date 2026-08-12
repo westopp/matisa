@@ -74,7 +74,7 @@ const make = Effect.gen(function* () {
     yield* Effect.logInfo(`ws bridge listening on ws://127.0.0.1:${config.wsPort}`)
   }
   yield* Effect.logInfo(
-    "modules — FULL: catalog, supervisor (lifecycle), events, pty (run + shell sessions) | STUB: discovery, exposure, docker"
+    "modules — FULL: catalog, supervisor (lifecycle), events, pty (run + shell sessions), exposure (caddy + mdns), docker | STUB: discovery"
   )
 
   return SocketServer.of({ address: socketPath })

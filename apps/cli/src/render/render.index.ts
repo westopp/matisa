@@ -3,6 +3,8 @@ import type {
   Accepted,
   EngineEvent,
   EnvContext,
+  ExposureEntry,
+  ExposureSnapshot,
   Project,
   ProjectWithState,
   RuntimeStatus
@@ -29,6 +31,11 @@ export interface RendererService {
   readonly envContext: (c: EnvContext) => Effect.Effect<void>
   readonly accepted: (a: Accepted) => Effect.Effect<void>
   readonly status: (s: RuntimeStatus) => Effect.Effect<void>
+  readonly exposureSnapshot: (s: ExposureSnapshot) => Effect.Effect<void>
+  readonly exposureEntries: (
+    id: string,
+    entries: ReadonlyArray<ExposureEntry>
+  ) => Effect.Effect<void>
   readonly event: (e: EngineEvent) => Effect.Effect<void>
   readonly cursor: (n: number) => Effect.Effect<void>
   /** Generic sink: `value` for --json, `human` for the table mode. */
@@ -57,6 +64,8 @@ const make = Effect.gen(function* () {
     envContext: (c) => emit(c, T.envContextLine(c)),
     accepted: (a) => emit(a, T.acceptedLine(a)),
     status: (s) => emit(s, T.statusLine(s)),
+    exposureSnapshot: (s) => emit(s, T.exposureTable(s)),
+    exposureEntries: (id, entries) => emit({ projectId: id, entries }, T.exposureEntriesLines(id, entries)),
     event: (e) => emit(e, formatEvent(e)),
     cursor: (n) => emit({ nextCursor: n }, `next-cursor ${n}`),
     raw: (value, human) => emit(value, human)
