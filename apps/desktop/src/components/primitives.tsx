@@ -33,8 +33,11 @@ export const stateColor = (state: RuntimeState): string =>
 export const StatusDot = ({ state, size = 8 }: { state: RuntimeState; size?: number }) => {
   const transient = state === "starting" || state === "stopping"
   return (
+    // Classed as well as styled: the colour is inline (one function owns the
+    // state→colour rule for every surface), so a card that fills itself with a
+    // tone needs something to hang an override on.
     <span
-      className={transient ? "status-dot-pulse" : undefined}
+      className={`status-dot ${transient ? "status-dot-pulse" : ""}`}
       style={{ width: size, height: size, borderRadius: 999, background: stateColor(state), display: "inline-block", flexShrink: 0 }}
     />
   )
@@ -230,24 +233,33 @@ const TIP_HEIGHT = 96
 const TIP_MARGIN = 8
 const TIP_GAP = 6
 
-export const FailureGlyph = ({
-  state,
-  projectId,
-  size = 13
-}: {
-  state: RuntimeState
-  /** Omit for surfaces with no project behind them (the Systems rows): the
-   *  glyph then states the problem without offering details it cannot show. */
-  projectId?: ProjectId
-  size?: number
-}) => {
-  const failure = useLatestFailure(projectId)
-  const openDrawer = useUi((s) => s.openDrawer)
+/** Everything the mark needs to report a failure and offer the way out of it.
+ *  Supplied by the caller rather than looked up here, because the surfaces that
+ *  draw this mark fail for different reasons: a project has a crash record and
+ *  a drawer to show it in, a command has an exit code and a terminal. The tip,
+ *  its placement and its two buttons are the same either way. */
+export interface FailureDetail {
+  /** The tip's title — what happened. */
+  readonly headline: string
+  /** The tip's body — why, as far as anything knows. */
+  readonly body: string
+  /** The glyph's own tooltip: headline and body in one line. */
+  readonly reason: string
+  /** Exit code or signal, shown as a chip beside the headline. */
+  readonly exit?: number | string
+  readonly resetTitle: string
+  readonly onReset: () => void
+  /** The second button, when there is somewhere to go for the full story. */
+  readonly details?: { readonly label: string; readonly onClick: () => void }
+}
+
+/** The failure triangle and its reason tip. Hover reads the reason, and the two
+ *  things you can do about it — look, and reset — sit in the tip, because the
+ *  place a reason is read is the place those belong. */
+export const FailureMark = ({ detail, size = 13 }: { detail: FailureDetail; size?: number }) => {
   const [anchor, setAnchor] = useState<TipAnchor | null>(null)
   const tipRef = useRef<HTMLSpanElement>(null)
-  const reason = failureText(state, failure)
-  const exit = failure?.signal ?? failure?.exitCode
-  const headline = state === "crashed" ? "Crashed" : "Failed to start"
+  const { headline, body, reason, exit } = detail
 
   // One corrective pass once the tip has real dimensions. The first placement
   // centres on the glyph, which runs off the window whenever the glyph sits
@@ -275,14 +287,6 @@ export const FailureGlyph = ({
     </span>
   )
 
-  if (projectId === undefined) {
-    return (
-      <span className="failure-mark" title={reason} aria-label={reason}>
-        {glyph}
-      </span>
-    )
-  }
-
   // Measured at the moment of hover, not on mount: rows scroll, and a position
   // captured earlier would put the tip somewhere the glyph no longer is.
   const place = (e: { currentTarget: HTMLElement }): void => {
@@ -296,21 +300,44 @@ export const FailureGlyph = ({
     })
   }
 
+  const reset = (): void => {
+    setAnchor(null)
+    detail.onReset()
+  }
+
+  // A span, not a button: the tip it owns now carries its own controls, and a
+  // button cannot contain buttons. Hover lives on the wrapper so crossing from
+  // the glyph into the tip is never a leave.
   return (
-    <button
+    <span
       className="failure-mark"
-      aria-label={`${reason} — show details`}
       onMouseEnter={place}
       onFocus={place}
-      // The tip is a DOM child of this button, so moving the pointer onto it is
-      // not a leave — which is what lets the user go read it.
       onMouseLeave={() => setAnchor(null)}
       onBlur={() => setAnchor(null)}
-      // The click also selects the row it sits in (the handler does not stop
-      // propagation), so the drawer opens onto the project you just pointed at.
-      onClick={() => openDrawer("failures")}
     >
-      {glyph}
+      <button
+        className="failure-glyph-btn"
+        aria-label={detail.details === undefined ? reason : `${reason} — show details`}
+        // The click also selects the row it sits in (the handler does not stop
+        // propagation), so the drawer opens onto the project you just pointed at.
+        onClick={() => detail.details?.onClick()}
+      >
+        {glyph}
+      </button>
+      {/* Beside the triangle, never instead of it: the failure stays readable
+          while the way out of it sits next to it. */}
+      <button
+        className="failure-reset"
+        title={detail.resetTitle}
+        aria-label={detail.resetTitle}
+        onClick={(e) => {
+          e.stopPropagation()
+          reset()
+        }}
+      >
+        <Icons.Reset size={size - 1} sw={2.2} />
+      </button>
       {anchor !== null && (
         <span
           ref={tipRef}
@@ -322,14 +349,69 @@ export const FailureGlyph = ({
             {headline}
             {exit !== undefined && <span className="failure-tip-exit">{exit}</span>}
           </span>
-          <span className="failure-tip-body">
-            {failure?.summary ??
-              (state === "crashed" ? "No output was captured." : "The engine could not start this project.")}
+          <span className="failure-tip-body">{body}</span>
+          {/* The tip is where the reason is read, so it is also where the two
+              things you can do about it belong. */}
+          <span className="failure-tip-acts" onClick={(e) => e.stopPropagation()}>
+            {detail.details !== undefined && (
+              <button className="failure-tip-btn" onClick={detail.details.onClick}>
+                {detail.details.label}
+              </button>
+            )}
+            <button className="failure-tip-btn primary" onClick={reset}>
+              <Icons.Reset size={11} sw={2.2} /> Reset
+            </button>
           </span>
-          <span className="failure-tip-more">Click for details</span>
         </span>
       )}
-    </button>
+    </span>
+  )
+}
+
+/** The project's failure, in the shared mark: the crash record for the reason,
+ *  the drawer for the full story, and the engine's own reset for the way out. */
+export const FailureGlyph = ({
+  state,
+  projectId,
+  size = 13
+}: {
+  state: RuntimeState
+  /** Omit for surfaces with no project behind them (the Systems rows): the
+   *  glyph then states the problem without offering details it cannot show. */
+  projectId?: ProjectId
+  size?: number
+}) => {
+  const failure = useLatestFailure(projectId)
+  const openDrawer = useUi((s) => s.openDrawer)
+  const resetProject = useEngine((s) => s.resetProject)
+  const reason = failureText(state, failure)
+  const exit = failure?.signal ?? failure?.exitCode
+
+  if (projectId === undefined) {
+    return (
+      <span className="failure-mark" title={reason} aria-label={reason}>
+        <span className="failure-glyph" style={{ width: size, height: size }}>
+          <Icons.Alert size={size} sw={2.2} />
+        </span>
+      </span>
+    )
+  }
+
+  return (
+    <FailureMark
+      size={size}
+      detail={{
+        headline: state === "crashed" ? "Crashed" : "Failed to start",
+        body:
+          failure?.summary ??
+          (state === "crashed" ? "No output was captured." : "The engine could not start this project."),
+        reason,
+        ...(exit === undefined ? {} : { exit }),
+        resetTitle: "Reset — back to idle, and forget this failure",
+        onReset: () => void resetProject(projectId),
+        details: { label: "Details", onClick: () => openDrawer("failures") }
+      }}
+    />
   )
 }
 
@@ -341,17 +423,26 @@ export const StatusFigure = ({
   state,
   projectId,
   size = 14,
-  dotSize = 6
+  dotSize = 6,
+  failure
 }: {
   state: RuntimeState
   projectId?: ProjectId
   size?: number
   dotSize?: number
+  /** What broke, for surfaces that are not a project — a named command's
+   *  terminal, say. Without it the mark falls back to the project's own crash
+   *  record. */
+  failure?: FailureDetail
 }) => {
   if (state === "running") return <RunningMan state={state} size={size} />
   if (state === "starting" || state === "stopping") return <WalkingMan state={state} size={size} />
   if (state === "crashed" || state === "errored")
-    return <FailureGlyph state={state} projectId={projectId} size={size - 1} />
+    return failure === undefined ? (
+      <FailureGlyph state={state} projectId={projectId} size={size - 1} />
+    ) : (
+      <FailureMark detail={failure} size={size - 1} />
+    )
   return <StatusDot state={state} size={dotSize} />
 }
 

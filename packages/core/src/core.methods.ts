@@ -131,6 +131,17 @@ export const FailuresParams = Schema.Struct({
 })
 export type FailuresParams = typeof FailuresParams.Type
 
+/** Forget recorded failures — one project's, or every project's when the id is
+ *  omitted. The crash history is a record kept FOR the user; once it has been
+ *  read it is theirs to discard. Nothing running is touched. */
+export const ClearFailuresParams = Schema.Struct({
+  projectId: Schema.optional(ProjectId)
+})
+export type ClearFailuresParams = typeof ClearFailuresParams.Type
+
+export const ClearedResult = Schema.Struct({ cleared: Schema.Int })
+export type ClearedResult = typeof ClearedResult.Type
+
 // —— named commands ——
 
 export const CommandSetParams = Schema.Struct({
@@ -377,6 +388,11 @@ export const methods = {
    *  process gets no chance to flush, so it is a user's decision, never the
    *  engine's. */
   "lifecycle.kill": { params: ById, result: Accepted },
+  /** Acknowledge a terminal failure: `crashed`/`errored` → `idle`. Nothing is
+   *  started, stopped or signalled — there is no process on either side of it.
+   *  A no-op from any other state, so a stale click can never disturb something
+   *  that is actually alive. */
+  "lifecycle.reset": { params: ById, result: Accepted },
   "lifecycle.status": { params: ById, result: RuntimeStatus },
 
   "events.subscribe": { params: SubscribeParams, result: SubscribeResult },
@@ -411,6 +427,7 @@ export const methods = {
 
   "logs.tail": { params: LogsTailParams, result: LogsTailResult },
   "lifecycle.failures": { params: FailuresParams, result: Schema.Array(CrashRecord) },
+  "lifecycle.clearFailures": { params: ClearFailuresParams, result: ClearedResult },
 
   "engine.status": { params: Schema.Void, result: EngineStatus },
   "engine.shutdown": { params: Schema.Void, result: Schema.Struct({ accepted: Schema.Boolean }) },

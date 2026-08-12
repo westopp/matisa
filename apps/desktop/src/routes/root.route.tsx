@@ -1,9 +1,10 @@
-import { useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Outlet, useNavigate, useParams } from "@tanstack/react-router"
 import { Toaster } from "sonner"
 import type { ProjectId } from "@matisa/core"
 import { useEngine } from "~/store/store.engine"
 import { useUi } from "~/store/store.ui"
+import { isSystemId } from "~/store/store.systems"
 import { Icons } from "~/components/icons"
 import { Sidebar } from "~/components/sidebar"
 import { RightDrawer } from "~/components/drawer"
@@ -16,7 +17,7 @@ import { AddProjectDialog } from "~/components/forms/lazy"
 // lands back where you were and the terminals re-attach to the same sessions.
 // ────────────────────────────────────────────────────────────────────────────
 
-const Titlebar = () => {
+const Titlebar = ({ hasSelection }: { hasSelection: boolean }) => {
   const refreshCatalog = useEngine((s) => s.refreshCatalog)
   const failureCount = useEngine((s) => s.failures.length)
 
@@ -55,9 +56,19 @@ const Titlebar = () => {
         <button className="ico-btn" title="Refresh" onClick={() => void refreshCatalog()}>
           <Icons.Refresh size={14} />
         </button>
+        {/* With nothing selected the fleet IS the view — there is no second
+            column to give its width to, so the control says so rather than
+            leaving the window empty. */}
         <button
-          className={`ico-btn ${sidebarCollapsed ? "" : "active"}`}
-          title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+          className={`ico-btn ${sidebarCollapsed || !hasSelection ? "" : "active"}`}
+          title={
+            hasSelection
+              ? sidebarCollapsed
+                ? "Show project list"
+                : "Hide project list"
+              : "Open a project to hide the list"
+          }
+          disabled={!hasSelection}
           onClick={toggleSidebar}
         >
           <Icons.PanelLeft size={14} />
@@ -85,22 +96,86 @@ export const RootLayout = () => {
   const collapseSidebar = useUi((s) => s.collapseSidebar)
 
   const navigate = useNavigate()
-  const params = useParams({ strict: false }) as { projectId?: string }
-  const selectedId = (params.projectId ?? null) as ProjectId | null
+  const params = useParams({ strict: false }) as { projectId?: string; systemId?: string }
+  // A system is addressed by its bare key in the URL and by its `sys:` id
+  // everywhere else, so the two meet here.
+  const selectedId = (params.projectId ??
+    (params.systemId === undefined ? null : `sys:${params.systemId}`)) as ProjectId | null
+
+  // One view, two proportions. With nothing selected the fleet is the whole
+  // window and the routed pane renders nothing; selecting a project turns the
+  // same fleet into a rail beside it. Nothing mounts or unmounts across the
+  // change — the board reflows, the pane takes the rest of the width.
+  const focused = selectedId !== null
+
+  // Highlight and route are two different things now. Clicking a card moves the
+  // highlight and nothing else; the card's chevron is what puts a project in
+  // the URL. The highlight outlives the route, so expanding back to the board
+  // leaves the card you came from lit — a board that forgets makes you find
+  // your place again every time.
+  const [highlighted, setHighlighted] = useState<ProjectId | null>(selectedId)
+  useEffect(() => {
+    if (selectedId !== null) setHighlighted(selectedId)
+  }, [selectedId])
+
+  const expand = useCallback((): void => void navigate({ to: "/" }), [navigate])
+
+  const open = useCallback(
+    (id: ProjectId): void => {
+      setHighlighted(id)
+      if (isSystemId(id)) void navigate({ to: "/system/$systemId", params: { systemId: id.slice(4) } })
+      else void navigate({ to: "/project/$projectId", params: { projectId: id } })
+    },
+    [navigate]
+  )
+
+  // The chevron is a toggle: on the project already open it closes the pane.
+  const toggleOpen = useCallback(
+    (id: ProjectId): void => {
+      if (id === selectedId) {
+        setHighlighted(id)
+        void navigate({ to: "/" })
+        return
+      }
+      open(id)
+    },
+    [navigate, open, selectedId]
+  )
+
+  // Escape gives the fleet the window back, the way it does in the design.
+  // Ignored while a dialog, a menu or a field has the focus — Escape belongs to
+  // whatever is on top, and only reaches the layout when nothing else wants it.
+  useEffect(() => {
+    if (!focused) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== "Escape" || e.defaultPrevented) return
+      const el = document.activeElement
+      if (el instanceof HTMLElement && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return
+      if (document.querySelector(".scrim, .menu") !== null) return
+      expand()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [focused, expand])
 
   return (
     <div className="desktop">
       <div className="window">
-        <Titlebar />
+        <Titlebar hasSelection={focused} />
         <div className="window-body">
-          <div className={`sidebar-slot ${sidebarCollapsed ? "collapsed" : ""}`}>
+          <div className={`fleet ${focused ? "as-rail" : ""} ${focused && sidebarCollapsed ? "hidden" : ""}`}>
             <Sidebar
-              selectedId={selectedId}
-              onSelect={(id) => void navigate({ to: "/project/$projectId", params: { projectId: id } })}
+              selectedId={highlighted}
+              openId={selectedId}
+              onSelect={setHighlighted}
+              onOpen={open}
+              onToggleOpen={toggleOpen}
               theme={theme}
               onToggleTheme={toggleTheme}
               onCollapse={collapseSidebar}
               onAddProject={() => setAddingProject(true)}
+              compact={focused}
+              onExpand={expand}
             />
           </div>
           <Outlet />

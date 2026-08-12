@@ -29,6 +29,11 @@ export type Event = Data.TaggedEnum<{
   Exit: { readonly code: number | null; readonly signal: string | null }
   Timeout: {}
   ForeignListener: { readonly pid: number }
+  /** Acknowledge a terminal failure. The user has read why it died and wants
+   *  the project back at rest — a dismissal, not a lifecycle action: there is
+   *  no process on either side of it. Legal ONLY from Crashed/Errored, so it
+   *  can never dismiss a state that describes something still alive. */
+  Reset: {}
 }>
 export const Event = Data.taggedEnum<Event>()
 
@@ -92,6 +97,14 @@ export const transition = (state: State, event: Event): Option.Option<State> => 
 
     case "Crashed":
     case "Errored":
+      if (event._tag === "Start") return Option.some(State.Starting({ attempt: event.attempt }))
+      if (event._tag === "Fault") return Option.some(State.Errored({ reason: event.reason }))
+      if (event._tag === "Reset") return Option.some(State.Idle())
+      return Option.none()
+
+    // Reset is deliberately NOT legal here: `unmanaged` says a process this
+    // engine does not own holds the port. Clearing it to idle would be the UI
+    // asserting something it has not checked and cannot change.
     case "Unmanaged":
       if (event._tag === "Start") return Option.some(State.Starting({ attempt: event.attempt }))
       if (event._tag === "Fault") return Option.some(State.Errored({ reason: event.reason }))

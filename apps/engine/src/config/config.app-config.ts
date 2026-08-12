@@ -15,11 +15,6 @@ const ConfigSchema = Schema.Struct({
   wsPort: Schema.Number,
   dbPath: Schema.String,
   logLevel: Schema.Literal("debug", "info", "warn", "error"),
-  backoff: Schema.Struct({
-    base: Schema.Number,
-    cap: Schema.Number,
-    maxAttempts: Schema.Number
-  }),
   caddyAdminPort: Schema.Number,
   sish: Schema.Struct({
     server: Schema.String,
@@ -34,11 +29,6 @@ const gatherEnvAndDefaults = (): unknown => ({
   wsPort: Number(process.env.MATISA_WS_PORT ?? C.DEFAULT_WS_PORT),
   dbPath: process.env.MATISA_DB ?? C.DEFAULT_DB_PATH,
   logLevel: process.env.MATISA_LOG_LEVEL ?? "info",
-  backoff: {
-    base: Number(process.env.MATISA_BACKOFF_BASE ?? C.DEFAULT_BACKOFF.base),
-    cap: Number(process.env.MATISA_BACKOFF_CAP ?? C.DEFAULT_BACKOFF.cap),
-    maxAttempts: Number(process.env.MATISA_BACKOFF_MAX ?? C.DEFAULT_BACKOFF.maxAttempts)
-  },
   caddyAdminPort: Number(process.env.MATISA_CADDY_PORT ?? C.CADDY_ADMIN_PORT),
   sish: {
     server: process.env.MATISA_SISH_SERVER ?? "tuns.sh",

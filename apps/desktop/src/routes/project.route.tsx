@@ -88,27 +88,7 @@ export const ProjectRoute = () => {
   )
 }
 
-export const IndexRoute = () => {
-  const projects = useEngine((s) => s.projects)
-  const status = useEngine((s) => s.status)
-
-  return (
-    <main className="main">
-      <div className="empty-state">
-        <div className="empty-state-inner">
-          <Icons.Terminal size={26} />
-          {status !== "open" ? (
-            <>
-              <span>No engine on ws://127.0.0.1:4127</span>
-              <code className="metric-code">pnpm engine</code>
-            </>
-          ) : projects.length === 0 ? (
-            <span>No projects yet — add one from the sidebar.</span>
-          ) : (
-            <span>Select a project.</span>
-          )}
-        </div>
-      </div>
-    </main>
-  )
-}
+/** Nothing selected: the fleet board is the view and owns the whole window, so
+ *  the routed pane draws nothing at all. What this used to say — no engine, no
+ *  projects, pick one — is said by the board itself, where the projects are. */
+export const IndexRoute = () => null

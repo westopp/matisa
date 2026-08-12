@@ -156,6 +156,23 @@ export const acquireHost = (paneId: string, sessionId: SessionId): TerminalHost 
   return entry
 }
 
+/** Wipe a pane's surface, if it has one.
+ *
+ *  The surface outlives the component that renders it — that is the whole point
+ *  of this registry — so clearing must be addressed to the HOST, not to a ref
+ *  the pane happens to be holding. The pane's ref is dropped every time the
+ *  session id changes, which includes the moment a project stops: exactly when
+ *  there is old output on screen and the user reaches for Clear.
+ *
+ *  `term.reset()` rather than xterm's `clear()`: `clear()` early-returns when
+ *  nothing has scrolled off the top, so a terminal whose output still fits the
+ *  viewport — a project that printed a dozen lines and stopped — would not
+ *  visibly change. The session is being cleared wholesale here, so dropping
+ *  terminal modes with it is correct rather than merely acceptable. */
+export const clearHost = (paneId: string): void => {
+  hosts.get(paneId)?.handle.term.reset()
+}
+
 /** Retire surfaces whose panes are no longer tiled anywhere. Closing a pane is
  *  the intent to discard its scrollback; merely unmounting one is not. */
 export const sweepHosts = (live: ReadonlySet<string>): void => {

@@ -25,8 +25,9 @@ import {
   type RuntimeState,
   type SessionId
 } from "@matisa/core"
-import { rpc, RpcError } from "~/rpc/rpc.client"
+import { engineUrl, rpc, RpcError } from "~/rpc/rpc.client"
 import { useLogs } from "~/store/store.logs"
+import { isSystemId, SYSTEM_IDS } from "~/store/store.systems"
 
 // ────────────────────────────────────────────────────────────────────────────
 // The engine store: the client's whole view of the network (CARCH-201).
@@ -82,6 +83,13 @@ const MAX_FAILURES = 50
  *  window is in SEQ, and log lines share that space — hence a window much wider
  *  than the number of entries it will actually yield. */
 const ACTIVITY_BACKFILL = 400
+
+/** Seq numbers for entries this client mints itself — a Docker daemon that
+ *  refused to start, a socket that dropped. The engine's own seqs count up from
+ *  zero, so these count DOWN from zero: unique, ordered among themselves, and
+ *  incapable of colliding with a real cursor. */
+let localSeq = 0
+const nextLocalSeq = (): number => --localSeq
 
 const describeEvent = (event: EngineEvent): ActivityEntry | null => {
   const base = { seq: event.seq, ts: event.ts, projectId: event.projectId }
@@ -237,6 +245,24 @@ interface EngineState {
    *  call returns, and a spinner would imply a transition to wait out — the
    *  thing the user reached for kill to escape. */
   kill: (projectId: ProjectId) => Promise<void>
+  /** Acknowledge a terminal failure — `crashed`/`errored` back to `idle`. Not a
+   *  lifecycle action: nothing is signalled, nothing is waited on, and the
+   *  engine no-ops it from any other state. The project's recorded failures go
+   *  with it, since the state and the reason for it are one thing to dismiss. */
+  resetProject: (projectId: ProjectId) => Promise<void>
+  /** Forget recorded failures — one project's, or every project's. */
+  clearFailures: (projectId?: ProjectId) => Promise<void>
+  /** Forget activity entries — one project's (or system's), or all of them.
+   *  Client-side only: this buffer is a window onto the engine's event stream,
+   *  not the stream itself, so clearing it discards what this client kept. */
+  clearActivity: (projectId?: ProjectId) => void
+  /** Record something that happened to a SYSTEM — the daemon refusing to start,
+   *  the engine socket dropping. The engine cannot report these: the first is a
+   *  failure of the thing it shells out to, the second is the loss of the
+   *  channel it would report over. Both land as a failure record and an activity
+   *  entry under the system's own id, so the drawer shows them exactly as it
+   *  shows a project's. */
+  noteSystemFailure: (systemId: ProjectId, summary: string) => void
   startDaemon: () => Promise<void>
   stopDaemon: () => Promise<void>
   /** Ask the engine to shut itself down. Nothing in this client can start it
@@ -447,6 +473,62 @@ export const useEngine = create<EngineState>()((set, get) => ({
     }
   },
 
+  resetProject: async (projectId) => {
+    try {
+      await rpc.call("lifecycle.reset", { id: projectId })
+      // The state and the reason for it are dismissed together: a card back at
+      // rest while its crash still sits in the Failures tab would leave the
+      // triangle's tip describing a failure the user has already cleared.
+      await rpc.call("lifecycle.clearFailures", { projectId })
+      set((s) => ({ failures: s.failures.filter((f) => f.projectId !== projectId) }))
+      get().clearPending(projectId)
+      await get().refreshCatalog()
+    } catch (cause) {
+      reportError(cause, "could not reset")
+    }
+  },
+
+  clearFailures: async (projectId) => {
+    const drop = (): void =>
+      set((s) => ({
+        failures: projectId === undefined ? [] : s.failures.filter((f) => f.projectId !== projectId)
+      }))
+
+    // A system's failures were minted here and exist nowhere else — the engine
+    // has no row to forget and no id it would recognise. Clearing them is local
+    // by definition.
+    if (projectId !== undefined && isSystemId(projectId)) {
+      drop()
+      return
+    }
+
+    try {
+      await rpc.call("lifecycle.clearFailures", projectId === undefined ? {} : { projectId })
+      drop()
+      // A global clear takes the systems' with it — "clear every recorded
+      // failure" that left two rows standing would be a lie.
+      if (projectId === undefined) set({ failures: [] })
+    } catch (cause) {
+      reportError(cause, "could not clear failures")
+    }
+  },
+
+  clearActivity: (projectId) =>
+    set((s) => ({
+      activity: projectId === undefined ? [] : s.activity.filter((e) => e.projectId !== projectId)
+    })),
+
+  noteSystemFailure: (systemId, summary) => {
+    const ts = Date.now()
+    get().recordFailure({ projectId: systemId, ts, kind: "error", summary })
+    set((s) => ({
+      activity: [
+        { seq: nextLocalSeq(), ts, projectId: systemId, kind: "crash" as const, label: "failed", detail: summary },
+        ...s.activity
+      ].slice(0, MAX_ACTIVITY)
+    }))
+  },
+
   startDaemon: async () => {
     set({ daemon: { state: "starting" } })
     try {
@@ -454,6 +536,7 @@ export const useEngine = create<EngineState>()((set, get) => ({
     } catch (cause) {
       const { title } = describe(cause)
       set({ daemon: { state: "start_failed", message: title } })
+      get().noteSystemFailure(SYSTEM_IDS.docker, title)
       reportError(cause, "could not start Docker")
     }
   },
@@ -462,6 +545,7 @@ export const useEngine = create<EngineState>()((set, get) => ({
     try {
       set({ daemon: await rpc.call("docker.daemon.stop", undefined) })
     } catch (cause) {
+      get().noteSystemFailure(SYSTEM_IDS.docker, describe(cause).title)
       reportError(cause, "could not stop Docker")
       set({ daemon: await rpc.call("docker.daemon.status", undefined).catch(() => get().daemon) })
     }
@@ -725,11 +809,10 @@ export const useEngine = create<EngineState>()((set, get) => ({
           summary: event.payload.summary,
           logTail: event.payload.logTail
         }
-        // No toast. The engine restarts a crashed project on a backoff curve —
-        // five attempts, five `crashed` events — so a toast per crash means a
-        // stack of five identical popups for ONE failure the user can already
-        // see in the status. The record below is the durable account of it; the
-        // Failures tab is where you go to read it.
+        // No toast. The card already says it — the failure triangle, with the
+        // reason on hover and a reset beside it — and a popup for something
+        // already on screen is a second copy you have to dismiss. The record
+        // below is the durable account; the Failures tab is where you read it.
         get().recordFailure(record)
         break
       }
@@ -759,11 +842,20 @@ export const useEngine = create<EngineState>()((set, get) => ({
 // —— wiring: one subscription for the whole app ——
 
 rpc.onStatus((status) => {
+  const was = useEngine.getState().status
   // A dropped socket means no transition will ever arrive for anything in
   // flight. Clear it rather than leave every button disabled behind a
   // connection that is gone.
   if (status !== "open") useEngine.setState({ status, pending: {} })
   else useEngine.setState({ status })
+
+  // Only the transition OUT of a working connection is the event. The client
+  // reconnects on a backoff curve, so `closed` and `connecting` alternate for as
+  // long as the engine is down — recording each one would turn a single outage
+  // into a screenful of identical rows.
+  if (was === "open" && status !== "open") {
+    useEngine.getState().noteSystemFailure(SYSTEM_IDS.engine, `lost the connection to ${engineUrl()}`)
+  }
 })
 
 rpc.onNotify((n) => {

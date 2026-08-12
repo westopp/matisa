@@ -3,6 +3,7 @@ import type { ProjectWithState } from "@matisa/core"
 import { useEngine } from "~/store/store.engine"
 import { collectPaneIds, runPaneId, useTerminals, type LayoutNode } from "~/store/store.terminals"
 import { Icons } from "../icons"
+import { CollapsibleCard } from "../panels"
 import { commandLine } from "../primitives"
 import { sweepHosts } from "./terminal.hosts"
 import { TerminalPane } from "./terminal.pane"
@@ -22,12 +23,12 @@ const SplitContainer = ({
   node,
   project,
   theme,
-  canClose
+  canCloseRun
 }: {
   node: Extract<LayoutNode, { type: "split" }>
   project: ProjectWithState
   theme: string
-  canClose: boolean
+  canCloseRun: boolean
 }) => {
   const ref = useRef<HTMLDivElement | null>(null)
   const resize = useTerminals((s) => s.resize)
@@ -62,13 +63,13 @@ const SplitContainer = ({
   return (
     <div className={`split ${horizontal ? "row" : "col"}`} ref={ref}>
       <div className="split-cell" style={{ flexBasis: `${node.sizes[0]}%` }}>
-        <RenderNode node={node.children[0]} project={project} theme={theme} canClose={canClose} />
+        <RenderNode node={node.children[0]} project={project} theme={theme} canCloseRun={canCloseRun} />
       </div>
       <div className={`divider ${horizontal ? "v" : "h"}`} onMouseDown={onDown}>
         <span className="divider-grip" />
       </div>
       <div className="split-cell" style={{ flexBasis: `${node.sizes[1]}%` }}>
-        <RenderNode node={node.children[1]} project={project} theme={theme} canClose={canClose} />
+        <RenderNode node={node.children[1]} project={project} theme={theme} canCloseRun={canCloseRun} />
       </div>
     </div>
   )
@@ -78,20 +79,31 @@ const RenderNode = ({
   node,
   project,
   theme,
-  canClose
+  canCloseRun
 }: {
   node: LayoutNode | null
   project: ProjectWithState
   theme: string
-  canClose: boolean
+  canCloseRun: boolean
 }) => {
   const pane = useTerminals((s) => (node !== null && node.type === "pane" ? s.panes[node.paneId] : undefined))
   if (node === null) return null
   if (node.type === "pane") {
     if (pane === undefined) return null
-    return <TerminalPane pane={pane} project={project} theme={theme} canClose={canClose} />
+    // "Keep at least one terminal" protects the RUN pane — the project's own
+    // output, which the pane grid exists to show. A command's terminal is a
+    // transient thing and must always be closable: being the last pane left
+    // used to hide its X, which stranded it, and stranded its pill with it.
+    return (
+      <TerminalPane
+        pane={pane}
+        project={project}
+        theme={theme}
+        canClose={pane.kind === "command" || canCloseRun}
+      />
+    )
   }
-  return <SplitContainer node={node} project={project} theme={theme} canClose={canClose} />
+  return <SplitContainer node={node} project={project} theme={theme} canCloseRun={canCloseRun} />
 }
 
 export const TerminalArea = ({ project, theme }: { project: ProjectWithState; theme: string }) => {
@@ -140,21 +152,27 @@ export const TerminalArea = ({ project, theme }: { project: ProjectWithState; th
 
   return (
     <div className="term-region">
-      <div className="term-bar">
-        <span className="term-bar-title">
-          <Icons.Terminal size={13} /> Terminals
-        </span>
-        <span className="term-bar-count">{shown.length} open</span>
-        <span className="term-spacer" />
-      </div>
-
-      {layout === null ? (
-        <div className="term-empty">No terminals open</div>
-      ) : (
-        <div className="term-grid">
-          <RenderNode node={layout} project={project} theme={theme} canClose={shown.length > 1} />
-        </div>
-      )}
+      {/* Collapsible like Environment, Commands and Runtime — the terminals are
+          the tallest thing on the page and not always what you came for.
+          Collapsing HIDES them; it does not close them. The panes stay mounted
+          inside the collapsed body and their surfaces stay in the host
+          registry, so reopening shows the same scrollback rather than
+          re-attaching to a stream that has moved on. */}
+      <CollapsibleCard
+        id={`terminals-${project.id}`}
+        icon={<Icons.Terminal size={14} />}
+        title="Terminals"
+        head={<span className="term-bar-count">{shown.length} open</span>}
+        defaultOpen
+      >
+        {layout === null ? (
+          <div className="term-empty">No terminals open</div>
+        ) : (
+          <div className="term-grid">
+            <RenderNode node={layout} project={project} theme={theme} canCloseRun={shown.length > 1} />
+          </div>
+        )}
+      </CollapsibleCard>
 
       {fullPane !== undefined && fullPane.projectId === project.id && (
         <div className="term-fullscreen">

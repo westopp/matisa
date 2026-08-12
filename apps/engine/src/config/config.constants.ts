@@ -19,9 +19,6 @@ export const DEFAULT_WS_PORT = 4127
 /** Hard cap on a single NDJSON frame (bytes) before the connection is faulted. */
 export const MAX_FRAME_BYTES = 1024 * 1024
 
-/** Restart backoff defaults (ms) — expo from `base`, capped at `cap`. */
-export const DEFAULT_BACKOFF = { base: 500, cap: 30_000, maxAttempts: 5 } as const
-
 /** Engine version reported by engine.status. */
 export const ENGINE_VERSION = "0.1.0"
 

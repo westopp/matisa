@@ -93,6 +93,26 @@ describe("supervisor FSM — legal transitions", () => {
       assert.deepEqual(next(s, Event.Start({ attempt: 3 })), State.Starting({ attempt: 3 }))
     }
   })
+
+  it("Crashed/Errored + Reset → Idle (dismissing a failure)", () => {
+    for (const s of [State.Crashed({ code: 1, signal: null }), State.Errored({ reason: "x" })]) {
+      assert.deepEqual(next(s, Event.Reset()), State.Idle())
+    }
+  })
+
+  it("Reset is illegal from every state that is not a terminal failure", () => {
+    // Unmanaged included: a foreign process holds the port, and nothing this
+    // engine does to its own record changes that.
+    for (const s of [
+      State.Idle(),
+      State.Starting({ attempt: 0 }),
+      State.Running({ pid: 1, since: 0 }),
+      State.Stopping(),
+      State.Unmanaged({ pid: 9 })
+    ]) {
+      assert.equal(Option.isNone(transition(s, Event.Reset())), true)
+    }
+  })
 })
 
 describe("supervisor FSM — clean-exit classification", () => {

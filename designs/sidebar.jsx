@@ -336,8 +336,8 @@ const SidebarStyles = () => (
       display: flex; align-items: center; gap: 10px;
       width: 100%;
       padding: 9px 10px 9px 12px;
-      background: var(--card-bg);
-      border: 1px solid var(--border-soft);
+      background: transparent;
+      border: 1px solid transparent;
       border-radius: 10px;
       color: var(--text);
       text-align: left;

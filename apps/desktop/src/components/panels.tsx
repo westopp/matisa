@@ -13,7 +13,7 @@ import { useProjectCommands } from "~/hooks/use-project-commands"
 import { useLifecycleState } from "~/hooks/use-lifecycle-state"
 import { useEngine } from "~/store/store.engine"
 import { Icons } from "./icons"
-import { Menu, type MenuItem } from "./menu"
+import { QuickMenu } from "./quick.commands"
 import { COLLAPSE_DURATION, CommandRunButton, commandLine, LifecycleButton } from "./primitives"
 import { SetCommandDialog, SetEnvVarDialog } from "./forms/lazy"
 import { ConfirmDialog } from "./forms/confirm"
@@ -31,7 +31,7 @@ const maskIfSecret = (value: string, secret: boolean): string =>
 /** Card shell: a header that toggles, and a body that animates open/closed.
  *  The toggle is the TITLE, not the whole header — the header also carries pills
  *  and buttons, and clicking those must not collapse the card underneath them. */
-const CollapsibleCard = ({
+export const CollapsibleCard = ({
   id,
   icon,
   title,
@@ -629,59 +629,8 @@ export const CommandsCard = ({ project }: { project: ProjectWithState }) => {
   const { busy } = useLifecycleState(project)
 
   const list = useProjectCommands(project.id)
-  const { statusOf, run, stop, kill } = useCommandRunner(project.id)
-  const startProject = useEngine((s) => s.start)
-  const stopProject = useEngine((s) => s.stop)
-  const killProject = useEngine((s) => s.kill)
-
-  // Quick-select: every command, toggled from one place, without opening the
-  // card. The status IS the action — a running command's entry stops it — so
-  // there is one item per command rather than a run/stop pair each.
-  const projectUp = project.state === "running"
-  const projectMoving = project.state === "starting" || project.state === "stopping"
-
-  const quickItems: ReadonlyArray<MenuItem> = [
-    {
-      key: "__project__",
-      dot: projectUp ? "success" : projectMoving || busy ? "warning" : "danger",
-      verb: projectUp ? "stop" : "start",
-      label: project.name,
-      // Only a transition earns words. "running" and "stopped" are already what
-      // the dot says, and repeating them makes the settled rows the noisy ones.
-      ...(project.state === "starting"
-        ? { note: "starting" }
-        : project.state === "stopping"
-          ? { note: "stopping" }
-          : {}),
-      disabled: busy,
-      onSelect: () => void (projectUp ? stopProject(project.id) : startProject(project.id)),
-      action: {
-        icon: <Icons.Skull size={12} filled={projectUp || busy} />,
-        title: projectUp || busy ? "Force kill — no drain, no waiting" : "Nothing to kill",
-        disabled: !projectUp && !busy,
-        onClick: () => void killProject(project.id)
-      }
-    },
-    ...list.map<MenuItem>((c) => {
-      const status = statusOf(c.name)
-      const up = status === "running"
-      return {
-        key: c.name,
-        dot: up ? "success" : status === "starting" ? "warning" : "danger",
-        verb: up ? "stop" : "start",
-        label: c.name,
-        ...(status === "starting" ? { note: "starting" } : {}),
-        disabled: status === "starting",
-        onSelect: () => (up ? stop(c.name) : void run(c.name, c.command)),
-        action: {
-          icon: <Icons.Skull size={12} filled={up} />,
-          title: up ? "Kill this command" : "Nothing to kill",
-          disabled: !up,
-          onClick: () => kill(c.name)
-        }
-      }
-    })
-  ]
+  const runner = useCommandRunner(project.id)
+  const { statusOf, run, stop } = runner
 
   return (
     <>
@@ -703,7 +652,12 @@ export const CommandsCard = ({ project }: { project: ProjectWithState }) => {
               <Icons.ChevronDown size={10} sw={2.4} />
             </button>
             {quick !== null && (
-              <Menu trigger={quick} items={quickItems} onClose={() => setQuick(null)} />
+              <QuickMenu
+                project={project}
+                trigger={quick}
+                runner={runner}
+                onClose={() => setQuick(null)}
+              />
             )}
           </>
         }

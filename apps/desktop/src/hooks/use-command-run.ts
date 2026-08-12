@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react"
-import type { ProjectId } from "@matisa/core"
+import type { ProjectId, RuntimeState } from "@matisa/core"
 import { closeSession, expectSelfBridged, sendInput, SIGINT_SEQUENCE } from "~/rpc/rpc.pty"
 import { useEngine } from "~/store/store.engine"
 import { commandPaneId, useTerminals } from "~/store/store.terminals"
@@ -19,6 +19,12 @@ export type CommandStatus = "idle" | "starting" | "running"
 
 export interface CommandRunner {
   readonly statusOf: (name: string) => CommandStatus
+  /** The same three states in the vocabulary the rest of the app speaks, plus
+   *  the one `CommandStatus` cannot express: a command that ended badly. Every
+   *  surface that draws a command — the pill on the board, its terminal's own
+   *  header — asks this, so the pill and the pane it summarises can never
+   *  disagree about what happened. */
+  readonly stateOf: (name: string) => RuntimeState
   readonly run: (name: string, command: string) => Promise<void>
   /** Ctrl-C, the same interrupt the pane's own stop button sends. */
   readonly stop: (name: string) => void
@@ -44,6 +50,21 @@ export const useCommandRunner = (projectId: ProjectId): CommandRunner => {
       return pane !== undefined && pane.sessionId !== null && !pane.exited ? "running" : "idle"
     },
     [panes, projectId, starting]
+  )
+
+  // Broken is decided the way the terminal's own exit badge decides it: a clean
+  // 0 is done, and anything else — a code, or a signal that left no code at all
+  // — is a failure. One rule, so the badge and the pill cannot contradict each
+  // other over the same exit.
+  const stateOf = useCallback(
+    (name: string): RuntimeState => {
+      const status = statusOf(name)
+      if (status === "running") return "running"
+      if (status === "starting") return "starting"
+      const pane = panes[commandPaneId(projectId, name)]
+      return pane?.exited === true && pane.exitCode !== 0 ? "crashed" : "idle"
+    },
+    [panes, projectId, statusOf]
   )
 
   const run = useCallback(
@@ -95,5 +116,5 @@ export const useCommandRunner = (projectId: ProjectId): CommandRunner => {
     [markExited, panes, projectId]
   )
 
-  return { statusOf, run, stop, kill }
+  return { statusOf, stateOf, run, stop, kill }
 }

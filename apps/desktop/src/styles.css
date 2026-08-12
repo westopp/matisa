@@ -10,11 +10,24 @@
    ══════════════════════════════════════════════════════════════════════════ */
 
 @font-face {
-  font-family: "Geist Variable";
+  font-family: "Inter Variable";
   font-style: normal;
   font-weight: 100 900;
   font-display: optional;
-  src: url("@fontsource-variable/geist/files/geist-latin-wght-normal.woff2") format("woff2-variations");
+  src: url("@fontsource-variable/inter/files/inter-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* The display face — the one thing set in something other than the UI sans.
+   Brand, band titles, tile names, the hero name and every card title: the
+   design's voice lives in Montserrat at 800 with the tracking pulled in. */
+@font-face {
+  font-family: "Montserrat Variable";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: optional;
+  src: url("@fontsource-variable/montserrat/files/montserrat-latin-wght-normal.woff2") format("woff2-variations");
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
     U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
@@ -36,147 +49,173 @@
    ══════════════════════════════════════════════════════════════════════════ */
 
 :root {
-  --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
-  --radius-sm: 6px;
-  --radius: 10px;
+  /* The display face is only ever used through `.display` (or a rule that opts
+     in), never as a body font — it is a voice, not a text face. */
+  --font-display: "Montserrat Variable", "Inter Variable", sans-serif;
+  --radius-sm: 8px;
+  --radius: 11px;
   --radius-lg: 14px;
   --radius-xl: 20px;
 }
 
+/* ── v2 surfaces ────────────────────────────────────────────────────────────
+   Five steps of elevation, no borders doing the work: canvas → sheet → raise
+   → raise-2, with sunken below the canvas for anything that reads as a well
+   (terminals, inputs). Lines exist but only ever whisper; a card is separated
+   from its background by lightness, not by an outline. The legacy token names
+   below are kept as aliases so nothing downstream has to know this changed. */
 :root,
 [data-theme="dark"] {
-  --window-bg: oklch(0.165 0.005 270);
-  --sidebar-bg: oklch(0.195 0.005 270);
-  --titlebar-bg: oklch(0.215 0.005 270);
-  --panel-bg: oklch(0.185 0.005 270);
-  --card-bg: oklch(0.225 0.005 270);
-  --card-bg-hover: oklch(0.265 0.005 270);
-  --card-bg-active: oklch(0.31 0.008 270);
-  --chip-bg: oklch(0.28 0.005 270);
-  --input-bg: oklch(0.215 0.005 270);
+  --canvas: oklch(0.135 0.004 288);
+  --sheet: oklch(0.175 0.005 288);
+  --sunken: oklch(0.108 0.004 288);
+  --raise: oklch(0.215 0.006 288);
+  --raise-2: oklch(0.26 0.007 288);
+  /* One step past hover — what a selected card sits at when its state gives it
+     no colour of its own. */
+  --raise-3: oklch(0.325 0.008 288);
 
-  --border: oklch(0.295 0.005 270);
-  --border-soft: oklch(0.255 0.005 270);
-  --border-strong: oklch(0.38 0.006 270);
+  --line: oklch(0.24 0.005 288);
+  --line-soft: oklch(0.215 0.005 288);
+  --line-hi: oklch(0.35 0.008 288);
 
-  --text: oklch(0.965 0.003 270);
-  --text-muted: oklch(0.72 0.008 270);
-  --text-dim: oklch(0.55 0.01 270);
-  --text-faint: oklch(0.42 0.012 270);
+  /* Each accent comes in three forms and they are NOT interchangeable:
+     the plain token is the readable one (text, glyphs, hairlines), `-fill` is
+     the surface a card or a pill takes with `--ink` on top, and `-wash` is the
+     translucent version. On dark the readable tone doubles as the fill; on
+     light it cannot — a pale lavender that works as a filled card is invisible
+     as a word, which is why the two are separate tokens at all. */
+  --ink: oklch(0.2 0.03 300);
+  --lav: oklch(0.845 0.085 300);
+  --lav-fill: oklch(0.845 0.085 300);
+  --lav-wash: oklch(0.845 0.085 300 / 0.14);
+  --ice: oklch(0.865 0.06 233);
+  --ice-fill: oklch(0.865 0.06 233);
+  --ice-wash: oklch(0.865 0.06 233 / 0.14);
+  --coral: oklch(0.795 0.1 25);
+  --coral-fill: oklch(0.795 0.1 25);
+  --coral-wash: oklch(0.795 0.1 25 / 0.14);
+  --mint: oklch(0.85 0.1 158);
+  --mint-fill: oklch(0.85 0.1 158);
+  --mint-wash: oklch(0.85 0.1 158 / 0.14);
+  --amber: oklch(0.875 0.1 88);
+  --amber-fill: oklch(0.875 0.1 88);
+  --amber-wash: oklch(0.875 0.1 88 / 0.14);
+  --idle: oklch(0.42 0.01 288);
+  /* The one saturated green kept from the old palette: a run control reads as
+     GO, and the mint the status system uses is too pale to carry that. */
+  --run: oklch(0.72 0.17 150);
 
-  --accent: oklch(0.74 0.16 268);
-  --accent-soft: oklch(0.74 0.16 268 / 0.14);
-  --accent-fg: oklch(0.18 0.02 268);
+  --window-bg: var(--canvas);
+  --panel-bg: var(--canvas);
+  --sidebar-bg: var(--sheet);
+  --titlebar-bg: var(--sheet);
+  --card-bg: var(--raise);
+  --card-bg-hover: var(--raise-2);
+  --card-bg-active: var(--raise-2);
+  --chip-bg: var(--raise);
+  --input-bg: var(--sunken);
 
-  --success: oklch(0.78 0.17 152);
-  --success-soft: oklch(0.78 0.17 152 / 0.16);
-  --danger: oklch(0.7 0.21 24);
-  --danger-soft: oklch(0.7 0.21 24 / 0.16);
-  --warning: oklch(0.82 0.15 80);
-  --warning-soft: oklch(0.82 0.15 80 / 0.16);
-  --info: oklch(0.75 0.13 230);
-  --info-soft: oklch(0.75 0.13 230 / 0.14);
-  --magenta: oklch(0.7 0.18 330);
+  --border: var(--line);
+  --border-soft: var(--line-soft);
+  --border-strong: var(--line-hi);
 
-  --lit-top: oklch(0.46 0.008 270);
-  --lit-bottom: oklch(0.22 0.005 270);
-  --lit-grad: linear-gradient(180deg, var(--lit-top), var(--lit-bottom));
+  --text: oklch(0.975 0.002 288);
+  --text-muted: oklch(0.75 0.008 288);
+  --text-dim: oklch(0.56 0.012 288);
+  --text-faint: oklch(0.46 0.012 288);
 
-  --accent-tint: oklch(0.28 0.06 268);
-  --accent-tint-top: oklch(0.42 0.09 268);
-  --accent-tint-bot: oklch(0.24 0.05 268);
+  --accent: var(--lav);
+  --accent-soft: var(--lav-wash);
+  --accent-fg: var(--ink);
 
-  --danger-tint: oklch(0.28 0.07 24);
-  --danger-tint-top: oklch(0.42 0.11 24);
-  --danger-tint-bot: oklch(0.24 0.06 24);
+  --success: var(--mint);
+  --success-soft: var(--mint-wash);
+  --danger: var(--coral);
+  --danger-soft: var(--coral-wash);
+  --warning: var(--amber);
+  --warning-soft: var(--amber-wash);
+  --info: var(--ice);
+  --info-soft: var(--ice-wash);
+  --magenta: oklch(0.83 0.09 330);
 
-  --success-tint: oklch(0.27 0.06 152);
-  --success-tint-top: oklch(0.4 0.1 152);
-  --success-tint-bot: oklch(0.23 0.05 152);
+  /* Tints are washes now, not solid mixes, and their "borders" are the wash
+     again rather than a ring — the v2 surfaces are separated by lightness. */
+  --accent-tint: var(--lav-wash);
+  --accent-tint-bot: transparent;
+  --danger-tint: var(--coral-wash);
+  --danger-tint-bot: transparent;
+  --success-tint: var(--mint-wash);
+  --success-tint-bot: transparent;
+  --info-tint: var(--ice-wash);
+  --info-tint-bot: transparent;
+  --magenta-tint: oklch(0.83 0.09 330 / 0.14);
+  --magenta-tint-bot: transparent;
+  --warning-tint: var(--amber-wash);
+  --warning-tint-bot: transparent;
 
-  --info-tint: oklch(0.27 0.05 230);
-  --info-tint-top: oklch(0.4 0.09 230);
-  --info-tint-bot: oklch(0.23 0.04 230);
-
-  --magenta-tint: oklch(0.27 0.06 330);
-  --magenta-tint-top: oklch(0.4 0.1 330);
-  --magenta-tint-bot: oklch(0.23 0.05 330);
-
-  --warning-tint: oklch(0.3 0.07 80);
-  --warning-tint-top: oklch(0.45 0.11 80);
-  --warning-tint-bot: oklch(0.25 0.06 80);
-
-  --shadow-card: 0 1px 0 oklch(1 0 0 / 0.04) inset, 0 8px 24px oklch(0 0 0 / 0.25);
-  --shadow-pop: 0 16px 40px oklch(0 0 0 / 0.45), 0 2px 6px oklch(0 0 0 / 0.3);
-  --shadow-inset: inset 0 1px 0 oklch(1 0 0 / 0.04);
+  --shadow-card: 0 8px 24px oklch(0 0 0 / 0.28);
+  --shadow-pop: 0 16px 40px oklch(0 0 0 / 0.5), 0 2px 6px oklch(0 0 0 / 0.32);
+  --shadow-inset: none;
 }
 
 [data-theme="light"] {
-  --window-bg: oklch(0.965 0.004 270);
-  --sidebar-bg: oklch(0.985 0.003 270);
-  --titlebar-bg: oklch(0.945 0.004 270);
-  --panel-bg: oklch(0.98 0.003 270);
-  --card-bg: oklch(1 0 0);
-  --card-bg-hover: oklch(0.965 0.004 270);
-  --card-bg-active: oklch(0.94 0.006 270);
-  --chip-bg: oklch(0.955 0.005 270);
-  --input-bg: oklch(0.97 0.004 270);
+  --canvas: oklch(0.965 0.003 288);
+  --sheet: oklch(1 0 0);
+  --sunken: oklch(0.99 0.002 288);
+  --raise: oklch(0.93 0.005 288);
+  --raise-2: oklch(0.9 0.006 288);
+  --raise-3: oklch(0.845 0.008 288);
 
-  --border: oklch(0.9 0.006 270);
-  --border-soft: oklch(0.93 0.005 270);
-  --border-strong: oklch(0.8 0.008 270);
+  --line: oklch(0.905 0.005 288);
+  --line-soft: oklch(0.93 0.005 288);
+  --line-hi: oklch(0.8 0.008 288);
 
-  --text: oklch(0.2 0.01 270);
-  --text-muted: oklch(0.46 0.012 270);
-  --text-dim: oklch(0.6 0.012 270);
-  --text-faint: oklch(0.72 0.01 270);
+  /* Fills keep the design's pale tones; the readable tones are pulled down to
+     mid-lightness so the same token can be a word on white. */
+  --ink: oklch(0.2 0.03 300);
+  --lav: oklch(0.5 0.19 300);
+  --lav-fill: oklch(0.82 0.1 300);
+  --lav-wash: oklch(0.5 0.19 300 / 0.12);
+  --ice: oklch(0.5 0.15 233);
+  --ice-fill: oklch(0.84 0.075 233);
+  --ice-wash: oklch(0.5 0.15 233 / 0.12);
+  --coral: oklch(0.55 0.2 25);
+  --coral-fill: oklch(0.8 0.11 25);
+  --coral-wash: oklch(0.55 0.2 25 / 0.12);
+  --mint: oklch(0.55 0.14 158);
+  --mint-fill: oklch(0.8 0.11 158);
+  --mint-wash: oklch(0.55 0.14 158 / 0.13);
+  --amber: oklch(0.58 0.13 82);
+  --amber-fill: oklch(0.82 0.13 85);
+  --amber-wash: oklch(0.58 0.13 82 / 0.14);
+  --idle: oklch(0.78 0.008 288);
+  --run: oklch(0.55 0.17 150);
 
-  --accent: oklch(0.5 0.2 268);
-  --accent-soft: oklch(0.5 0.2 268 / 0.1);
-  --accent-fg: oklch(0.98 0 0);
+  --text: oklch(0.2 0.012 288);
+  --text-muted: oklch(0.44 0.012 288);
+  --text-dim: oklch(0.6 0.012 288);
+  --text-faint: oklch(0.68 0.012 288);
 
-  --success: oklch(0.55 0.18 152);
-  --success-soft: oklch(0.55 0.18 152 / 0.12);
-  --danger: oklch(0.56 0.22 24);
-  --danger-soft: oklch(0.56 0.22 24 / 0.1);
-  --warning: oklch(0.65 0.18 70);
-  --warning-soft: oklch(0.65 0.18 70 / 0.12);
-  --info: oklch(0.5 0.16 230);
-  --info-soft: oklch(0.5 0.16 230 / 0.1);
-  --magenta: oklch(0.55 0.22 330);
+  --magenta: oklch(0.6 0.16 330);
+  --magenta-tint: oklch(0.6 0.16 330 / 0.12);
 
-  --lit-top: oklch(1 0 0);
-  --lit-bottom: oklch(0.82 0.008 270);
-  --lit-grad: linear-gradient(180deg, var(--lit-top), var(--lit-bottom));
+  --shadow-card: 0 8px 24px oklch(0 0 0 / 0.06);
+  --shadow-pop: 0 16px 40px oklch(0 0 0 / 0.14), 0 2px 6px oklch(0 0 0 / 0.07);
+  --shadow-inset: none;
+}
 
-  --accent-tint: oklch(0.94 0.04 268);
-  --accent-tint-top: oklch(0.99 0.02 268);
-  --accent-tint-bot: oklch(0.84 0.07 268);
-
-  --danger-tint: oklch(0.95 0.04 24);
-  --danger-tint-top: oklch(0.99 0.02 24);
-  --danger-tint-bot: oklch(0.85 0.08 24);
-
-  --success-tint: oklch(0.95 0.04 152);
-  --success-tint-top: oklch(0.99 0.02 152);
-  --success-tint-bot: oklch(0.85 0.07 152);
-
-  --info-tint: oklch(0.95 0.04 230);
-  --info-tint-top: oklch(0.99 0.02 230);
-  --info-tint-bot: oklch(0.85 0.07 230);
-
-  --magenta-tint: oklch(0.95 0.04 330);
-  --magenta-tint-top: oklch(0.99 0.02 330);
-  --magenta-tint-bot: oklch(0.85 0.07 330);
-
-  --warning-tint: oklch(0.95 0.04 80);
-  --warning-tint-top: oklch(0.99 0.02 80);
-  --warning-tint-bot: oklch(0.85 0.08 80);
-
-  --shadow-card: 0 1px 0 oklch(1 0 0 / 0.7) inset, 0 1px 2px oklch(0 0 0 / 0.04), 0 8px 24px oklch(0 0 0 / 0.05);
-  --shadow-pop: 0 16px 40px oklch(0 0 0 / 0.12), 0 2px 6px oklch(0 0 0 / 0.06);
-  --shadow-inset: inset 0 1px 0 oklch(1 0 0 / 0.5);
+/* The display voice. Applied by class so the sans stays the default everywhere
+   and nothing inherits 800-weight Montserrat by accident. */
+.display {
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+.mono {
+  font-family: var(--font-mono);
 }
 
 /* Expose the palette to Tailwind utilities too, so incidental layout work can
@@ -216,15 +255,13 @@ body {
 }
 body {
   font-family: var(--font-sans);
-  background: oklch(0.08 0.005 270);
+  font-weight: 450;
+  background: var(--canvas);
   color: var(--text);
-  font-feature-settings: "ss01", "cv11";
+  font-feature-settings: "cv11", "ss01";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
-}
-[data-theme="light"] body {
-  background: oklch(0.88 0.005 270);
 }
 
 /* Sizing container only. This used to paint the gradient "desktop" the mock
@@ -251,7 +288,7 @@ body {
   height: 10px;
 }
 .scroll::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
+  background: var(--line-hi);
   border-radius: 10px;
   border: 3px solid transparent;
   background-clip: content-box;
@@ -280,12 +317,12 @@ button {
 }
 
 .titlebar {
-  height: 44px;
+  height: 46px;
   display: flex;
   align-items: center;
-  padding: 0 16px;
-  background: var(--titlebar-bg);
-  border-bottom: 1px solid var(--border-soft);
+  padding: 0 14px;
+  background: var(--sheet);
+  border-bottom: 1px solid var(--line);
   flex-shrink: 0;
   gap: 16px;
   user-select: none;
@@ -295,46 +332,54 @@ button {
   gap: 8px;
 }
 .t-light {
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
   display: inline-block;
   box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.15);
 }
 .t-light.close {
-  background: oklch(0.65 0.22 24);
+  background: oklch(0.68 0.19 24);
 }
 .t-light.min {
-  background: oklch(0.78 0.16 80);
+  background: oklch(0.82 0.14 82);
 }
 .t-light.max {
-  background: oklch(0.7 0.18 145);
+  background: oklch(0.75 0.16 148);
 }
 
 .title-text {
   flex: 1;
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: 9px;
   justify-content: center;
-  font-size: 12.5px;
-  color: var(--text-muted);
 }
 .brand {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 17px;
+  line-height: 1;
+  letter-spacing: -0.03em;
   color: var(--text);
-  font-weight: 600;
-  letter-spacing: -0.005em;
 }
 .brand-sub {
-  color: var(--text-faint);
+  color: var(--text-dim);
+  font-size: 12.5px;
 }
+/* Set as a label rather than a subtitle: small, tracked wide, uppercase — the
+   counterweight to the display brand beside it. */
 .title-sub {
-  font-weight: 400;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
 }
 .title-right {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
 /* Connection pill — the engine is the whole app; its absence must be loud. */
@@ -344,69 +389,64 @@ button {
   gap: 6px;
   font-family: var(--font-mono);
   font-size: 10.5px;
-  padding: 3px 9px;
+  padding: 4px 10px;
   border-radius: 999px;
-  border: 1px solid var(--border-soft);
-  background: var(--card-bg);
-  color: var(--text-muted);
+  border: 0;
+  background: var(--raise);
+  color: var(--text-dim);
 }
 .conn-pill.open {
-  color: var(--success);
-  background: var(--success-tint);
-  border-color: var(--success-tint-bot);
+  color: var(--mint);
+  background: var(--mint-wash);
 }
 .conn-pill.closed {
-  color: var(--danger);
-  background: var(--danger-tint);
-  border-color: var(--danger-tint-bot);
+  color: var(--coral);
+  background: var(--coral-wash);
 }
 .conn-pill.connecting {
-  color: var(--warning);
-  background: var(--warning-tint);
-  border-color: var(--warning-tint-bot);
+  color: var(--amber);
+  background: var(--amber-wash);
 }
 
+/* A pill track with one knob, the size of a switch rather than a button. */
 .theme-toggle {
   position: relative;
   display: inline-flex;
   align-items: center;
-  padding: 0 4px 0 0;
-  height: 28px;
-  width: 52px;
-  border-radius: 14px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-soft);
-  transition: all 0.14s;
+  padding: 2px;
+  height: 25px;
+  width: 44px;
+  border-radius: 999px;
+  background: var(--raise);
+  border: 0;
+  transition: background 0.14s;
 }
 .theme-toggle:hover {
-  border-color: var(--border-strong);
+  background: var(--raise-2);
 }
 .tt-track {
-  position: absolute;
-  inset: 3px;
-  border-radius: 12px;
-  pointer-events: none;
+  display: none;
 }
 .tt-knob {
   position: relative;
   z-index: 2;
-  width: 22px;
-  height: 22px;
+  width: 21px;
+  height: 21px;
   border-radius: 50%;
-  margin: 0 0 0 3px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--accent);
-  color: var(--accent-fg);
+  background: var(--raise-2);
+  color: var(--text-muted);
   transition:
-    transform 0.22s cubic-bezier(0.7, 0.1, 0.3, 1),
-    background 0.2s;
-  box-shadow: 0 1px 3px oklch(0 0 0 / 0.3);
+    transform 0.24s cubic-bezier(0.6, 0.05, 0.3, 1),
+    background 0.2s,
+    color 0.2s;
 }
 .tt-knob.light {
-  transform: translateX(24px);
-  background: var(--warning);
+  transform: translateX(19px);
+  background: var(--amber-fill);
+  color: oklch(0.25 0.05 80);
 }
 
 .window-body {
@@ -417,26 +457,49 @@ button {
   /* Containing block for the inspector drawer, which overlays this row. */
   position: relative;
 }
-/* 360, not the 320 this used to be. The project card carries four readings and
-   three controls on one line; at 320 the last chip — the environment — fell off
-   the end of the strip on any project that was running with a port. The width
-   is what the card costs. */
-.sidebar-slot {
-  flex-shrink: 0;
-  width: 360px;
+
+/* ── Fleet ⇄ detail: one view, two proportions ──────────────────────────────
+   Nothing is mounted or unmounted between them. With no project selected the
+   fleet is the whole window and the detail pane has zero basis; selecting one
+   hands the pane everything but the rail's width, and the SAME board reflows
+   from a grid of tiles into a stacked column. The transition is on the pane's
+   flex-basis, so the board is pushed rather than animated separately — one
+   motion, not two racing each other. */
+.fleet {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  transition: flex-basis 0.42s cubic-bezier(0.32, 0.86, 0.24, 1);
+}
+.fleet.as-rail {
+  flex: 0 0 318px;
+  background: var(--sheet);
+  border-right: 1px solid var(--line);
+}
+/* Collapsed: only reachable with a project open, since the fleet IS the view
+   otherwise. Width goes, the pane takes the whole body. `visibility` is what
+   takes the rail's controls out of the tab order — zero width alone would
+   leave them focusable in a strip nobody can see. */
+.fleet.as-rail.hidden {
+  flex-basis: 0;
+  border-right: 0;
   overflow: hidden;
-  transition: width 0.24s cubic-bezier(0.65, 0.05, 0.36, 1);
+  visibility: hidden;
+  transition:
+    flex-basis 0.42s cubic-bezier(0.32, 0.86, 0.24, 1),
+    visibility 0.42s;
 }
-.sidebar-slot.collapsed {
-  width: 0;
-}
-.sidebar-slot .sidebar {
-  width: 360px;
+@media (max-width: 1080px) {
+  .fleet.as-rail {
+    flex-basis: 272px;
+  }
 }
 .ico-btn.active {
-  background: var(--card-bg);
+  background: var(--raise);
   color: var(--text);
-  border-color: var(--border-soft);
+  border-color: transparent;
 }
 /* Unread marker on a chrome button — a dot, because the count is one tap away
    and a numeral in the titlebar reads as noise. */
@@ -472,8 +535,8 @@ button {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--sidebar-bg);
-  border-left: 1px solid var(--border-soft);
+  background: var(--sheet);
+  border-left: 1px solid var(--line);
   box-shadow: var(--shadow-pop);
   transform: translateX(100%);
   visibility: hidden;
@@ -492,20 +555,20 @@ button {
   gap: 10px;
   flex-shrink: 0;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--border-soft);
-  background: var(--titlebar-bg);
+  border-bottom: 1px solid var(--line);
+  background: transparent;
 }
 .drawer-scope {
   display: flex;
   gap: 4px;
   flex-shrink: 0;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--line);
 }
 .scope-btn {
-  padding: 3px 10px;
-  border-radius: 6px;
-  border: 1px solid transparent;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 0;
   background: transparent;
   color: var(--text-dim);
   font-size: 11px;
@@ -515,8 +578,7 @@ button {
   color: var(--text);
 }
 .scope-btn.active {
-  background: var(--card-bg);
-  border-color: var(--border-soft);
+  background: var(--raise);
   color: var(--text);
 }
 .drawer-body {
@@ -616,6 +678,11 @@ button {
   gap: 2px;
   padding-bottom: 4px;
 }
+/* The failures tab has no padded wrapper of its own — the table is flush to the
+   drawer by design — so its bar carries the inset. */
+.failures-bar {
+  padding: 8px 10px 6px;
+}
 .detail-label {
   flex: 1;
   font-family: var(--font-mono);
@@ -696,40 +763,41 @@ button {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   Sidebar
+   The fleet — the board of project cards, and the rail it becomes
    ══════════════════════════════════════════════════════════════════════════ */
 
 .sidebar {
-  width: 360px;
-  flex-shrink: 0;
-  background: var(--sidebar-bg);
-  border-right: 1px solid var(--border-soft);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  height: 100%;
-  min-height: 0;
 }
 
 .side-top {
-  padding: 14px 14px 10px;
+  flex: none;
+  padding: 14px 26px 8px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
+/* No box: the workspace is a heading, not a control that happens to be one.
+   The chevron-less pill of the old chrome became a display-face title. */
 .workspace-pill {
+  order: 1;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 8px 5px 6px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  font-size: 12.5px;
-  font-weight: 500;
+  gap: 9px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 19px;
+  letter-spacing: -0.03em;
   color: var(--text);
+  flex-shrink: 0;
 }
 .ws-avatar {
-  color: var(--accent);
+  color: var(--lav);
   display: inline-flex;
 }
 .ws-caret {
@@ -737,28 +805,30 @@ button {
   display: inline-flex;
 }
 .side-top-tools {
+  order: 3;
   margin-left: auto;
   display: flex;
-  gap: 4px;
+  gap: 2px;
+  flex-shrink: 0;
 }
 
 .ico-btn {
   position: relative;
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-dim);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   transition: all 0.14s;
 }
 .ico-btn:hover {
-  background: var(--card-bg);
+  background: var(--raise);
   color: var(--text);
-  border-color: var(--border-soft);
+  border-color: transparent;
 }
 .ico-btn:disabled,
 .ico:disabled,
@@ -767,79 +837,116 @@ button {
   cursor: not-allowed;
 }
 .ico-btn.danger-hover:hover {
-  color: var(--danger);
-  background: var(--danger-soft);
+  color: var(--coral);
+  background: var(--coral-wash);
 }
 
 .search-wrap {
-  margin: 0 14px 10px;
+  order: 2;
+  flex: 1 1 200px;
+  max-width: 460px;
+  margin: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  height: 32px;
-  background: var(--input-bg);
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
+  gap: 9px;
+  padding: 0 12px;
+  height: 34px;
+  background: var(--sunken);
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--line);
+  border-radius: 11px;
   color: var(--text-dim);
 }
 .search-wrap:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--lav);
 }
 .search-wrap input {
   flex: 1;
+  min-width: 0;
   background: transparent;
   border: 0;
   outline: none;
   color: var(--text);
   font: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 .search-wrap input::placeholder {
-  color: var(--text-dim);
+  color: var(--text-faint);
 }
 
 .side-list {
   flex: 1;
   min-height: 0;
-  padding: 4px 8px 8px;
+  padding: 16px 30px 34px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
 }
 
+/* ── Bands: the kind buckets (Projects / Containers / Stacks / Systems) ───── */
+.parent-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .parent-group + .parent-group {
-  margin-top: 12px;
+  margin-top: 0;
 }
 .parent-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 8px 8px 6px;
+  gap: 9px;
+  align-self: flex-start;
+  padding: 2px 6px 2px 0;
   background: transparent;
   border: 0;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.08em;
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--text-faint);
+  border-radius: 9px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 19px;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  text-transform: none;
+  color: var(--text);
+}
+.parent-head > svg {
+  color: var(--text-dim);
+  transition: color 0.14s;
+}
+.parent-head:hover > svg {
+  color: var(--text);
 }
 .parent-count {
-  margin-left: auto;
+  margin-left: 0;
   font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-faint);
-  background: var(--card-bg);
-  padding: 1px 6px;
-  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--text-dim);
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
 }
 
-/* A group and its projects are ONE container: the projects sit inside the
-   parent, indented. The container itself does not react to hover — the row
-   under the pointer does, and that is the only thing being pointed at. */
+/* ── Groups: indented off the band, tied to it by one rule ────────────────── */
+.band-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-left: 2px;
+  padding-left: 20px;
+  border-left: 1px solid var(--line);
+}
 .section {
-  margin: 2px 0;
-  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 4px 0 10px;
+  border-radius: 0;
+}
+.section:not(.open) {
+  padding-bottom: 0;
 }
 .section.muted .section-head {
   opacity: 0.65;
@@ -849,55 +956,104 @@ button {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 7px 8px;
+  height: 30px;
+  padding: 0 10px 0 2px;
   background: transparent;
   border: 0;
   border-radius: 9px;
-  color: var(--text-muted);
+  color: var(--text-dim);
   text-align: left;
   cursor: pointer;
+  transition: color 0.14s;
 }
 .section:hover .section-head {
   color: var(--text);
 }
 .section-head .caret {
-  color: var(--text-dim);
+  color: inherit;
   display: inline-flex;
+  order: 2;
 }
 .section-title {
-  font-size: 12.5px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  order: 1;
 }
+/* running • failed / total. The two numerators light up only when they have
+   something to say, so a quiet group still reads as one number and a group with
+   a casualty in it does not. */
 .section-count {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--text-faint);
-  background: var(--card-bg);
-  padding: 1px 5px;
-  border-radius: 4px;
-  min-width: 18px;
-  text-align: center;
-}
-.section-dots {
   display: inline-flex;
-  gap: 3px;
-  align-items: center;
-  margin-left: 4px;
-}
-.dots-more {
+  align-items: baseline;
+  gap: 1px;
   font-family: var(--font-mono);
   font-size: 10px;
-  color: var(--text-faint);
-  margin-left: 2px;
+  color: inherit;
+  opacity: 0.7;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  min-width: 0;
+  text-align: left;
+  order: 3;
+  cursor: default;
+}
+.tally-run {
+  color: var(--mint);
+}
+.tally-bad {
+  color: var(--coral);
+}
+.tally-sep {
+  opacity: 0.5;
+}
+.tally-of {
+  opacity: 0.75;
+}
+
+/* Collapse everything that is not this group. Hover-revealed, in the header's
+   own flow so nothing shifts when it appears — it takes the slot the spacer
+   would have had. */
+.section-focus {
+  order: 4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  opacity: 0;
+  cursor: pointer;
+  transition:
+    opacity 0.12s,
+    background 0.12s,
+    color 0.12s;
+}
+.section:hover .section-focus,
+.section-focus:focus-visible {
+  opacity: 0.6;
+}
+.section:hover .section-focus:hover {
+  opacity: 1;
+  background: var(--raise);
+  color: var(--text);
 }
 .section-spacer {
   flex: 1;
+  order: 6;
 }
 .section-tools {
   display: inline-flex;
   align-items: center;
   gap: 2px;
   opacity: 0;
+  order: 7;
   transition: opacity 0.12s;
 }
 /* Rename/delete sit behind the run controls and stay quieter: destructive
@@ -921,85 +1077,123 @@ button {
   gap: 2px;
   flex-shrink: 0;
 }
-.section:hover .section-tools {
+.section:hover .section-tools,
+.section:focus-within .section-tools {
   opacity: 1;
 }
 
-/* Indented, with a rule tying each project back to its group head. */
+/* The cards themselves. A grid on the board — cards flow into rows and wrap —
+   and a single column once the fleet is a rail, which is the whole transform:
+   the same tiles, restacked by one grid-template change. */
 .section-body {
   position: relative;
-  padding: 2px 6px 6px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 320px));
+  justify-content: start;
+  gap: 12px;
 }
 .section-body::before {
-  content: "";
-  position: absolute;
-  left: 8px;
-  top: 0;
-  bottom: 6px;
-  width: 1px;
-  background: var(--border-soft);
+  content: none;
 }
 
+/* ── The card ───────────────────────────────────────────────────────────────
+   Two lines, no outline: a raised surface with a 20px radius, the name set in
+   the display face at 22px, and the facts as pills underneath. It is the same
+   element on the board and in the rail — `.compact` on the fleet is what pulls
+   it down to a 14px radius and a 16px name (see the compact block below). */
 .svc-row {
   position: relative;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 10px;
   width: 100%;
-  padding: 8px 8px 8px 10px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-soft);
-  border-radius: 10px;
+  padding: 14px 15px;
+  background: var(--raise);
+  border: 0;
+  border-radius: 20px;
   color: var(--text);
   text-align: left;
   cursor: pointer;
+  --run-tone: var(--run);
   transition:
-    background 0.14s,
-    border-color 0.14s,
-    transform 0.08s;
+    transform 0.16s cubic-bezier(0.3, 0.8, 0.3, 1),
+    background 0.16s,
+    box-shadow 0.16s,
+    padding 0.3s ease,
+    border-radius 0.3s ease;
 }
 .svc-row:hover {
-  background: var(--card-bg-hover);
+  background: var(--raise-2);
+  transform: translateY(-2px);
+}
+/* Selection is a filled card, never a grey one — and the fill means SELECTED,
+   nothing else. It used to shift with the runtime state (purple running, pink
+   broken, blue otherwise), which put state in two places at once: a card could
+   say "running" with its colour while its own figure said "crashed", and only
+   the selected card said anything at all. One blue, always. State is the
+   figure's job — it is the same reading on every card, selected or not.
+
+   The tone is declared on the CELL, not on the card, because the command pills
+   underneath belong to the same selection and have to take the same fill.
+
+   `--on-fill` is the muted ink the chips and quiet controls take, `--on-glyph`
+   the darker one the status figure needs to survive on a light fill. */
+.svc-cell.active {
+  --cell-fill: var(--ice-fill);
+  --run-tone: oklch(0.48 0.18 150);
+  --on-fill: oklch(0.3 0.05 235 / 0.85);
+  --on-glyph: oklch(0.38 0.13 235);
 }
 .svc-row.active {
-  background: var(--card-bg-active);
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-inset);
+  color: var(--ink);
+  background: var(--cell-fill);
+  box-shadow: none;
 }
-.svc-row.active::before {
-  content: "";
-  position: absolute;
-  left: -8px;
-  top: 8px;
-  bottom: 8px;
-  width: 2px;
-  background: var(--accent);
-  border-radius: 2px;
+/* Hover lifts the tone rather than changing it — a selected card has already
+   said what colour it is. */
+.svc-row.active:hover {
+  background: var(--cell-fill);
+  filter: brightness(1.04);
+  transform: translateY(-2px);
+}
+
+/* The card's first line: artwork, name, controls. */
+.svc-mid {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
 }
 .svc-icon {
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  background: var(--accent-tint);
-  border: 1px solid var(--accent-tint-bot);
-  color: var(--accent);
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: oklch(1 0 0 / 0.07);
+  border: 0;
+  color: var(--text-muted);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
 }
-.svc-icon.stack {
-  background: var(--info-tint);
-  border-color: var(--info-tint-bot);
-  color: var(--info);
+[data-theme="light"] .svc-icon {
+  background: oklch(0 0 0 / 0.05);
 }
+/* On a filled selection the chip sits on a light surface, so it flips to a
+   white scrim and inherits the card's ink. */
+.svc-cell.active .svc-icon {
+  background: oklch(1 0 0 / 0.32);
+  color: var(--ink);
+}
+.svc-icon.stack,
 .svc-icon.compose {
-  background: var(--magenta-tint);
-  border-color: var(--magenta-tint-bot);
-  color: var(--magenta);
+  background: oklch(1 0 0 / 0.07);
+  color: var(--text-muted);
+}
+[data-theme="light"] .svc-icon.stack,
+[data-theme="light"] .svc-icon.compose {
+  background: oklch(0 0 0 / 0.05);
 }
 .svc-body {
   display: flex;
@@ -1009,39 +1203,42 @@ button {
   flex: 1;
 }
 .svc-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text);
-  letter-spacing: -0.005em;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 22px;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+  color: inherit;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* A single row of chips that never wraps: every card is one height, so a list
-   of them scans as a column rather than a ragged stack. A running project with
-   a port, resources and an environment can outrun 320px of sidebar — the strip
-   scrolls (same contract as the environment pills) rather than clipping the
+.svc-row.st-idle .svc-name,
+.svc-row.st-unmanaged .svc-name {
+  color: var(--text-muted);
+}
+.svc-cell.active .svc-name {
+  color: inherit;
+}
+/* The facts, as a strip of pills on the card's second line. It wraps on the
+   board (there is room) and scrolls in the rail rather than clipping the
    environment off the end. */
 .svc-meta {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  flex-wrap: wrap;
   min-width: 0;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
+  padding-left: 2px;
   font-family: var(--font-mono);
   font-size: 10.5px;
-  color: var(--text-muted);
-}
-.svc-meta::-webkit-scrollbar {
-  display: none;
+  color: var(--text-dim);
 }
 .svc-meta > * {
   flex-shrink: 0;
 }
 .svc-port {
-  color: var(--text-muted);
+  color: var(--text-dim);
 }
 
 /* ── Running-man status glyph (beside the port) ──────────────────────────────
@@ -1072,6 +1269,7 @@ button {
 .failure-mark {
   display: inline-flex;
   align-items: center;
+  gap: 3px;
   position: relative;
   padding: 0;
   border: 0;
@@ -1079,8 +1277,51 @@ button {
   color: var(--danger);
   flex-shrink: 0;
 }
-button.failure-mark {
+.failure-glyph-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
+}
+/* The way out of a failure, beside the triangle that reports it. Quiet at rest
+   — a project that broke should read as broken first — and only takes the
+   pointer's attention once you are already on the mark.
+
+   Grey, not red: it does not inherit the mark's danger colour, because a second
+   red glyph beside the triangle reads as a second alarm. Reset is the calm
+   thing you do about the alarm. */
+.failure-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  opacity: 0.7;
+  cursor: pointer;
+  transition:
+    opacity 0.12s,
+    color 0.12s,
+    background 0.12s;
+}
+.svc-cell.active .failure-reset {
+  color: var(--on-fill);
+}
+.failure-mark:hover .failure-reset,
+.failure-reset:focus-visible {
+  opacity: 1;
+}
+/* Mixed from the glyph's own colour so the plate works on a dark card and on a
+   coral-filled one alike. */
+.failure-reset:hover {
+  background: color-mix(in oklab, currentColor 16%, transparent);
 }
 .failure-glyph {
   display: inline-flex;
@@ -1097,8 +1338,8 @@ button.failure-mark {
   76%           { transform: scale(1.22); }
   84%           { transform: scale(0.96); }
 }
-button.failure-mark:hover .failure-glyph,
-button.failure-mark:focus-visible .failure-glyph {
+.failure-glyph-btn:hover .failure-glyph,
+.failure-glyph-btn:focus-visible .failure-glyph {
   filter: brightness(1.15);
 }
 .failure-tip {
@@ -1188,9 +1429,44 @@ button.failure-mark:focus-visible .failure-glyph {
   white-space: pre-wrap;
   word-break: break-word;
 }
-.failure-tip-more {
-  font-size: 9.5px;
-  color: var(--text-faint);
+/* The tip's actions. It is where the reason is read, so it is where the two
+   things you can do about the reason belong. */
+.failure-tip-acts {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-top: 3px;
+}
+.failure-tip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--raise);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    color 0.12s,
+    filter 0.12s;
+}
+.failure-tip-btn:hover {
+  background: var(--raise-2);
+  color: var(--text);
+}
+.failure-tip-btn.primary {
+  background: var(--coral-fill);
+  color: var(--ink);
+}
+.failure-tip-btn.primary:hover {
+  background: var(--coral-fill);
+  color: var(--ink);
+  filter: brightness(1.07);
 }
 @media (prefers-reduced-motion: reduce) {
   .failure-glyph > svg {
@@ -1405,27 +1681,78 @@ button.failure-mark:focus-visible .failure-glyph {
   }
 }
 
-/* ── Systems group rows (engine + docker daemon) ─────────────────────────── */
+/* ── Systems group rows (engine + docker daemon) ─────────────────────────────
+   Cards, like everything else on the board — a running daemon is not a lesser
+   fact than a running project — but one line rather than two: a system has a
+   name and a state, and no artwork, port or environment to carry. */
 .sys-body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 0 2px 4px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 320px));
+  justify-content: start;
+  gap: 12px;
+  padding: 0;
 }
+/* Sized to the project cards beside them, not to their own content. A system
+   row has one line of facts where a project has two, so left to itself it came
+   out half the height — and a card half the height of its neighbours reads as a
+   lesser kind of thing. Docker being down stops containers exactly the way a
+   stopped project stops. */
 .sys-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
-  border-radius: 8px;
+  gap: 11px;
+  min-height: 88px;
+  padding: 14px 15px;
+  border-radius: 20px;
+  background: var(--raise);
+  transition: background 0.16s;
 }
 .sys-row:hover {
-  background: var(--card-bg);
+  background: var(--raise-2);
+}
+/* A system card is a card: it selects, it opens, it takes the selection fill
+   from its cell exactly as a project's does. */
+.sys-row {
+  cursor: pointer;
+}
+.svc-cell.active .sys-row {
+  background: var(--cell-fill);
+  color: var(--ink);
+}
+.svc-cell.active .sys-row:hover {
+  background: var(--cell-fill);
+  filter: brightness(1.04);
+}
+.svc-cell.active .sys-icon {
+  background: oklch(1 0 0 / 0.32);
+  color: var(--ink);
+}
+.sys-row .svc-open {
+  margin-left: 0;
+}
+.sys-row .svc-name {
+  font-size: 18px;
+  letter-spacing: -0.03em;
+}
+.sys-row .svc-body {
+  gap: 7px;
+}
+.sys-row .svc-meta {
+  flex-wrap: nowrap;
+  padding-left: 0;
 }
 .sys-icon {
-  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: oklch(1 0 0 / 0.07);
+  display: inline-grid;
+  place-items: center;
   color: var(--text-muted);
   flex-shrink: 0;
+}
+[data-theme="light"] .sys-icon {
+  background: oklch(0 0 0 / 0.05);
 }
 .sys-dot {
   width: 7px;
@@ -1447,27 +1774,51 @@ button.failure-mark:focus-visible .failure-glyph {
 /* The card's facts, as chips: port, resources, environment. Each one is a whole
    reading — `:5432`, `5.4% • 24MB` — so a chip per fact, and a fact with nothing
    to say has no chip rather than a chip saying nothing. */
+/* A pill per reading, on a scrim of the card rather than a colour of its own —
+   so the strip stays legible whether the card is resting, hovered or filled. */
 .svc-chip {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding: 1px 5px;
+  padding: 4px 9px;
   border-radius: 999px;
-  background: var(--chip-bg);
-  color: var(--text-muted);
+  background: oklch(1 0 0 / 0.07);
+  color: var(--text-dim);
   font-family: var(--font-mono);
-  /* Under the row's own 10.5px, and deliberately: four readings and three
-     controls share 320px of sidebar, and this is the difference between the
-     strip fitting and the environment falling off the end of it. */
-  font-size: 9.5px;
-  line-height: 1.6;
+  font-size: 10.5px;
+  line-height: 1.2;
   white-space: nowrap;
   flex-shrink: 0;
   border: 0;
 }
+[data-theme="light"] .svc-chip {
+  background: oklch(0 0 0 / 0.05);
+}
+.svc-cell.active .svc-chip {
+  background: oklch(1 0 0 / 0.32);
+  color: var(--on-fill);
+}
 .chip-sep {
   margin: 0 2px;
   opacity: 0.45;
+}
+
+/* The status glyph carries its colour as an inline style (one function owns
+   the state→colour rule for every surface), so a filled card has to shout to
+   darken it — mint on lavender, coral on coral, grey on blue all vanish
+   otherwise. */
+.svc-cell.active .figure {
+  color: var(--on-glyph) !important;
+}
+.svc-cell.active .status-dot {
+  background: var(--on-glyph) !important;
+}
+.svc-cell.active .failure-mark {
+  color: var(--on-glyph);
+}
+/* Same problem for the words beside it. */
+.svc-cell.active .svc-health {
+  color: var(--on-fill);
 }
 
 /* The environment is the one chip that is also a control — everything else on
@@ -1480,14 +1831,216 @@ button.failure-mark:focus-visible .failure-glyph {
     color 0.12s;
 }
 .svc-chip.env:hover {
-  background: var(--accent-tint);
-  color: var(--accent);
+  background: var(--lav-wash);
+  color: var(--lav);
+}
+.svc-cell.active .svc-chip.env:hover {
+  background: oklch(1 0 0 / 0.5);
+  color: var(--ink);
 }
 /* Locked while the project is up: the vars were read at spawn, so offering the
    switch here would show one environment and run another. */
 .svc-chip.env.locked {
   cursor: default;
   opacity: 0.75;
+}
+
+/* The commands chip — the same quick-select the detail view carries. It sits
+   beside the environment because both are chips that are also controls, and it
+   is a glyph rather than a word: what it opens is a LIST of commands, and no
+   single label on the chip could stand for all of them. */
+.svc-chip.quick {
+  cursor: pointer;
+  gap: 1px;
+  padding: 4px 5px 4px 7px;
+  color: var(--text-muted);
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+.svc-chip.quick:hover {
+  background: color-mix(in oklab, var(--run) 18%, transparent);
+  color: var(--run);
+}
+.svc-cell.active .svc-chip.quick:hover {
+  background: oklch(1 0 0 / 0.5);
+  color: var(--ink);
+}
+
+/* The card's second line as a whole: the strip of facts, and the way in at the
+   end of it. The chevron lives here rather than inside `.svc-meta` because the
+   strip scrolls sideways at rail width, and the only control that opens a
+   project must not be able to scroll out of reach. */
+.svc-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.svc-foot .svc-meta {
+  flex: 1;
+}
+.svc-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: auto;
+  transition:
+    background 0.12s,
+    color 0.12s,
+    transform 0.18s cubic-bezier(0.3, 0.8, 0.3, 1);
+}
+.svc-row:hover .svc-open {
+  color: var(--text-muted);
+}
+.svc-open:hover {
+  color: var(--text);
+  background: var(--border-soft);
+}
+/* Turned back on itself once the pane is open: the same control closes it, and
+   a chevron still pointing INTO a view you are already in is a lie. */
+.svc-open.open {
+  transform: rotate(180deg);
+}
+.svc-cell.active .svc-open {
+  color: var(--on-fill);
+}
+.svc-cell.active .svc-open:hover,
+.svc-cell.active .svc-row:hover .svc-open {
+  background: oklch(1 0 0 / 0.32);
+  color: var(--ink);
+}
+
+/* ── Secondary commands, UNDER the card ──────────────────────────────────────
+   The named commands with a terminal open beside the supervised process — one
+   standalone pill each, in the card's grid cell but not on its surface. They
+   belong to the project; they are not facts about it the way the port and the
+   environment are, and drawing them inside the card said otherwise.
+
+   A pill is the card in miniature and is built from the card's OWN parts: the
+   status figure, the kill button and the run/stop control, at the sizes and in
+   the order the card uses them — and, when the cell is selected, on the card's
+   own fill. The tone lives on the cell, so the pills take it by inheritance
+   rather than by a second copy of the three-way choice. */
+.svc-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  --run-tone: var(--run);
+}
+.cmd-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 10px;
+}
+.cmd-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 4px 6px 4px 12px;
+  border-radius: 999px;
+  background: var(--raise);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.2;
+  transition: background 0.16s;
+}
+.cmd-pill:hover {
+  background: var(--raise-2);
+}
+/* Selected: the pills are part of the same selection as the card above them and
+   take the same fill, so a chosen project reads as one object rather than as a
+   coloured card with grey satellites. */
+.svc-cell.active .cmd-pill {
+  background: var(--cell-fill);
+  color: var(--ink);
+}
+.svc-cell.active .cmd-pill:hover {
+  background: var(--cell-fill);
+  filter: brightness(1.04);
+}
+.svc-cell.active .cmd-pill-name {
+  color: var(--ink);
+}
+.cmd-pill-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The controls are the card's, verbatim — only the gap tightens, because a pill
+   has no name set at 22px to balance against. */
+.cmd-pill .svc-controls {
+  gap: 0;
+  margin-left: 4px;
+}
+/* Closing takes the pill AND its terminal, so it stays out of the way until the
+   pointer is on the pill: at rest a pill is a status, and a dismiss sitting
+   permanently beside a running command invites the one click that would strand
+   it. Widens from nothing rather than fading in place, so nothing on the pill
+   shifts under the pointer on the way to it. */
+.cmd-pill-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  opacity: 0;
+  overflow: hidden;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition:
+    width 0.12s ease,
+    margin 0.12s ease,
+    opacity 0.12s,
+    color 0.12s;
+}
+.cmd-pill:hover .cmd-pill-x,
+.cmd-pill:focus-within .cmd-pill-x {
+  width: 18px;
+  margin-left: 1px;
+  opacity: 0.6;
+}
+.cmd-pill .cmd-pill-x:hover:not(:disabled) {
+  opacity: 1;
+  color: var(--coral);
+}
+.svc-cell.active .cmd-pill .cmd-pill-x:hover:not(:disabled) {
+  color: var(--ink);
+}
+.cmd-pill .cmd-pill-x:disabled {
+  cursor: default;
+}
+.cmd-pill:hover .cmd-pill-x:disabled {
+  opacity: 0.25;
+}
+.fleet.as-rail .cmd-pills {
+  padding-left: 8px;
+  gap: 6px;
+}
+.fleet.as-rail .cmd-pill {
+  font-size: 10px;
+  padding-left: 10px;
 }
 
 .svc-health {
@@ -1510,23 +2063,52 @@ button.failure-mark:focus-visible .failure-glyph {
 .svc-controls {
   display: inline-flex;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
   flex-shrink: 0;
+  margin-left: auto;
 }
-/* Trimmed from the 24/32 the rest of the app uses: three controls plus the
-   chips have to share 320px, and the row is the one place they compete. */
 .svc-controls .ico {
-  width: 20px;
-  height: 20px;
-  color: var(--text-faint);
+  width: 24px;
+  height: 22px;
+  border-radius: 8px;
+  color: var(--text-dim);
+  background: transparent;
+}
+.svc-controls .ico:hover {
+  background: transparent;
+  color: var(--text);
 }
 .svc-controls .ico-primary {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
+  background: transparent;
 }
-.svc-row:hover .svc-controls .ico,
-.svc-row.active .svc-controls .ico {
+/* The run control is the card's one saturated mark: a green triangle that
+   grows a little under the pointer instead of gaining a plate. */
+.svc-controls .ico-primary.success,
+.svc-controls .ico-primary.danger {
+  color: var(--run-tone);
+}
+.svc-controls .ico-primary.danger {
+  color: var(--coral);
+}
+.svc-cell.active .svc-controls .ico-primary.danger {
+  color: var(--ink);
+}
+.svc-controls .ico-primary:hover:not(:disabled) {
+  background: transparent;
+  transform: scale(1.14);
+}
+.svc-row:hover .svc-controls .ico {
   color: var(--text-muted);
+}
+.svc-cell.active .svc-controls .ico {
+  color: var(--on-fill);
+  opacity: 0.72;
+}
+.svc-cell.active .svc-controls .ico:hover:not(:disabled) {
+  color: var(--ink);
+  opacity: 1;
 }
 .svc-controls .ico:disabled {
   opacity: 0.3;
@@ -1545,21 +2127,21 @@ button.failure-mark:focus-visible .failure-glyph {
   justify-content: center;
   background: transparent;
   border: 0;
-  border-radius: 5px;
-  color: var(--text-muted);
+  border-radius: 8px;
+  color: var(--text-dim);
   transition: all 0.12s;
 }
 .ico:hover {
-  background: var(--chip-bg);
+  background: var(--raise);
   color: var(--text);
 }
 .ico.success-hover:hover {
-  color: var(--success);
-  background: var(--success-soft);
+  color: var(--mint);
+  background: var(--mint-wash);
 }
 .ico.danger-hover:hover {
-  color: var(--danger);
-  background: var(--danger-soft);
+  color: var(--coral);
+  background: var(--coral-wash);
 }
 
 .ico-primary {
@@ -1570,48 +2152,178 @@ button.failure-mark:focus-visible .failure-glyph {
   justify-content: center;
   background: transparent;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   flex-shrink: 0;
   transition: all 0.12s;
 }
 .ico-primary.success {
-  color: var(--success);
+  color: var(--run);
 }
 .ico-primary.danger {
-  color: var(--danger);
+  color: var(--coral);
 }
 .ico-primary.success:hover {
-  background: var(--success-soft);
+  background: oklch(0.72 0.17 150 / 0.14);
 }
 .ico-primary.danger:hover {
-  background: var(--danger-soft);
+  background: var(--coral-wash);
 }
 
 .empty-row {
-  padding: 6px 12px;
-  font-size: 11.5px;
-  color: var(--text-faint);
+  padding: 40px 0;
+  text-align: center;
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  font-size: 22px;
+  color: var(--text-muted);
 }
 
 .side-foot {
-  padding: 10px 16px;
-  border-top: 1px solid var(--border-soft);
+  flex: none;
+  height: 40px;
+  padding: 0 26px;
+  border-top: 1px solid var(--line);
   display: flex;
   align-items: center;
   gap: 8px;
-  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-muted);
 }
+.foot-text,
+.foot-mem {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+.foot-mem {
+  color: var(--text-dim);
+}
 .foot-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: var(--success);
-  box-shadow: 0 0 0 3px var(--success-soft);
+  background: var(--lav);
+  box-shadow: 0 0 0 3px var(--lav-wash);
 }
 .foot-spacer {
   flex: 1;
+}
+
+/* ── The rail ───────────────────────────────────────────────────────────────
+   Everything above, at rail scale. Nothing here changes WHAT is drawn — same
+   bands, same groups, same cards, same controls — only the type sizes, the
+   radii and the grid, which collapses to one column so the cards stack. */
+.fleet.as-rail .side-top {
+  padding: 10px 12px 6px;
+  gap: 6px;
+}
+.fleet.as-rail .workspace-pill {
+  font-size: 15px;
+  gap: 7px;
+}
+.fleet.as-rail .ico-btn {
+  width: 28px;
+  height: 28px;
+}
+/* Onto a line of its own: at rail width the title and the tools already fill
+   the first one. */
+.fleet.as-rail .search-wrap {
+  order: 4;
+  flex-basis: 100%;
+  max-width: none;
+  height: 32px;
+  border-radius: 10px;
+}
+.fleet.as-rail .side-list {
+  padding: 8px 14px 22px;
+  gap: 14px;
+}
+.fleet.as-rail .parent-group {
+  gap: 6px;
+}
+.fleet.as-rail .parent-head {
+  font-size: 15px;
+  letter-spacing: -0.02em;
+  padding-left: 8px;
+}
+.fleet.as-rail .parent-count {
+  font-size: 9.5px;
+}
+.fleet.as-rail .band-groups {
+  margin-left: 10px;
+  padding-left: 12px;
+  gap: 2px;
+}
+.fleet.as-rail .section {
+  gap: 7px;
+  padding: 2px 0 8px;
+}
+.fleet.as-rail .section-head {
+  height: 26px;
+}
+.fleet.as-rail .section-title {
+  font-size: 12.5px;
+}
+.fleet.as-rail .section-body,
+.fleet.as-rail .sys-body {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+}
+.fleet.as-rail .svc-row {
+  border-radius: 14px;
+  padding: 10px 11px;
+  gap: 7px;
+}
+.fleet.as-rail .svc-row:hover {
+  transform: none;
+}
+.fleet.as-rail .svc-mid {
+  gap: 9px;
+}
+.fleet.as-rail .svc-icon {
+  width: 25px;
+  height: 25px;
+  border-radius: 8px;
+}
+.fleet.as-rail .svc-name {
+  font-size: 16px;
+  letter-spacing: -0.03em;
+}
+/* At rail width the strip cannot wrap without doubling the card's height, so
+   it scrolls sideways instead — same contract as the environment pills. */
+.fleet.as-rail .svc-meta {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.fleet.as-rail .svc-meta::-webkit-scrollbar {
+  display: none;
+}
+.fleet.as-rail .svc-chip {
+  font-size: 9.5px;
+  padding: 3px 7px;
+}
+.fleet.as-rail .sys-row {
+  border-radius: 14px;
+  padding: 10px 11px;
+  min-height: 72px;
+  gap: 9px;
+}
+.fleet.as-rail .sys-row .svc-name {
+  font-size: 16px;
+}
+.fleet.as-rail .sys-icon {
+  width: 25px;
+  height: 25px;
+  border-radius: 8px;
+}
+.fleet.as-rail .empty-row {
+  padding: 24px 0;
+  font-size: 16px;
+}
+.fleet.as-rail .side-foot {
+  padding: 0 14px;
 }
 
 /* Indeterminate spinner, used wherever a lifecycle transition is in flight.
@@ -1665,17 +2377,19 @@ button.failure-mark:focus-visible .failure-glyph {
    Main panel
    ══════════════════════════════════════════════════════════════════════════ */
 
+/* The detail pane. Same padding rhythm as the design's `.detail`: the pane is
+   the canvas, and every section on it is a raised sheet. */
 .main {
   flex: 1;
   min-width: 0;
   position: relative;
-  background: var(--panel-bg);
+  background: var(--canvas);
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
-  padding: 22px 26px 16px;
-  gap: 16px;
+  padding: 20px 26px 30px;
+  gap: 20px;
 }
 
 .hero {
@@ -1686,62 +2400,60 @@ button.failure-mark:focus-visible .failure-glyph {
 .hero-top {
   display: flex;
   align-items: flex-start;
-  gap: 16px;
+  gap: 14px;
 }
 .hero-id {
   display: flex;
   align-items: center;
   gap: 14px;
+  min-width: 0;
 }
+/* One tone, at size. It used to swing with the runtime state to match the
+   selected card; the card no longer does that, and neither does this — a
+   surface that changes colour is a second, coarser status display competing
+   with the real one two lines below it. */
 .hero-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background: var(--accent-tint);
-  border: 1px solid var(--accent-tint-bot);
-  color: var(--accent);
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  background: var(--ice-fill);
+  border: 0;
+  color: var(--ink);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-}
-.hero-icon.stack {
-  background: var(--info-tint);
-  border-color: var(--info-tint-bot);
-  color: var(--info);
-}
-.hero-icon.compose {
-  background: var(--magenta-tint);
-  border-color: var(--magenta-tint-bot);
-  color: var(--magenta);
+  flex-shrink: 0;
 }
 .hero-id-text {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 .hero-status-row {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-muted);
+  font-size: 11.5px;
+  color: var(--text-dim);
 }
 .hero-status-label {
+  font-family: var(--font-mono);
   font-weight: 500;
-  letter-spacing: 0.04em;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 .hero-status-label.running {
-  color: var(--success);
+  color: var(--lav);
 }
 .hero-status-label.starting,
 .hero-status-label.stopping {
-  color: var(--warning);
+  color: var(--amber);
 }
 .hero-status-label.crashed,
 .hero-status-label.errored {
-  color: var(--danger);
+  color: var(--coral);
 }
 .hero-status-label.idle,
 .hero-status-label.unmanaged {
@@ -1751,61 +2463,91 @@ button.failure-mark:focus-visible .failure-glyph {
   color: var(--text-dim);
 }
 .hero-name {
-  font-size: 26px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  margin: 0;
+  font-family: var(--font-display);
+  font-size: 38px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  margin: 4px 0 0;
   display: inline-flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
+  min-width: 0;
   color: var(--text);
 }
 .hero-kind {
   font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-muted);
-  background: var(--chip-bg);
-  border: 1px solid var(--border-soft);
-  padding: 3px 8px;
+  font-size: 9.5px;
+  font-weight: 400;
+  color: var(--text-dim);
+  background: var(--raise);
+  border: 0;
+  padding: 5px 10px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  letter-spacing: 0;
+  gap: 5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  flex-shrink: 0;
 }
 .hero-top-actions {
   margin-left: auto;
   display: flex;
   gap: 4px;
+  flex-shrink: 0;
 }
 
-.hero-url-row {
+/* Every reading in one container, inside the Runtime card. The URL chip and the
+   stat pills used to share a row with the run controls, which is why the pills
+   wrapped to a second and third line as soon as the window narrowed: the
+   controls held their width and the readings absorbed the loss. The controls
+   have moved to the title row; what is left here only has to wrap against
+   itself. */
+.hero-facts {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+/* The pills wrap as PEERS of the URL chip, not as a block beside it. As their
+   own flex item the group wrapped internally and grew tall, and the chip then
+   centred itself against three stacked rows — a hole on the left and the
+   readings orbiting it. `display: contents` puts every pill in the same flow,
+   so the row fills and wraps once. */
+.hero-facts .stat-pills {
+  display: contents;
+}
+/* The system panes still put their facts and their one control on a shared
+   row — a system has four readings, not five pills and a sparkline, so it
+   never had the wrapping problem this was split up to solve. */
+.hero-url-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   flex-wrap: wrap;
 }
 .url-chip {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 12px 9px 14px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-soft);
-  border-radius: 999px;
+  gap: 9px;
+  height: 34px;
+  padding: 0 12px;
+  background: var(--raise);
+  border: 0;
+  border-radius: 11px;
   color: var(--text);
   font-family: var(--font-mono);
   font-size: 12.5px;
-  transition: all 0.14s;
+  transition: background 0.14s;
 }
 .url-chip svg:first-child {
-  color: var(--accent);
+  color: var(--ice);
 }
 .url-chip:hover {
-  border-color: var(--border-strong);
-  background: var(--card-bg-hover);
+  background: var(--raise-2);
 }
 .url-chip .url-copy {
   color: var(--text-dim);
@@ -1830,52 +2572,79 @@ button.failure-mark:focus-visible .failure-glyph {
   align-items: center;
   gap: 4px;
   margin-left: auto;
+  flex-shrink: 0;
 }
 .actions-divider {
   width: 1px;
   height: 18px;
-  margin: 0 6px;
-  background: var(--border);
+  margin: 0 5px;
+  background: var(--line);
 }
 
+/* Pills, filled — a button is a shape, not an outline. Quiet is the default;
+   primary and danger are the only two that take a tone. */
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 8px 13px;
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  gap: 8px;
+  height: 36px;
+  padding: 0 18px;
+  background: var(--raise);
+  border: 0;
+  border-radius: 999px;
   color: var(--text);
   font-size: 12.5px;
-  font-weight: 500;
-  transition: all 0.14s;
-  box-shadow: var(--shadow-inset);
+  font-weight: 600;
+  white-space: nowrap;
+  transition:
+    filter 0.15s,
+    background 0.15s,
+    color 0.15s,
+    box-shadow 0.15s;
+  box-shadow: none;
 }
 .btn:hover:not(:disabled) {
-  background: var(--card-bg-hover);
-  border-color: var(--border-strong);
+  background: var(--raise-2);
 }
 .btn.danger {
-  color: var(--danger);
-  background: var(--danger-tint);
-  border-color: var(--danger-tint-bot);
+  color: var(--ink);
+  background: var(--coral-fill);
 }
 .btn.danger:hover:not(:disabled) {
-  filter: brightness(1.08);
+  background: var(--coral-fill);
+  filter: brightness(1.07);
 }
 .btn.success {
-  color: var(--success);
-  background: var(--success-tint);
-  border-color: var(--success-tint-bot);
+  color: var(--ink);
+  background: var(--mint-fill);
+}
+.btn.success:hover:not(:disabled) {
+  background: var(--mint-fill);
+  filter: brightness(1.07);
 }
 .btn.primary {
-  background: var(--accent);
-  color: var(--accent-fg);
-  border-color: var(--accent);
+  background: var(--lav-fill);
+  color: var(--ink);
+}
+.btn.primary:hover:not(:disabled) {
+  background: var(--lav-fill);
+  filter: brightness(1.07);
+}
+/* The quiet outline variant, kept for the section tools that sit on a sheet
+   and must not read as loud as the sheet's own content. */
+.btn.ghost {
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.btn.ghost:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--line-hi);
 }
 .btn.sm {
-  padding: 5px 10px;
+  height: 28px;
+  padding: 0 13px;
   font-size: 11.5px;
 }
 
@@ -1893,12 +2662,13 @@ button.failure-mark:focus-visible .failure-glyph {
 .stat-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   max-width: 100%;
-  padding: 4px 10px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-soft);
-  border-radius: 999px;
+  height: 34px;
+  padding: 0 12px;
+  background: var(--raise);
+  border: 0;
+  border-radius: 11px;
   min-width: 0;
 }
 .stat-pill.wide {
@@ -1906,16 +2676,16 @@ button.failure-mark:focus-visible .failure-glyph {
 }
 .stat-key {
   font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.1em;
+  font-size: 9px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--text-faint);
-  font-weight: 500;
+  color: var(--text-dim);
+  font-weight: 400;
   flex-shrink: 0;
 }
 .stat-val {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--text);
   letter-spacing: -0.01em;
   white-space: nowrap;
@@ -2023,31 +2793,37 @@ button.failure-mark:focus-visible .failure-glyph {
 .term-bar-title {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: -0.03em;
   color: var(--text);
-  letter-spacing: 0.01em;
 }
 .term-bar-title svg {
-  color: var(--accent);
+  color: var(--text-muted);
 }
 .term-bar-count {
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--text-faint);
-  background: var(--card-bg);
-  border: 1px solid var(--border-soft);
-  padding: 1px 7px;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: var(--raise);
+  border: 0;
+  padding: 3px 8px;
   border-radius: 999px;
 }
 .term-spacer {
   flex: 1;
 }
 
+/* Inside the card the grid can no longer inherit a height by flexing against
+   the region — the collapsible wraps the body in its own animated box, which
+   breaks the chain. It takes a viewport-relative height instead: enough to be
+   the main event on the page, bounded so the cards above it are never pushed
+   off the top. */
 .term-grid {
-  flex: 1;
-  min-height: 0;
+  height: 58vh;
+  min-height: 340px;
   display: flex;
 }
 .term-grid > * {
@@ -2112,6 +2888,8 @@ button.failure-mark:focus-visible .failure-glyph {
   background: var(--accent);
 }
 
+/* A terminal is a well, not a card: it sits BELOW the canvas, ringed rather
+   than bordered, so output reads as something the pane contains. */
 .term {
   position: relative;
   flex: 1;
@@ -2119,11 +2897,11 @@ button.failure-mark:focus-visible .failure-glyph {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--card-bg);
-  border: 1px solid var(--border-soft);
-  border-radius: 12px;
+  background: var(--sunken);
+  border: 0;
+  border-radius: 14px;
   overflow: hidden;
-  box-shadow: var(--shadow-inset);
+  box-shadow: inset 0 0 0 1px var(--line);
   container-type: inline-size;
 }
 .term.dragging {
@@ -2134,9 +2912,9 @@ button.failure-mark:focus-visible .failure-glyph {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 7px 8px 7px 6px;
-  border-bottom: 1px solid var(--border-soft);
-  background: var(--titlebar-bg);
+  padding: 8px 8px 8px 6px;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
   flex-shrink: 0;
 }
 .term-head .ico {
@@ -2162,6 +2940,10 @@ button.failure-mark:focus-visible .failure-glyph {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Just the status glyph now that the command line has gone. It no longer
+   shrinks or hides on a narrow pane: it used to be mostly command text, which
+   was worth dropping first — the state figure is the last thing in the header
+   worth losing, not the first. */
 .term-status {
   display: inline-flex;
   align-items: center;
@@ -2169,19 +2951,7 @@ button.failure-mark:focus-visible .failure-glyph {
   font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--text-dim);
-  min-width: 0;
-  overflow: hidden;
-}
-.term-status .file-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-@container (max-width: 380px) {
-  .term-status {
-    display: none;
-  }
+  flex-shrink: 0;
 }
 @container (max-width: 250px) {
   .term-head {
@@ -2339,6 +3109,10 @@ button.failure-mark:focus-visible .failure-glyph {
   margin-top: 10px;
 }
 
+/* Two words that are one reading — it wraps to "exit / 1" in a narrow pane,
+   which reads as two facts and doubles the header's height. It is also the
+   first thing to get squeezed when the title and command line compete for the
+   row, so it holds its width rather than yielding it. */
 .term-exit-badge {
   font-family: var(--font-mono);
   font-size: 10px;
@@ -2347,6 +3121,8 @@ button.failure-mark:focus-visible .failure-glyph {
   background: var(--danger-tint);
   border: 1px solid var(--danger-tint-bot);
   color: var(--danger);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .term-exit-badge.ok {
   background: var(--success-tint);
@@ -2415,9 +3191,10 @@ button.failure-mark:focus-visible .failure-glyph {
   flex: 1;
   display: grid;
   place-items: center;
-  border: 1px dashed var(--border);
-  border-radius: 12px;
-  color: var(--text-faint);
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--line);
+  border-radius: 14px;
+  color: var(--text-dim);
   font-size: 12.5px;
 }
 
@@ -2436,11 +3213,11 @@ button.failure-mark:focus-visible .failure-glyph {
   z-index: 55;
   min-width: 168px;
   max-width: 260px;
-  padding: 4px;
-  background: var(--window-bg);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow-pop);
+  padding: 5px;
+  background: var(--sheet);
+  border: 0;
+  box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--line);
+  border-radius: 14px;
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -2469,10 +3246,10 @@ button.failure-mark:focus-visible .failure-glyph {
   gap: 8px;
   flex: 1;
   min-width: 0;
-  padding: 5px 8px;
+  padding: 6px 9px;
   background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: 9px;
   color: var(--text);
   font-size: 12px;
   text-align: left;
@@ -2614,9 +3391,9 @@ button.failure-mark:focus-visible .failure-glyph {
   max-height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--window-bg);
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  background: var(--sheet);
+  border: 0;
+  border-radius: 18px;
   box-shadow: var(--shadow-pop);
   overflow: hidden;
 }
@@ -2624,13 +3401,15 @@ button.failure-mark:focus-visible .failure-glyph {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 13px 14px;
-  border-bottom: 1px solid var(--border-soft);
-  background: var(--titlebar-bg);
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
 }
 .dialog-title {
-  font-size: 13.5px;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: -0.03em;
 }
 .dialog-body {
   padding: 16px;
@@ -2644,9 +3423,9 @@ button.failure-mark:focus-visible .failure-glyph {
   align-items: center;
   gap: 8px;
   justify-content: flex-end;
-  padding: 12px 14px;
-  border-top: 1px solid var(--border-soft);
-  background: var(--titlebar-bg);
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  background: transparent;
 }
 
 .field {
@@ -2670,9 +3449,9 @@ button.failure-mark:focus-visible .failure-glyph {
 .field-textarea {
   width: 100%;
   padding: 8px 11px;
-  background: var(--input-bg);
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  border-radius: 10px;
   color: var(--text);
   font: inherit;
   font-size: 13px;
@@ -2823,63 +3602,77 @@ button.failure-mark:focus-visible .failure-glyph {
 /* ---- tabs used by the detail panel ---- */
 .tabs {
   display: inline-flex;
-  background: var(--input-bg);
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
+  background: var(--sunken);
+  border: 0;
+  border-radius: 10px;
   padding: 2px;
 }
 .tabs .tab {
-  padding: 4px 12px;
+  height: 26px;
+  padding: 0 12px;
   background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--text-dim);
   font-size: 11.5px;
   font-weight: 500;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  transition: all 0.12s;
+  transition: all 0.14s;
 }
 .tabs .tab:hover {
   color: var(--text);
 }
 .tabs .tab.active {
-  background: var(--card-bg);
+  background: var(--raise);
   color: var(--text);
-  box-shadow: var(--shadow-inset);
+  box-shadow: none;
 }
 .tab-count {
   font-family: var(--font-mono);
   font-size: 9.5px;
   padding: 1px 5px;
-  background: var(--chip-bg);
-  border-radius: 3px;
-  color: var(--text-faint);
+  background: transparent;
+  border-radius: 999px;
+  color: var(--text-dim);
 }
 
 /* ---- simple data table (env vars, commands, failures) ---- */
 .tbl {
   width: 100%;
-  border-collapse: collapse;
+  /* `separate` so a hovered row can carry rounded ends — collapsed borders
+     force the cells to share edges and square them off. */
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 12.5px;
 }
+/* No rules between rows: the table is a list of lines, and hover is what marks
+   the one you are on. Only the header keeps a hairline. */
 .tbl th {
   text-align: left;
   font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.1em;
+  font-size: 9px;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--text-faint);
-  font-weight: 500;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-dim);
+  font-weight: 400;
+  padding: 0 8px 8px;
+  border-bottom: 0;
 }
 .tbl td {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-soft);
+  padding: 9px 8px;
+  border-bottom: 0;
   color: var(--text);
   vertical-align: middle;
+}
+.tbl td:first-child {
+  border-top-left-radius: 10px;
+  border-bottom-left-radius: 10px;
+}
+.tbl td:last-child {
+  border-top-right-radius: 10px;
+  border-bottom-right-radius: 10px;
 }
 .tbl td.mono {
   font-family: var(--font-mono);
@@ -2918,54 +3711,57 @@ button.failure-mark:focus-visible .failure-glyph {
   padding-right: 0;
 }
 
+/* A section of the detail pane: a sheet floating on the canvas, no border and
+   no internal rule — the header is separated from its body by space. */
 .card {
   flex-shrink: 0;
-  background: var(--card-bg);
-  border: 1px solid var(--border-soft);
-  border-radius: 12px;
-  box-shadow: var(--shadow-inset);
+  background: var(--sheet);
+  border: 0;
+  border-radius: 18px;
+  box-shadow: none;
   overflow: hidden;
 }
 .card-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border-soft);
-  background: var(--titlebar-bg);
+  padding: 12px 14px;
+  border-bottom: 0;
+  background: transparent;
 }
 .card-title {
-  font-size: 12.5px;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: -0.03em;
+  color: var(--text);
 }
 .card-body {
-  padding: 4px 0;
+  padding: 0 14px 12px;
 }
 .card-empty {
   padding: 22px;
   text-align: center;
-  color: var(--text-faint);
+  color: var(--text-dim);
   font-size: 12px;
 }
 
 .tag {
   font-family: var(--font-mono);
   font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--chip-bg);
-  border: 1px solid var(--border-soft);
-  color: var(--text-muted);
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--raise);
+  border: 0;
+  color: var(--text-dim);
 }
 .tag.base {
-  background: var(--info-tint);
-  border-color: var(--info-tint-bot);
-  color: var(--info);
+  background: var(--ice-wash);
+  color: var(--ice);
 }
 .tag.ctx {
-  background: var(--accent-tint);
-  border-color: var(--accent-tint-bot);
-  color: var(--accent);
+  background: var(--lav-wash);
+  color: var(--lav);
 }
 
 /* ---- docker daemon banner ---- */
@@ -2973,12 +3769,12 @@ button.failure-mark:focus-visible .failure-glyph {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 12px;
-  border-radius: 10px;
+  padding: 10px 14px;
+  border-radius: 14px;
   font-size: 12.5px;
-  background: var(--warning-tint);
-  border: 1px solid var(--warning-tint-bot);
-  color: var(--warning);
+  background: var(--amber-wash);
+  border: 0;
+  color: var(--amber);
 }
 .daemon-banner .btn {
   margin-left: auto;
@@ -2988,7 +3784,7 @@ button.failure-mark:focus-visible .failure-glyph {
   flex: 1;
   display: grid;
   place-items: center;
-  color: var(--text-faint);
+  color: var(--text-dim);
   font-size: 13px;
   text-align: center;
 }
@@ -2998,27 +3794,56 @@ button.failure-mark:focus-visible .failure-glyph {
   align-items: center;
   gap: 12px;
 }
+/* The board's own empty state — the display voice, because it is the only
+   thing on the screen when it shows. */
+.board-empty {
+  padding: 70px 0;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+.board-empty-title {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 24px;
+  letter-spacing: -0.03em;
+  color: var(--text-muted);
+}
+.board-empty-sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.fleet.as-rail .board-empty {
+  padding: 40px 0;
+}
+.fleet.as-rail .board-empty-title {
+  font-size: 18px;
+}
 
 /* ══════════════════════════════════════════════════════════════════════════
    Project artwork
    A project may carry its own icon; the tile keeps its shape either way so a
    list of mixed projects still lines up.
    ══════════════════════════════════════════════════════════════════════════ */
+/* Artwork fills the chip edge to edge and takes the chip's own radius — no
+   inset, no plate behind it. `inherit` is what keeps one rounding rule for a
+   30px card chip and a 46px hero chip alike, and the transparent background
+   means nothing of the tile shows through a transparent PNG's corners. */
 .avatar.has-art {
-  background: var(--card-bg);
-  border-color: var(--border-soft);
+  border: 0;
   overflow: hidden;
-  padding: 2px;
+  padding: 0;
+  background: transparent;
 }
 .avatar.has-art img {
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  border-radius: 4px;
+  object-fit: cover;
+  border-radius: inherit;
   display: block;
-}
-.hero-icon.has-art img {
-  border-radius: 8px;
 }
 
 /* A transition owns the control until it settles — amber, not green or red,
@@ -3073,6 +3898,11 @@ button.failure-mark:focus-visible .failure-glyph {
 .card-toggle:hover {
   color: var(--text);
 }
+/* A card that does not collapse — its body is a handful of chips, and a caret
+   that hid four words would be a control that costs more than it saves. */
+.card-toggle.static {
+  cursor: default;
+}
 .card-caret {
   display: inline-flex;
   color: var(--text-dim);
@@ -3104,6 +3934,85 @@ button.failure-mark:focus-visible .failure-glyph {
 .card-quick:hover {
   color: var(--success);
   border-color: var(--border-soft);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   The system detail pane — engine and docker daemon.
+   A project's facts are self-describing (`:5432`, `12.4%`); a system's are not,
+   so every reading carries its own label. Same pill shape, one line taller.
+   ══════════════════════════════════════════════════════════════════════════ */
+.sys-facts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1;
+}
+.sys-fact {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  font-size: 11.5px;
+  line-height: 1.3;
+}
+.sys-fact-label {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.sys-fact-value {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sys-fact-value.mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* What it last refused to do, stated where it happened rather than filed away
+   behind a tab. The full record is one press further in. */
+.sys-problem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 var(--pane-pad, 22px) 14px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: color-mix(in oklab, var(--coral) 14%, transparent);
+  color: var(--coral);
+  font-size: 12.5px;
+}
+.sys-problem-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.sys-modules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* Present but not implemented. Dashed rather than dimmed: a stub is a promise,
+   not a disabled control, and dimming reads as the latter. */
+.svc-chip.stub {
+  background: transparent;
+  border: 1px dashed var(--border-soft);
+  color: var(--text-faint);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -3146,18 +4055,17 @@ button.failure-mark:focus-visible .failure-glyph {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 4px 12px 12px;
+  padding: 0;
 }
 .env-group {
-  border: 1px solid var(--border-soft);
-  border-radius: 9px;
-  background: var(--card-bg);
+  border: 0;
+  border-radius: 12px;
+  background: var(--raise);
   overflow: hidden;
 }
 .env-group.editing {
-  background: var(--titlebar-bg);
-  border-color: var(--border-strong);
-  box-shadow: 0 0 0 1px var(--border-strong);
+  background: var(--sunken);
+  box-shadow: inset 0 0 0 1px var(--line-hi);
 }
 .env-group-head {
   display: flex;
@@ -3321,9 +4229,9 @@ button.failure-mark:focus-visible .failure-glyph {
   flex-wrap: wrap;
 }
 .btn.sm.primary {
-  color: var(--accent-fg);
-  background: var(--accent);
-  border-color: var(--accent);
+  color: var(--ink);
+  background: var(--lav-fill);
+  border-color: transparent;
 }
 .btn.sm.primary:hover:not(:disabled) {
   filter: brightness(1.06);
@@ -3342,26 +4250,35 @@ button.failure-mark:focus-visible .failure-glyph {
 .env-pill {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   height: 26px;
-  padding: 0 9px;
-  background: var(--chip-bg);
+  padding: 0 10px;
+  background: var(--raise);
   border: 1px solid transparent;
   border-radius: 999px;
-  color: var(--text-muted);
-  font-size: 11.5px;
-  font-weight: 500;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 400;
   cursor: pointer;
   transition: all 0.12s;
 }
 .env-pill:hover:not(.disabled):not(:disabled) {
   color: var(--text);
-  border-color: var(--border);
+  border-color: transparent;
+  background: var(--raise-2);
 }
+/* The selected environment is filled, not tinted — same rule as a selected
+   card: what is chosen takes the accent as a surface. */
 .env-pill.active {
-  background: var(--accent-tint);
-  border-color: var(--accent-tint-bot);
-  color: var(--accent);
+  background: var(--lav-fill);
+  border-color: transparent;
+  color: var(--ink);
+}
+.env-pill.active:hover:not(.disabled):not(:disabled) {
+  background: var(--lav-fill);
+  color: var(--ink);
+  filter: brightness(1.06);
 }
 /* The variable count reads as a soft coin inside the pill: tinted from the
    pill's own colour so it sits right on both the resting and active states,
@@ -3456,18 +4373,18 @@ button.failure-mark:focus-visible .failure-glyph {
 /* The affordance for "there could be more environments here". */
 .env-pill.add {
   background: transparent;
-  border: 1px dashed var(--border-strong);
-  color: var(--text-faint);
+  border: 1px solid var(--line);
+  color: var(--text-dim);
 }
 .env-pill.add:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-soft);
+  border-color: var(--line-hi);
+  color: var(--text);
+  background: transparent;
 }
 .env-pill.editing {
-  background: var(--input-bg);
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  background: var(--sunken);
+  border-color: var(--lav);
+  box-shadow: none;
   cursor: default;
   padding-right: 4px;
 }

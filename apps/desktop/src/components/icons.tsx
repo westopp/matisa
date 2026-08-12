@@ -54,6 +54,10 @@ export const Icons = {
   Play: (p: IconProps) => <Icon {...p} d="M7 4.5v15l13-7.5L7 4.5Z" fill="currentColor" sw={0} />,
   Stop: (p: IconProps) => <Icon {...p} d={<rect x="5.5" y="5.5" width="13" height="13" rx="2.5" />} fill="currentColor" sw={0} />,
   Restart: (p: IconProps) => <Icon {...p} d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1M3.5 4v4h4" />,
+  /** Reset a failure back to rest. Deliberately the MIRROR of Restart — the two
+   *  sit close together on a broken project and must not be the same picture:
+   *  one runs the thing again, this one only forgets that it broke. */
+  Reset: (p: IconProps) => <Icon {...p} d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1M20.5 4v4h-4" />,
   Folder: (p: IconProps) => <Icon {...p} d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />,
   Compass: (p: IconProps) => (
     <Icon {...p} d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm3.5-12.5-2.1 5.4-5.4 2.1 2.1-5.4 5.4-2.1Z" />
@@ -140,6 +144,13 @@ export const Icons = {
       />
     ),
   Logs: (p: IconProps) => <Icon {...p} d="M4 6h16M4 10h10M4 14h16M4 18h7" />,
+  /** Back to the full board — four tiles, which is what the board looks like. */
+  Grid: (p: IconProps) => (
+    <Icon
+      {...p}
+      d="M4 5.5A1.5 1.5 0 0 1 5.5 4h4A1.5 1.5 0 0 1 11 5.5v4A1.5 1.5 0 0 1 9.5 11h-4A1.5 1.5 0 0 1 4 9.5v-4Zm9 0A1.5 1.5 0 0 1 14.5 4h4A1.5 1.5 0 0 1 20 5.5v4a1.5 1.5 0 0 1-1.5 1.5h-4A1.5 1.5 0 0 1 13 9.5v-4Zm-9 9A1.5 1.5 0 0 1 5.5 13h4a1.5 1.5 0 0 1 1.5 1.5v4A1.5 1.5 0 0 1 9.5 20h-4A1.5 1.5 0 0 1 4 18.5v-4Zm9 0A1.5 1.5 0 0 1 14.5 13h4a1.5 1.5 0 0 1 1.5 1.5v4a1.5 1.5 0 0 1-1.5 1.5h-4a1.5 1.5 0 0 1-1.5-1.5v-4Z"
+    />
+  ),
   Cpu: (p: IconProps) => <Icon {...p} d="M7 7h10v10H7zM4 9v6m16-6v6M9 4h6m-6 16h6M4 9h2m12 0h2M4 15h2m12 0h2" />,
   Stack: (p: IconProps) => <Icon {...p} d="m3 7 9-4 9 4-9 4-9-4Zm0 5 9 4 9-4M3 17l9 4 9-4" />,
   Globe: (p: IconProps) => (
@@ -149,6 +160,11 @@ export const Icons = {
   More: (p: IconProps) => <Icon {...p} d="M5 12h.01M12 12h.01M19 12h.01" sw={2.4} />,
   Refresh: (p: IconProps) => <Icon {...p} d="M21 12a9 9 0 1 1-2.7-6.4M21 4v5h-5" />,
   CollapseAll: (p: IconProps) => <Icon {...p} d="M8 4l4 4 4-4M8 20l4-4 4 4M4 12h16" />,
+  /** Show only this one — brackets closing in on a single subject. Distinct
+   *  from CollapseAll, which shuts everything including what you are looking at. */
+  Focus: (p: IconProps) => (
+    <Icon {...p} d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8m8 0h2.5A1.5 1.5 0 0 1 20 5.5V8m0 8v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16m10.5-4a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0Z" />
+  ),
   ExpandAll: (p: IconProps) => <Icon {...p} d="M8 9l4-4 4 4M8 15l4 4 4-4M4 12h16" />,
   Maximize: (p: IconProps) => <Icon {...p} d="M4 9V5a1 1 0 0 1 1-1h4M20 15v4a1 1 0 0 1-1 1h-4M15 4h4a1 1 0 0 1 1 1v4M9 20H5a1 1 0 0 1-1-1v-4" />,
   Minimize: (p: IconProps) => <Icon {...p} d="M9 4v4a1 1 0 0 1-1 1H4m16 0h-4a1 1 0 0 1-1-1V4M4 15h4a1 1 0 0 1 1 1v4m6 0v-4a1 1 0 0 1 1-1h4" />,

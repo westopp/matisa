@@ -1,14 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import type { Terminal } from "@xterm/xterm"
-import type { ProjectWithState } from "@matisa/core"
+import { SessionId, type ProjectWithState } from "@matisa/core"
 import { clearSession, closeSession } from "~/rpc/rpc.pty"
 import { useCommandRunner } from "~/hooks/use-command-run"
 import { useLifecycleState } from "~/hooks/use-lifecycle-state"
 import { useEngine } from "~/store/store.engine"
-import { useTerminals, type DropSide, type Pane } from "~/store/store.terminals"
+import { runPaneId, useTerminals, type DropSide, type Pane } from "~/store/store.terminals"
 import { Icons } from "../icons"
-import { CommandRunButton, KillButton, LifecycleButton, StatusDot } from "../primitives"
-import { acquireHost, type HostView } from "./terminal.hosts"
+import { CommandRunButton, KillButton, LifecycleButton, StatusFigure } from "../primitives"
+import { acquireHost, clearHost, type HostView } from "./terminal.hosts"
 import { LogView } from "./log.view"
 import { terminalTheme } from "./terminal.xterm"
 
@@ -51,6 +51,7 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
   const { busy } = useLifecycleState(project)
   const {
     statusOf,
+    stateOf,
     run: runCommand,
     stop: stopCommand,
     kill: killCommand
@@ -129,10 +130,23 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
   // Clear the view AND the engine's record of it. Clearing only xterm would look
   // right until the next reload replayed everything back — the scrollback the
   // pane shows is the engine's, not the browser's.
+  //
+  // Both halves are addressed to something that outlives the pane's own state,
+  // because that state is gone at the moment Clear is wanted. `clearHost` goes
+  // to the surface registry rather than `termRef`, which is nulled whenever the
+  // session id changes — including when a project stops. The engine's target is
+  // `run:<projectId>` by construction, so it is computed rather than looked up:
+  // the pane's own id is null whenever the project is not running, which is
+  // exactly when there is old output to get rid of.
+  const clearTarget = pane.kind === "run" ? SessionId.make(runPaneId(project.id)) : sessionId
+
   const onClear = (): void => {
-    termRef.current?.clear()
+    clearHost(pane.paneId)
     setDetached(false)
-    if (sessionId !== null) void clearSession(sessionId)
+    // Rejects for a session the engine has never heard of; `clearSession`
+    // swallows that, which is the right answer — nothing recorded, nothing to
+    // forget, and the view is clear either way.
+    if (clearTarget !== null) void clearSession(clearTarget)
   }
 
   // The run pane of a docker/compose project is a LOG pane: there is no PTY to
@@ -140,7 +154,13 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
   // log_line events, and that is what this pane shows.
   const isLogPane = pane.kind === "run" && project.kind !== "process"
 
-  const running = isLogPane ? project.state === "running" : pane.sessionId !== null && !pane.exited
+  // A RUN pane's liveness is the project's, never its session handle. The
+  // handle deliberately outlives the process — that is what keeps the output
+  // readable, and clearable, after a stop — so a non-null session id stopped
+  // being evidence that anything is running. A command pane has no supervised
+  // state to consult, so there the session IS the answer.
+  const running =
+    pane.kind === "run" ? project.state === "running" : pane.sessionId !== null && !pane.exited
 
   // Kill means the same thing everywhere — end it now, no drain — but reaches a
   // different owner per pane kind. A run pane's process belongs to the
@@ -150,6 +170,7 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
   const killTitle =
     pane.kind === "run" ? "Force kill the project — no drain, no waiting" : "Kill this command"
   const commandStatus = statusOf(pane.commandName ?? pane.title)
+  const commandState = stateOf(pane.commandName ?? pane.title)
   const onKill = (): void => {
     if (pane.kind === "run") {
       void kill(project.id)
@@ -206,10 +227,23 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
             <Icons.Grip size={14} />
           </span>
         )}
-        <span className="term-title">{pane.title}</span>
+        {/* The name, and nothing else. The command line used to sit beside it —
+            a hundred characters of `node -e …` that squeezed the name down to
+            two letters and an ellipsis on any pane narrower than half the
+            window. It is still one hover away, on the header itself. */}
+        <span className="term-title" title={pane.subtitle}>
+          {pane.title}
+        </span>
         <span className="term-status">
-          <StatusDot state={running ? "running" : "idle"} size={6} />
-          <span className="file-label">{pane.subtitle}</span>
+          {/* A command pane asks the runner, exactly as its pill on the board
+              does — one answer, so the two views of the same session cannot
+              report different things. A run pane has no command to ask about;
+              its liveness is the session's. */}
+          <StatusFigure
+            state={pane.kind === "run" ? (running ? "running" : "idle") : commandState}
+            size={13}
+            dotSize={6}
+          />
         </span>
         {pane.exited && (
           <span className={`term-exit-badge ${pane.exitCode === 0 ? "ok" : ""}`}>
@@ -232,8 +266,11 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
             onStop={() => stopCommand(pane.commandName ?? pane.title)}
           />
         )}
+        {/* Never disabled. It used to gate on a live session, which is the one
+            state in which there is LEAST to clear — a running project's output
+            is arriving, a stopped one's is just sitting there. */}
         {!isLogPane && (
-          <button className="ico" title="Clear terminal" onClick={onClear} disabled={sessionId === null}>
+          <button className="ico" title="Clear terminal" onClick={onClear}>
             <Icons.Eraser size={13} />
           </button>
         )}

@@ -1,7 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { Scrollback, runSessionId, signalName } from "../modules/pty/pty.session.js"
-import { restartDelayMs } from "../modules/supervisor/supervisor.backoff.js"
 
 // Scrollback's seq numbers are what lets an attach replay history and then
 // dedupe against the live hub (pump skips seq ≤ last replayed). If ordering or
@@ -95,14 +94,5 @@ describe("signalName", () => {
 describe("runSessionId", () => {
   it("is deterministic per project", () => {
     assert.equal(runSessionId("p1" as never), "run:p1")
-  })
-})
-
-describe("restartDelayMs", () => {
-  it("doubles from base and respects the cap", () => {
-    assert.equal(restartDelayMs(0, 500, 30_000), 500)
-    assert.equal(restartDelayMs(1, 500, 30_000), 1000)
-    assert.equal(restartDelayMs(3, 500, 30_000), 4000)
-    assert.equal(restartDelayMs(10, 500, 30_000), 30_000)
   })
 })

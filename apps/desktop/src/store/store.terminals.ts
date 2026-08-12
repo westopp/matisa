@@ -136,8 +136,25 @@ export const useTerminals = create<TerminalState>()((set, get) => ({
 
       // Re-opening a pane that is already on screen is a no-op beyond refreshing
       // its session binding — never a duplicate tile.
+      //
+      // A caller with NO session id must not erase the one the pane already has.
+      // The run pane is re-opened on every state change, and a stopped project
+      // reports no session — so stopping one used to null the pane's id while
+      // its surface, and the output on it, stayed on screen: a terminal full of
+      // text whose Clear was disabled, because the id Clear needs had just been
+      // thrown away. A session outlives its process here exactly as it does in
+      // the engine, where `run:` scrollback is kept and never reaped.
+      const rebinding = pane.sessionId !== null
       const nextPane: Pane = existing
-        ? { ...existing, ...pane, exited: false, exitCode: null }
+        ? {
+            ...existing,
+            ...pane,
+            sessionId: pane.sessionId ?? existing.sessionId,
+            // Only a real binding means "alive again". Without one the pane
+            // keeps its exit, or a stopped project would read as running.
+            exited: rebinding ? false : existing.exited,
+            exitCode: rebinding ? null : existing.exitCode
+          }
         : { ...pane, exited: false, exitCode: null }
 
       const node: LayoutNode = { type: "pane", paneId: pane.paneId }
@@ -154,11 +171,21 @@ export const useTerminals = create<TerminalState>()((set, get) => ({
       }
     }),
 
+  // Closing forgets the pane, it does not merely untile it. The pane record WAS
+  // left behind, which made `panes` and `layouts` two answers to "does this
+  // terminal exist" — and anything reading the wrong one (the board's command
+  // pills, say) kept showing terminals the user had already closed. One record,
+  // one existence: gone from here is gone everywhere.
   closePane: (projectId, paneId) =>
-    set((s) => ({
-      layouts: { ...s.layouts, [projectId]: removePane(s.layouts[projectId] ?? null, paneId) },
-      fullscreen: s.fullscreen === paneId ? null : s.fullscreen
-    })),
+    set((s) => {
+      const panes = { ...s.panes }
+      delete panes[paneId]
+      return {
+        panes,
+        layouts: { ...s.layouts, [projectId]: removePane(s.layouts[projectId] ?? null, paneId) },
+        fullscreen: s.fullscreen === paneId ? null : s.fullscreen
+      }
+    }),
 
   bindSession: (paneId, sessionId) =>
     set((s) => {

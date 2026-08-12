@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Matisa · Fleet</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{--sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;--serif:"Montserrat","Inter",sans-serif}
+:root,[data-theme="dark"]{
+--canvas:oklch(0.135 0.004 288);--sheet:oklch(0.175 0.005 288);--sunken:oklch(0.108 0.004 288);
+--raise:oklch(0.215 0.006 288);--raise-2:oklch(0.26 0.007 288);
+--line:oklch(0.24 0.005 288);--line-hi:oklch(0.35 0.008 288);
+--text:oklch(0.975 0.002 288);--muted:oklch(0.75 0.008 288);--dim:oklch(0.56 0.012 288);
+--ink:oklch(0.2 0.03 300);
+--lav:oklch(0.845 0.085 300);--lav-wash:oklch(0.845 0.085 300/0.14);
+--ice:oklch(0.865 0.06 233);--ice-wash:oklch(0.865 0.06 233/0.14);
+--coral:oklch(0.795 0.1 25);--coral-wash:oklch(0.795 0.1 25/0.14);
+--mint:oklch(0.85 0.1 158);--amber:oklch(0.875 0.1 88);--idle:oklch(0.42 0.01 288);
+}
+[data-theme="light"]{
+--canvas:oklch(0.965 0.003 288);--sheet:oklch(1 0 0);--sunken:oklch(0.99 0.002 288);
+--raise:oklch(0.93 0.005 288);--raise-2:oklch(0.9 0.006 288);
+--line:oklch(0.905 0.005 288);--line-hi:oklch(0.8 0.008 288);
+--text:oklch(0.2 0.012 288);--muted:oklch(0.44 0.012 288);--dim:oklch(0.6 0.012 288);
+--ink:oklch(0.2 0.03 300);
+--lav:oklch(0.82 0.1 300);--lav-wash:oklch(0.6 0.15 300/0.12);
+--ice:oklch(0.84 0.075 233);--ice-wash:oklch(0.6 0.13 233/0.12);
+--coral:oklch(0.8 0.11 25);--coral-wash:oklch(0.7 0.16 25/0.12);
+--mint:oklch(0.62 0.14 158);--amber:oklch(0.7 0.13 82);--idle:oklch(0.78 0.008 288);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font-family:var(--sans);font-weight:450;background:oklch(0.085 0.004 288);color:var(--text);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow:hidden;font-feature-settings:"cv11","ss01"}
+[data-theme="light"] body{background:oklch(0.895 0.004 288)}
+.desktop{position:fixed;inset:0;display:grid;place-items:center;padding:26px;background:radial-gradient(1100px 700px at 50% -15%,oklch(0.22 0.03 300/.75),transparent 70%),oklch(0.085 0.004 288)}
+[data-theme="light"] .desktop{background:radial-gradient(1100px 700px at 50% -15%,oklch(0.99 0.015 300),transparent 70%),oklch(0.895 0.004 288)}
+#root{display:contents}
+.scroll{overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--line-hi) transparent}
+.scroll::-webkit-scrollbar{width:10px;height:10px}
+.scroll::-webkit-scrollbar-thumb{background:var(--line-hi);border-radius:10px;border:3px solid transparent;background-clip:content-box}
+.scroll::-webkit-scrollbar-track{background:transparent}
+button{font:inherit;color:inherit;cursor:pointer;background:none;border:0;padding:0}
+input{font:inherit}
+a{color:var(--lav);text-decoration:none}
+a:hover{color:var(--ice)}
+.serif{font-family:var(--serif);font-weight:800;letter-spacing:-0.03em}
+.mono{font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="icons.jsx"></script>
+<script type="text/babel" src="v2-data.jsx"></script>
+<script type="text/babel" src="b-ui.jsx"></script>
+<script type="text/babel" src="b-board.jsx"></script>
+<script type="text/babel" src="b-detail.jsx"></script>
+<script type="text/babel" src="b-app.jsx"></script>
+</body>
+</html>

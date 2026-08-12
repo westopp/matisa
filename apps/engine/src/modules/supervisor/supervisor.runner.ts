@@ -1,4 +1,4 @@
-import { Duration, Effect, Either, Ref, Runtime } from "effect"
+import { Effect, Either, Ref, Runtime } from "effect"
 import { SessionId, type Project } from "@matisa/core"
 import type { EnvRepoShape, RuntimeRepoShape, RuntimePatch } from "@matisa/store"
 import { crashed, healthChanged, logLine, stateChanged } from "../../shared/events.js"
@@ -8,7 +8,6 @@ import type { AppConfigShape } from "../../config/config.app-config.js"
 import type { PtyManagerShape } from "../pty/pty.services.js"
 import { runSessionId } from "../pty/pty.session.js"
 import { START_TIMEOUT_MS } from "../../config/config.constants.js"
-import { restartDelayMs } from "./supervisor.backoff.js"
 import { Event, runtimeStateOf, State, transition } from "./supervisor.machine.js"
 import { awaitPortBound } from "./supervisor.probe.js"
 import { spawnChild } from "./supervisor.spawn.js"
@@ -16,7 +15,7 @@ import { runCompose, runDocker } from "./supervisor.run-docker.js"
 
 // ────────────────────────────────────────────────────────────────────────────
 // runProject — one project's supervised lifetime, dispatched by kind:
-//   process — PTY child, engine-owned restarts with expo backoff
+//   process — PTY child, run once; a crash is terminal and the user restarts
 //   docker  — matisa.<name> container; docker owns restarts (unless-stopped),
 //             the FSM observes real container events
 //   compose — whole stack via docker compose; up/down is the lifecycle unit
@@ -218,53 +217,33 @@ const runProcess = (project: Project, deps: RunnerDeps): Effect.Effect<void> =>
         })
       )
 
-    const loop = (attempt: number): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        const startedAt = Date.now()
-        yield* lifetime(attempt)
-        const state = yield* driver.current
-        if (state._tag !== "Crashed") return
+    // One lifetime, and a crash ends it. There is no restart curve: the engine
+    // used to re-run a crashed project up to five times on an expo backoff,
+    // which spent half a minute cycling the project through starting → crashed
+    // → starting and fixed nothing a manual start would not — the command was
+    // wrong, and running it four more times kept it wrong. Crashed is a state
+    // the user can see, read the reason for, and act on.
+    const startedAt = Date.now()
+    yield* lifetime(0)
+    const state = yield* driver.current
+    if (state._tag !== "Crashed") return
 
-        // Surface WHY: session scrollback tail + old-app style summary.
-        const tail = yield* deps.pty.scrollbackTail(sessionId, 15)
-        const summary = summarizeFailure(
-          tail,
-          state.code,
-          state.signal,
-          Date.now() - startedAt
-        )
-        yield* deps.events.emit(
-          crashed(project.id, state.code ?? undefined, state.signal ?? undefined, undefined, summary, tail)
-        )
-        yield* deps.runtimeRepo
-          .recordCrash({
-            projectId: project.id,
-            kind: "crash",
-            exitCode: state.code ?? undefined,
-            signal: state.signal ?? undefined,
-            summary,
-            logTail: tail
-          })
-          .pipe(Effect.ignore)
-
-        if (attempt + 1 >= deps.config.backoff.maxAttempts) {
-          const reason = `gave up after ${deps.config.backoff.maxAttempts} restart attempts`
-          yield* driver.apply(Event.Fault({ reason }))
-          // The individual crashes are on record; the decision to stop trying
-          // is what explains why the project is sitting there errored.
-          yield* deps.runtimeRepo
-            .recordCrash({ projectId: project.id, kind: "error", summary: reason, logTail: tail })
-            .pipe(Effect.ignore)
-          return
-        }
-
-        yield* Effect.sleep(
-          Duration.millis(restartDelayMs(attempt, deps.config.backoff.base, deps.config.backoff.cap))
-        )
-        yield* loop(attempt + 1)
+    // Surface WHY: session scrollback tail + old-app style summary.
+    const tail = yield* deps.pty.scrollbackTail(sessionId, 15)
+    const summary = summarizeFailure(tail, state.code, state.signal, Date.now() - startedAt)
+    yield* deps.events.emit(
+      crashed(project.id, state.code ?? undefined, state.signal ?? undefined, undefined, summary, tail)
+    )
+    yield* deps.runtimeRepo
+      .recordCrash({
+        projectId: project.id,
+        kind: "crash",
+        exitCode: state.code ?? undefined,
+        signal: state.signal ?? undefined,
+        summary,
+        logTail: tail
       })
-
-    yield* loop(0)
+      .pipe(Effect.ignore)
   })
 
 export const runProject = (project: Project, deps: RunnerDeps): Effect.Effect<void> => {

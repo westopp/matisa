@@ -43,6 +43,9 @@ export interface SupervisorShape {
   readonly restart: (id: ProjectId) => Effect.Effect<Accepted, EngineError>
   /** Force down, no drain and no waiting. See supervisor.kill.ts. */
   readonly kill: (id: ProjectId) => Effect.Effect<Accepted, EngineError>
+  /** Acknowledge a terminal failure: `crashed`/`errored` → `idle`, and nothing
+   *  else. No signal, no runner, no process on either side of it. */
+  readonly reset: (id: ProjectId) => Effect.Effect<Accepted, EngineError>
   readonly status: (id: ProjectId) => Effect.Effect<RuntimeStatus, EngineError>
 }
 
@@ -182,6 +185,21 @@ const make = Effect.gen(function* () {
       return { id, state: "idle" as const }
     })
 
+  // Dismissal, not lifecycle. The FSM says which states it is legal from
+  // (Crashed/Errored only — see supervisor.machine.ts); everything else is a
+  // no-op that reports back what the project is actually doing, so a click on a
+  // stale card can never talk a live project into `idle`.
+  const reset: SupervisorShape["reset"] = (id) =>
+    Effect.gen(function* () {
+      const persisted = yield* runtimeRepo.getState(id).pipe(Effect.mapError(toEngineError))
+      const before = Option.getOrUndefined(persisted)?.state ?? "idle"
+      if (before !== "crashed" && before !== "errored") return { id, state: before }
+
+      yield* runtimeRepo.setState(id, { state: "idle" }).pipe(Effect.ignore)
+      yield* events.emit(stateChanged(id, before, "idle", "failure acknowledged"))
+      return { id, state: "idle" as const }
+    })
+
   const status: SupervisorShape["status"] = (id) =>
     runtimeRepo.getState(id).pipe(
       Effect.mapError(toEngineError),
@@ -200,7 +218,7 @@ const make = Effect.gen(function* () {
       )
     )
 
-  return Supervisor.of({ start, stop, restart, kill, status })
+  return Supervisor.of({ start, stop, restart, kill, reset, status })
 })
 
 export const SupervisorLive = Layer.scoped(Supervisor, make)

@@ -118,6 +118,9 @@ export interface RuntimeRepoShape {
     projectId?: ProjectId,
     limit?: number
   ) => Effect.Effect<ReadonlyArray<CrashRecordRow>, StoreQueryError>
+  /** Forget failures — one project's, or all of them. Returns how many rows
+   *  went, so a caller can say "cleared 12" rather than "cleared". */
+  readonly clearCrashes: (projectId?: ProjectId) => Effect.Effect<number, StoreQueryError>
 }
 
 export class RuntimeRepo extends Context.Tag("RuntimeRepo")<RuntimeRepo, RuntimeRepoShape>() {}
@@ -241,6 +244,15 @@ export const RuntimeRepoLive = Layer.effect(
         }))
       })
 
+    const clearCrashes: RuntimeRepoShape["clearCrashes"] = (projectId) =>
+      q(() => {
+        const r = db
+          .delete(crashHistory)
+          .where(projectId ? eq(crashHistory.projectId, projectId) : undefined)
+          .run()
+        return r.changes
+      })
+
     return RuntimeRepo.of({
       getState,
       setState,
@@ -249,7 +261,8 @@ export const RuntimeRepoLive = Layer.effect(
       liveSpawns,
       removeSpawn,
       recordCrash,
-      recentCrashes
+      recentCrashes,
+      clearCrashes
     })
   })
 )

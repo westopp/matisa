@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Matisa 2 · Local Services</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{--sans:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;--serif:"Instrument Serif",Georgia,serif}
+:root,[data-theme="dark"]{
+--canvas:oklch(0.145 0.004 288);--frame:oklch(0.185 0.004 288);--surface:oklch(0.205 0.005 288);--surface-2:oklch(0.245 0.006 288);--sunken:oklch(0.128 0.004 288);
+--line:oklch(0.27 0.006 288);--line-soft:oklch(0.225 0.005 288);
+--text:oklch(0.975 0.002 288);--muted:oklch(0.72 0.008 288);--dim:oklch(0.56 0.01 288);--faint:oklch(0.44 0.012 288);
+--lav:oklch(0.84 0.085 300);--lav-ink:oklch(0.21 0.04 300);--lav-wash:oklch(0.84 0.085 300/0.13);
+--ice:oklch(0.86 0.06 233);--ice-wash:oklch(0.86 0.06 233/0.13);
+--mint:oklch(0.84 0.11 158);--mint-wash:oklch(0.84 0.11 158/0.13);
+--coral:oklch(0.76 0.13 25);--coral-wash:oklch(0.76 0.13 25/0.13);
+--amber:oklch(0.87 0.1 88);--amber-wash:oklch(0.87 0.1 88/0.13);
+--shadow:0 1px 0 oklch(1 0 0/0.03) inset,0 10px 30px oklch(0 0 0/0.22);
+}
+[data-theme="light"]{
+--canvas:oklch(0.968 0.003 288);--frame:oklch(0.988 0.002 288);--surface:oklch(1 0 0);--surface-2:oklch(0.955 0.004 288);--sunken:oklch(0.978 0.003 288);
+--line:oklch(0.9 0.006 288);--line-soft:oklch(0.935 0.005 288);
+--text:oklch(0.21 0.012 288);--muted:oklch(0.45 0.012 288);--dim:oklch(0.58 0.012 288);--faint:oklch(0.7 0.01 288);
+--lav:oklch(0.52 0.16 300);--lav-ink:oklch(0.99 0.01 300);--lav-wash:oklch(0.52 0.16 300/0.1);
+--ice:oklch(0.52 0.13 233);--ice-wash:oklch(0.52 0.13 233/0.1);
+--mint:oklch(0.53 0.14 158);--mint-wash:oklch(0.53 0.14 158/0.11);
+--coral:oklch(0.55 0.19 25);--coral-wash:oklch(0.55 0.19 25/0.1);
+--amber:oklch(0.62 0.14 78);--amber-wash:oklch(0.62 0.14 78/0.12);
+--shadow:0 1px 2px oklch(0 0 0/0.04),0 10px 30px oklch(0 0 0/0.06);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font-family:var(--sans);background:oklch(0.09 0.004 288);color:var(--text);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow:hidden;font-feature-settings:"ss01","cv11"}
+[data-theme="light"] body{background:oklch(0.9 0.004 288)}
+.desktop{position:fixed;inset:0;display:grid;place-items:center;padding:26px;background:radial-gradient(1200px 700px at 50% -10%,oklch(0.2 0.02 300/0.7),transparent 70%),oklch(0.09 0.004 288)}
+[data-theme="light"] .desktop{background:radial-gradient(1200px 700px at 50% -10%,oklch(0.99 0.01 300),transparent 70%),oklch(0.9 0.004 288)}
+#root{display:contents}
+.scroll{overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.scroll::-webkit-scrollbar{width:10px;height:10px}
+.scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:10px;border:3px solid transparent;background-clip:content-box}
+.scroll::-webkit-scrollbar-track{background:transparent}
+button{font:inherit;color:inherit;cursor:pointer;background:none;border:0;padding:0}
+input{font:inherit}
+a{color:var(--lav);text-decoration:none}
+a:hover{color:var(--ice)}
+.serif{font-family:var(--serif);font-weight:400;letter-spacing:-0.005em}
+.micro{font-family:var(--mono);font-size:9.5px;letter-spacing:0.14em;text-transform:uppercase;color:var(--faint)}
+.mono{font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="icons.jsx"></script>
+<script type="text/babel" src="v2-data.jsx"></script>
+<script type="text/babel" src="v2-ui.jsx"></script>
+<script type="text/babel" src="v2-sidebar.jsx"></script>
+<script type="text/babel" src="v2-terminal.jsx"></script>
+<script type="text/babel" src="v2-main.jsx"></script>
+<script type="text/babel" src="v2-app.jsx"></script>
+</body>
+</html>

@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import type { CrashRecord, ProjectId, ProjectWithState } from "@matisa/core"
+import { clearSession } from "~/rpc/rpc.pty"
 import { useEngine, type ActivityEntry } from "~/store/store.engine"
+import { isSystemId, SYSTEM_IDS, systemName } from "~/store/store.systems"
 import { useUi, type DrawerTab } from "~/store/store.ui"
 import { Dialog } from "./forms/dialog"
+import { ConfirmDialog } from "./forms/confirm"
 import { Icons } from "./icons"
 import { formatMB } from "./primitives"
 
@@ -28,12 +31,63 @@ const stamp = (ts: number): string => new Date(ts).toLocaleString()
 const ANSI = /\[[0-9;?]*[ -/]*[@-~]/g
 const plain = (text: string): string => text.replace(ANSI, "")
 
-/** Project names are looked up per row; a Map keeps that O(1) rather than a
- *  linear scan per entry across a 300-row activity table. */
+/** Names are looked up per row; a Map keeps that O(1) rather than a linear scan
+ *  per entry across a 300-row activity table. Systems answer first — they are
+ *  not in the catalog, and a row about the engine reading "unknown" is exactly
+ *  the dead end that made them uninspectable. */
 const useProjectNames = (): ((id: ProjectId) => string) => {
   const projects = useEngine((s) => s.projects)
   const byId = useMemo(() => new Map(projects.map((p) => [p.id as string, p.name])), [projects])
-  return (id) => byId.get(id) ?? "unknown"
+  return (id) => systemName(id) ?? byId.get(id) ?? "unknown"
+}
+
+/** The clear control every history tab carries, in the same slot with the same
+ *  glyph. Resources has none on purpose: it is a live sample, not a history —
+ *  there is nothing to forget, and the next poll would put it straight back. */
+const ClearBar = ({
+  count,
+  noun,
+  scopeLabel,
+  confirmTitle,
+  children,
+  onClear
+}: {
+  count: number
+  noun: [string, string]
+  scopeLabel: string | null
+  confirmTitle: string
+  /** What the confirm dialog says goes. */
+  children: React.ReactNode
+  onClear: () => void
+}) => {
+  const [confirming, setConfirming] = useState(false)
+  return (
+    <>
+      <div className="detail-bar failures-bar">
+        <span className="detail-label">
+          {count} {count === 1 ? noun[0] : noun[1]}
+          {scopeLabel === null ? "" : ` · ${scopeLabel}`}
+        </span>
+        <button className="ico danger-hover" title={confirmTitle} onClick={() => setConfirming(true)}>
+          <Icons.Eraser size={13} />
+        </button>
+      </div>
+      {confirming && (
+        <ConfirmDialog
+          title={confirmTitle}
+          confirmLabel="Clear"
+          danger
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => {
+            setConfirming(false)
+            onClear()
+          }}
+        >
+          {children}
+        </ConfirmDialog>
+      )}
+    </>
+  )
 }
 
 const Empty = ({ children }: { children: string }) => <div className="card-empty">{children}</div>
@@ -135,6 +189,7 @@ const FailureRow = ({
 
 const FailuresTab = ({ scopeId, nameOf }: { scopeId: ProjectId | null; nameOf: (id: ProjectId) => string }) => {
   const all = useEngine((s) => s.failures)
+  const clearFailures = useEngine((s) => s.clearFailures)
   const failures = scopeId === null ? all : all.filter((f) => f.projectId === scopeId)
   const [expanded, setExpanded] = useState<CrashRecord | null>(null)
 
@@ -144,6 +199,20 @@ const FailuresTab = ({ scopeId, nameOf }: { scopeId: ProjectId | null; nameOf: (
 
   return (
     <>
+      {/* The history is kept FOR the user; once read it is theirs to discard.
+          Scoped to whatever the tab is showing, so "clear" never quietly takes
+          more than what is on screen. */}
+      <ClearBar
+        count={failures.length}
+        noun={["failure", "failures"]}
+        scopeLabel={scopeId === null ? null : nameOf(scopeId)}
+        confirmTitle={scopeId === null ? "Clear every failure?" : `Clear ${nameOf(scopeId)}'s failures?`}
+        onClear={() => void clearFailures(scopeId ?? undefined)}
+      >
+        {failures.length} recorded {failures.length === 1 ? "failure goes" : "failures go"} for good — the engine
+        forgets them too. Nothing running is touched, and nothing that fails from here on is affected.
+      </ClearBar>
+
       <table className="tbl">
         <thead>
           <tr>
@@ -188,12 +257,25 @@ const activityClass = (kind: ActivityEntry["kind"]): string =>
 
 const ActivityTab = ({ scopeId, nameOf }: { scopeId: ProjectId | null; nameOf: (id: ProjectId) => string }) => {
   const all = useEngine((s) => s.activity)
+  const clearActivity = useEngine((s) => s.clearActivity)
   const entries = scopeId === null ? all : all.filter((e) => e.projectId === scopeId)
 
   if (entries.length === 0) return <Empty>No engine activity yet.</Empty>
 
   return (
-    <table className="tbl">
+    <>
+      <ClearBar
+        count={entries.length}
+        noun={["entry", "entries"]}
+        scopeLabel={scopeId === null ? null : nameOf(scopeId)}
+        confirmTitle={scopeId === null ? "Clear the activity log?" : `Clear ${nameOf(scopeId)}'s activity?`}
+        onClear={() => clearActivity(scopeId ?? undefined)}
+      >
+        This clears what THIS window kept. The engine's own event log is untouched, so a reconnect refills the
+        tab from wherever its cursor is.
+      </ClearBar>
+
+      <table className="tbl">
       <thead>
         <tr>
           <th style={{ width: 86 }}>When</th>
@@ -224,10 +306,11 @@ const ActivityTab = ({ scopeId, nameOf }: { scopeId: ProjectId | null; nameOf: (
         ))}
       </tbody>
     </table>
+    </>
   )
 }
 
-const ResourcesTab = ({ scopeId, nameOf }: { scopeId: ProjectId | null; nameOf: (id: ProjectId) => string }) => {
+const ResourcesTab =({ scopeId, nameOf }: { scopeId: ProjectId | null; nameOf: (id: ProjectId) => string }) => {
   const resources = useEngine((s) => s.resources)
 
   // Hottest first — the reason this table is opened is to find the one process
@@ -272,11 +355,14 @@ const ResourcesTab = ({ scopeId, nameOf }: { scopeId: ProjectId | null; nameOf: 
  *  only ever holds what arrived while this client was watching, so everything a
  *  container said before you opened the app is invisible there. This is the
  *  answer to "what did it print overnight". */
-const LogsTab = ({ project }: { project: ProjectWithState | null }) => {
+const LogsTab = ({ project, systemId }: { project: ProjectWithState | null; systemId: ProjectId | null }) => {
   const tailLogs = useEngine((s) => s.tailLogs)
+  const ensureRunSession = useEngine((s) => s.ensureRunSession)
+  const session = useEngine((s) => (project === null ? undefined : s.runSessions[project.id]))
   const [lines, setLines] = useState<ReadonlyArray<string> | null>(null)
   const [loading, setLoading] = useState(false)
   const [count, setCount] = useState(200)
+  const [clearing, setClearing] = useState(false)
 
   const projectId = project?.id ?? null
 
@@ -300,8 +386,44 @@ const LogsTab = ({ project }: { project: ProjectWithState | null }) => {
     if (projectId !== null) void load(count)
   }, [projectId, count, load])
 
+  // A system has no log tail to fetch: the engine writes to the terminal that
+  // started it, and the Docker daemon to the OS log. Say which, rather than
+  // showing the same "select a project" prompt at something that IS selected.
+  if (systemId !== null) {
+    return (
+      <Empty>
+        {systemId === SYSTEM_IDS.engine
+          ? "The engine logs to the terminal it was started from."
+          : "Docker logs to the system log, not through the engine."}
+      </Empty>
+    )
+  }
+
   if (project === null) {
     return <Empty>Select a project to read its log tail.</Empty>
+  }
+
+  // The tail comes from the source, so clearing it has to reach the source. A
+  // process's is its run session's scrollback, which `pty.clear` empties. A
+  // container's belongs to docker, which has no clear short of recreating it —
+  // so the control says why instead of pretending.
+  //
+  // The session id is resolved at CLICK time, not read from the store: it is
+  // cached there only once the project's terminal pane has mounted, and this
+  // tab is most often opened from the board, where it has not.
+  const clearable = project.kind === "process"
+
+  const clear = async (): Promise<void> => {
+    setClearing(true)
+    try {
+      const sessionId = session?.sessionId ?? (await ensureRunSession(project.id))
+      // No session means nothing was ever recorded — the view is already the
+      // whole truth, so emptying it is the honest result rather than a no-op.
+      if (sessionId !== null && sessionId !== undefined) await clearSession(sessionId)
+      setLines([])
+    } finally {
+      setClearing(false)
+    }
   }
 
   return (
@@ -316,6 +438,18 @@ const LogsTab = ({ project }: { project: ProjectWithState | null }) => {
         </button>
         <button className="ico" title="Refresh" disabled={loading} onClick={() => void load(count)}>
           <Icons.Refresh size={13} />
+        </button>
+        <button
+          className="ico danger-hover"
+          title={
+            clearable
+              ? "Clear the recorded output — the engine forgets it too"
+              : "Docker owns this history; the engine cannot clear it"
+          }
+          disabled={!clearable || clearing}
+          onClick={() => void clear()}
+        >
+          <Icons.Eraser size={13} />
         </button>
       </div>
       {loading && lines === null ? (
@@ -370,9 +504,10 @@ export const RightDrawer = ({ selectedId }: { selectedId: ProjectId | null }) =>
     return () => window.removeEventListener("keydown", onKey)
   }, [open, close])
 
-  // Scoping is only meaningful with a project in the URL; on the index route the
+  // Scoping is only meaningful with something in the URL; on the index route the
   // drawer is unconditionally global.
   const scopeId = scoped && selectedId !== null ? selectedId : null
+  const systemId = selectedId !== null && isSystemId(selectedId) ? selectedId : null
 
   return (
     <aside className={`drawer ${open ? "open" : ""}`} aria-hidden={!open}>
@@ -400,10 +535,10 @@ export const RightDrawer = ({ selectedId }: { selectedId: ProjectId | null }) =>
       {selectedId !== null && tab !== "logs" && (
         <div className="drawer-scope">
           <button className={`scope-btn ${scoped ? "active" : ""}`} onClick={() => setScoped(true)}>
-            This project
+            {systemId === null ? "This project" : nameOf(systemId)}
           </button>
           <button className={`scope-btn ${scoped ? "" : "active"}`} onClick={() => setScoped(false)}>
-            All projects
+            Everything
           </button>
         </div>
       )}
@@ -412,7 +547,7 @@ export const RightDrawer = ({ selectedId }: { selectedId: ProjectId | null }) =>
         {tab === "failures" && <FailuresTab scopeId={scopeId} nameOf={nameOf} />}
         {tab === "activity" && <ActivityTab scopeId={scopeId} nameOf={nameOf} />}
         {tab === "resources" && <ResourcesTab scopeId={scopeId} nameOf={nameOf} />}
-        {tab === "logs" && <LogsTab project={selected} />}
+        {tab === "logs" && <LogsTab project={selected} systemId={systemId} />}
       </div>
     </aside>
   )

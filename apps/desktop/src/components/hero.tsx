@@ -4,6 +4,7 @@ import { useEngine } from "~/store/store.engine"
 import { revealPath } from "~/store/store.picker"
 import { Icons } from "./icons"
 import { useLifecycleState } from "~/hooks/use-lifecycle-state"
+import { CollapsibleCard } from "./panels"
 import {
   formatMB,
   formatUptime,
@@ -165,10 +166,13 @@ export const ProjectHero = ({ project, onEdit }: { project: ProjectWithState; on
   }
 
   return (
+    <>
     <div className="hero">
       <div className="hero-top">
         <div className="hero-id">
-          <ProjectAvatar project={project} size={20} className="hero-icon" />
+          {/* Takes the project's tone at size — the same rule the selected
+              card follows, so the pane and the rail agree at a glance. */}
+          <ProjectAvatar project={project} size={22} className="hero-icon" />
           <div className="hero-id-text">
             <div className="hero-status-row">
               <StatusFigure state={project.state} projectId={project.id} size={16} dotSize={8} />
@@ -194,35 +198,22 @@ export const ProjectHero = ({ project, onEdit }: { project: ProjectWithState; on
           </div>
         </div>
 
-        <div className="hero-top-actions">
-          <button className="ico-btn" title="Edit project" onClick={onEdit} disabled={busy}>
-            <Icons.Edit size={15} />
-          </button>
-          <button className="ico-btn" title="Reveal in Finder" onClick={() => void navigator.clipboard?.writeText(project.root)}>
-            <Icons.Folder size={15} />
-          </button>
-        </div>
       </div>
+    </div>
 
-      <div className="hero-url-row">
-        {/* No port means nothing to visit, so the chip is absent rather than a
-            disabled one announcing an absence. The row keeps its shape: the
-            stat pills flow left and the actions stay pinned right. */}
-        {url !== null && (
-          <button className="url-chip" onClick={copy}>
-            <Icons.Globe size={13} />
-            <span className="url-text">{url}</span>
-            <span className="url-copy">
-              <Icons.Copy size={12} />
-            </span>
-            {copied && <span className="url-copied-badge">Copied</span>}
-          </button>
-        )}
-
-        <StatPills project={project} />
-
-        {/* The same 32px control the sidebar draws, so a project's primary
-            action is the same shape and size wherever you meet it. */}
+    {/* One container for every reading, and it collapses like Environment and
+        Commands do. Open by default: unlike those two, this is consulted on
+        every visit rather than opened to change something.
+        The controls ride in the card's header, where Environment keeps Show all
+        and Commands keeps + Command — the same slot, on the same line, so the
+        pane has one row of actions rather than a second set floating above the
+        title. The header does not collapse, so Start is always reachable. */}
+    <CollapsibleCard
+      id={`runtime-${project.id}`}
+      icon={<Icons.Activity size={14} />}
+      title="Runtime"
+      defaultOpen
+      actions={
         <div className="hero-actions">
           {/* Kill sits beside start/stop here exactly as it does on the card —
               same order, same neighbours — so the control you reach for when a
@@ -249,8 +240,37 @@ export const ProjectHero = ({ project, onEdit }: { project: ProjectWithState; on
           <button className="ico-btn" title="Copy URL" onClick={copy} disabled={url === null}>
             <Icons.Copy size={14} />
           </button>
+          <span className="actions-divider" />
+          <button className="ico-btn" title="Edit project" onClick={onEdit} disabled={busy}>
+            <Icons.Edit size={15} />
+          </button>
+          <button
+            className="ico-btn"
+            title="Reveal in Finder"
+            onClick={() => void revealPath(project.root)}
+          >
+            <Icons.Folder size={15} />
+          </button>
         </div>
+      }
+    >
+      <div className="hero-facts">
+        {/* No port means nothing to visit, so the chip is absent rather than a
+            disabled one announcing an absence. */}
+        {url !== null && (
+          <button className="url-chip" onClick={copy}>
+            <Icons.Globe size={13} />
+            <span className="url-text">{url}</span>
+            <span className="url-copy">
+              <Icons.Copy size={12} />
+            </span>
+            {copied && <span className="url-copied-badge">Copied</span>}
+          </button>
+        )}
+
+        <StatPills project={project} />
       </div>
-    </div>
+    </CollapsibleCard>
+    </>
   )
 }

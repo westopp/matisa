@@ -2,11 +2,12 @@ import { useMemo, useState } from "react"
 import { Collapsible } from "@westopp/react-collapsible"
 import type { Group, ProjectId, ProjectKind, ProjectWithState, RuntimeState } from "@matisa/core"
 import { useEngine } from "~/store/store.engine"
+import { SYSTEM_IDS } from "~/store/store.systems"
 import { Icons } from "./icons"
 import { ConfirmDialog } from "./forms/confirm"
 import { GroupDialog } from "./forms/lazy"
 import { ProjectCard } from "./project.card"
-import { COLLAPSE_DURATION, formatUptime, Spinner, StatusDot, StatusFigure } from "./primitives"
+import { COLLAPSE_DURATION, formatUptime, Spinner, StatusFigure } from "./primitives"
 
 // ────────────────────────────────────────────────────────────────────────────
 // Two-level tree, as designed: kind buckets at the top, groups beneath.
@@ -21,6 +22,30 @@ const BUCKETS: ReadonlyArray<{ kind: ProjectKind; label: string }> = [
 ]
 
 const UNGROUPED = "__ungrouped__"
+
+/** A group's tally: how many are up, how many broke, out of how many there are.
+ *  The two numerators are the whole reason to read a collapsed group at all —
+ *  the total on its own never said whether anything was wrong. */
+const tallyOf = (projects: ReadonlyArray<ProjectWithState>) => ({
+  running: projects.filter((p) => p.state === "running").length,
+  failed: projects.filter((p) => p.state === "crashed" || p.state === "errored").length,
+  total: projects.length
+})
+
+const Tally = ({ projects }: { projects: ReadonlyArray<ProjectWithState> }) => {
+  const { running, failed, total } = tallyOf(projects)
+  return (
+    <span
+      className="section-count"
+      title={`${running} running · ${failed} failed · ${total} total`}
+    >
+      <span className={running > 0 ? "tally-run" : ""}>{running}</span>
+      <span className="tally-sep">•</span>
+      <span className={failed > 0 ? "tally-bad" : ""}>{failed}</span>
+      <span className="tally-of">/{total}</span>
+    </span>
+  )
+}
 
 interface Section {
   readonly key: string
@@ -156,7 +181,88 @@ const SystemButton = ({
   )
 }
 
-const SystemsGroup = ({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) => {
+/** A system's card. Same interaction contract as a project's — a click selects,
+ *  the chevron opens the detail pane, a click in the rail switches the pane —
+ *  because a system that could only be looked at was the one thing on the board
+ *  with no way in. */
+const SystemCard = ({
+  id,
+  name,
+  icon,
+  state,
+  meta,
+  active,
+  open,
+  openOnSelect,
+  onSelect,
+  onOpen,
+  onToggleOpen,
+  children
+}: {
+  id: ProjectId
+  name: string
+  icon: React.ReactNode
+  state: RuntimeState
+  meta: string
+  active: boolean
+  open: boolean
+  openOnSelect: boolean
+  onSelect: () => void
+  onOpen: () => void
+  onToggleOpen: () => void
+  /** The system's own start/stop control. */
+  children: React.ReactNode
+}) => (
+  <div className={`svc-cell ${active ? "active" : ""}`}>
+    <div className="sys-row" onClick={openOnSelect ? onOpen : onSelect} role="button" tabIndex={0}>
+      <span className="sys-icon">{icon}</span>
+      <span className="svc-body">
+        <span className="svc-name">{name}</span>
+        <span className="svc-meta">
+          {/* No failure detail: a system's reason lives in its own pane, and the
+              glyph links there rather than offering a project's drawer. */}
+          <StatusFigure state={state} size={14} />
+          <span className="svc-chip trunc">{meta}</span>
+        </span>
+      </span>
+      <span className="sys-actions" onClick={(e) => e.stopPropagation()}>
+        {children}
+      </span>
+      <button
+        className={`svc-open ${open ? "open" : ""}`}
+        title={open ? "Close the detail view" : "Open the detail view"}
+        aria-label={open ? "Close the detail view" : "Open the detail view"}
+        aria-expanded={open}
+        onClick={(e) => {
+          e.stopPropagation()
+          onToggleOpen()
+        }}
+      >
+        <Icons.ChevronRight size={15} sw={2.2} />
+      </button>
+    </div>
+  </div>
+)
+
+const SystemsGroup = ({
+  collapsed,
+  onToggle,
+  selectedId,
+  openId,
+  compact,
+  onSelect,
+  onOpen,
+  onToggleOpen
+}: {
+  collapsed: boolean
+  onToggle: () => void
+  selectedId: ProjectId | null
+  openId: ProjectId | null
+  compact: boolean
+  onSelect: (id: ProjectId) => void
+  onOpen: (id: ProjectId) => void
+  onToggleOpen: (id: ProjectId) => void
+}) => {
   const status = useEngine((s) => s.status)
   const engine = useEngine((s) => s.engine)
   const daemon = useEngine((s) => s.daemon)
@@ -190,57 +296,59 @@ const SystemsGroup = ({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
       </button>
 
       <Collapsible id="bucket-systems" open={!collapsed} transitionDuration={COLLAPSE_DURATION} initialOpen>
+        <div className="band-groups">
         <div className="sys-body">
-          <div className="sys-row">
-            <span className="sys-icon">
-              <Icons.Cpu size={14} />
-            </span>
-            <span className="svc-body">
-              <span className="svc-name">Engine</span>
-              <span className="svc-meta">
-                <StatusFigure state={engineState} size={12} />
-                {/* Uptime, not the version: the version is a constant compiled
-                    into the engine and never told anyone anything. */}
-                <span className="svc-port">{engineUp ? formatUptime(engine?.startedAt) : status}</span>
-              </span>
-            </span>
+          <SystemCard
+            id={SYSTEM_IDS.engine}
+            name="Engine"
+            icon={<Icons.Cpu size={14} />}
+            state={engineState}
+            // Uptime, not the version: the version is a constant compiled into
+            // the engine and never told anyone anything.
+            meta={engineUp ? formatUptime(engine?.startedAt) : status}
+            active={selectedId === SYSTEM_IDS.engine}
+            open={openId === SYSTEM_IDS.engine}
+            openOnSelect={compact}
+            onSelect={() => onSelect(SYSTEM_IDS.engine)}
+            onOpen={() => onOpen(SYSTEM_IDS.engine)}
+            onToggleOpen={() => onToggleOpen(SYSTEM_IDS.engine)}
+          >
             {/* Same control as a project: one slot, three states. Start is the
                 one thing a renderer genuinely cannot do — the engine is what
                 serves this page — so it is present and disabled rather than
                 absent, with the reason on it. */}
-            <span className="sys-actions">
-              <SystemButton
-                state={engineState}
-                startTitle="Start the engine from a terminal — nothing in this window can"
-                stopTitle="Shut down the engine"
-                canStart={false}
-                onStart={() => {}}
-                onStop={() => setConfirmShutdown(true)}
-              />
-            </span>
-          </div>
+            <SystemButton
+              state={engineState}
+              startTitle="Start the engine from a terminal — nothing in this window can"
+              stopTitle="Shut down the engine"
+              canStart={false}
+              onStart={() => {}}
+              onStop={() => setConfirmShutdown(true)}
+            />
+          </SystemCard>
 
-          <div className="sys-row">
-            <span className="sys-icon">
-              <Icons.Docker size={14} />
-            </span>
-            <span className="svc-body">
-              <span className="svc-name">Docker</span>
-              <span className="svc-meta">
-                <StatusFigure state={dockerState} size={12} />
-                <span className="svc-port trunc">{daemon.state}</span>
-              </span>
-            </span>
-            <span className="sys-actions">
-              <SystemButton
-                state={dockerState}
-                startTitle="Start Docker"
-                stopTitle="Stop Docker"
-                onStart={() => void startDaemon()}
-                onStop={() => void stopDaemon()}
-              />
-            </span>
-          </div>
+          <SystemCard
+            id={SYSTEM_IDS.docker}
+            name="Docker"
+            icon={<Icons.Docker size={14} />}
+            state={dockerState}
+            meta={daemon.state}
+            active={selectedId === SYSTEM_IDS.docker}
+            open={openId === SYSTEM_IDS.docker}
+            openOnSelect={compact}
+            onSelect={() => onSelect(SYSTEM_IDS.docker)}
+            onOpen={() => onOpen(SYSTEM_IDS.docker)}
+            onToggleOpen={() => onToggleOpen(SYSTEM_IDS.docker)}
+          >
+            <SystemButton
+              state={dockerState}
+              startTitle="Start Docker"
+              stopTitle="Stop Docker"
+              onStart={() => void startDaemon()}
+              onStop={() => void stopDaemon()}
+            />
+          </SystemCard>
+        </div>
         </div>
       </Collapsible>
 
@@ -264,18 +372,42 @@ const SystemsGroup = ({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
 }
 
 interface Props {
+  /** The highlighted card — where you are on the board. */
   readonly selectedId: ProjectId | null
+  /** The project whose detail view is on screen, when there is one. */
+  readonly openId: ProjectId | null
   readonly onSelect: (id: ProjectId) => void
+  /** Show this project in the detail pane. Never closes it. */
+  readonly onOpen: (id: ProjectId) => void
+  readonly onToggleOpen: (id: ProjectId) => void
   readonly theme: string
   readonly onToggleTheme: () => void
   readonly onCollapse: () => void
   readonly onAddProject: () => void
+  /** Drawn as the rail beside an open project rather than as the full board.
+   *  Purely a scale change — same bands, groups, cards and controls. */
+  readonly compact: boolean
+  /** Give the fleet the whole window back. Only reachable while compact. */
+  readonly onExpand: () => void
 }
 
-export const Sidebar = ({ selectedId, onSelect, theme, onToggleTheme, onCollapse, onAddProject }: Props) => {
+export const Sidebar = ({
+  selectedId,
+  openId,
+  onSelect,
+  onOpen,
+  onToggleOpen,
+  theme,
+  onToggleTheme,
+  onCollapse,
+  onAddProject,
+  compact,
+  onExpand
+}: Props) => {
   const projects = useEngine((s) => s.projects)
   const groups = useEngine((s) => s.groups)
   const resources = useEngine((s) => s.resources)
+  const status = useEngine((s) => s.status)
 
   const removeGroup = useEngine((s) => s.removeGroup)
 
@@ -303,6 +435,18 @@ export const Sidebar = ({ selectedId, onSelect, theme, onToggleTheme, onCollapse
   const toggleAll = (): void =>
     setCollapsed(Object.fromEntries(sectionKeys.map((k) => [k, !allCollapsed])))
 
+  /** Shut everything except one group — its own band stays open because the
+   *  group lives inside it, and every other band, including Systems, goes.
+   *  The board is the whole window now, so "just show me this one" is the
+   *  cheapest way to get a long catalog out of the way. */
+  const focusSection = (kind: string, key: string): void => {
+    setCollapsed(Object.fromEntries(sectionKeys.map((k) => [k, k !== `${kind}:${key}`])))
+    setBucketCollapsed({
+      ...Object.fromEntries(BUCKETS.map((b) => [b.kind, b.kind !== kind])),
+      systems: true
+    })
+  }
+
   const running = projects.filter((p) => p.state === "running").length
   const totalRss = Object.values(resources).reduce((a, s) => a + s.rssBytes, 0)
 
@@ -316,6 +460,13 @@ export const Sidebar = ({ selectedId, onSelect, theme, onToggleTheme, onCollapse
           <span className="ws-name">matisa</span>
         </div>
         <div className="side-top-tools">
+          {/* The way back. Without it the full board is reachable only before
+              the first project is opened. */}
+          {compact && (
+            <button className="ico-btn" title="Show all projects  esc" onClick={onExpand}>
+              <Icons.Grid size={14} />
+            </button>
+          )}
           <button className="ico-btn" title={allCollapsed ? "Expand all" : "Collapse all"} onClick={toggleAll}>
             {allCollapsed ? <Icons.ExpandAll size={14} /> : <Icons.CollapseAll size={14} />}
           </button>
@@ -328,15 +479,21 @@ export const Sidebar = ({ selectedId, onSelect, theme, onToggleTheme, onCollapse
           <button className="ico-btn" title="Add project" onClick={onAddProject}>
             <Icons.Plus size={14} />
           </button>
-          <button className="ico-btn" title="Collapse sidebar" onClick={onCollapse}>
-            <Icons.PanelLeft size={14} />
-          </button>
+          {/* Only meaningful once there is a detail pane to give the width to —
+              on the full board there is nothing to collapse into. */}
+          {compact && (
+            <button className="ico-btn" title="Hide project list" onClick={onCollapse}>
+              <Icons.PanelLeft size={14} />
+            </button>
+          )}
         </div>
-      </div>
 
-      <div className="search-wrap">
-        <Icons.Search size={13} />
-        <input placeholder="Search projects" value={query} onChange={(e) => setQuery(e.target.value)} />
+        {/* On the board this sits on the title's line; at rail width there is
+            no room for both, and it wraps to a line of its own. */}
+        <div className="search-wrap">
+          <Icons.Search size={13} />
+          <input placeholder="Search projects" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
       </div>
 
       <div className="side-list scroll">
@@ -361,6 +518,8 @@ export const Sidebar = ({ selectedId, onSelect, theme, onToggleTheme, onCollapse
               transitionDuration={COLLAPSE_DURATION}
               initialOpen
             >
+              {/* The rule that ties a band's groups back to its title. */}
+              <div className="band-groups">
               {bucket.sections.map((section) => {
                 const key = `${bucket.kind}:${section.key}`
                 const expanded = collapsed[key] !== true
@@ -379,17 +538,25 @@ export const Sidebar = ({ selectedId, onSelect, theme, onToggleTheme, onCollapse
                         {expanded ? <Icons.ChevronDown size={11} sw={2} /> : <Icons.ChevronRight size={11} sw={2} />}
                       </span>
                       <span className="section-title">{section.title}</span>
-                      <span className="section-count">{section.projects.length}</span>
-                      {!expanded && (
-                        <span className="section-dots">
-                          {section.projects.slice(0, 5).map((p) => (
-                            <StatusDot key={p.id} state={p.state} size={5} />
-                          ))}
-                          {section.projects.length > 5 && (
-                            <span className="dots-more">+{section.projects.length - 5}</span>
-                          )}
-                        </span>
-                      )}
+                      <Tally projects={section.projects} />
+                      {/* Beside the tally, on hover: collapse everything that
+                          is not this group. */}
+                      <button
+                        className="section-focus"
+                        title={`Show only ${section.title}`}
+                        aria-label={`Show only ${section.title}`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          focusSection(bucket.kind, section.key)
+                        }}
+                      >
+                        <Icons.Focus size={12} />
+                      </button>
+                      {/* No per-project dots on a collapsed group. The tally
+                          beside the title already says how many there are and
+                          how many are up; a second, coarser rendering of the
+                          same two numbers was noise at every width, and at rail
+                          width it was noise with nowhere to sit. */}
                       <span className="section-spacer" />
                       <span className="section-tools" onClick={(e) => e.stopPropagation()}>
                         {/* Rename/delete belong to a real group row. "Ungrouped"
@@ -429,7 +596,11 @@ export const Sidebar = ({ selectedId, onSelect, theme, onToggleTheme, onCollapse
                             key={p.id}
                             project={p}
                             active={selectedId === p.id}
+                            open={openId === p.id}
+                            openOnSelect={compact}
                             onSelect={() => onSelect(p.id)}
+                            onOpen={() => onOpen(p.id)}
+                            onToggleOpen={() => onToggleOpen(p.id)}
                           />
                         ))}
                       </div>
@@ -437,19 +608,45 @@ export const Sidebar = ({ selectedId, onSelect, theme, onToggleTheme, onCollapse
                   </div>
                 )
               })}
+              </div>
             </Collapsible>
           </div>
         ))}
 
+        {/* The board is the whole window when nothing is selected, so what the
+            index route used to say — no engine, no projects, nothing matching —
+            is said here, where the projects would be. */}
         {buckets.length === 0 && (
-          <div className="empty-row">{projects.length === 0 ? "No projects yet" : "No projects match"}</div>
+          <div className="board-empty">
+            {status !== "open" ? (
+              <>
+                <span className="board-empty-title">No engine</span>
+                <span className="board-empty-sub">ws://127.0.0.1:4127 — run `pnpm engine`</span>
+              </>
+            ) : projects.length === 0 ? (
+              <>
+                <span className="board-empty-title">No projects yet</span>
+                <span className="board-empty-sub">add one with the + above</span>
+              </>
+            ) : (
+              <>
+                <span className="board-empty-title">Nothing matches</span>
+                <span className="board-empty-sub">try another search</span>
+              </>
+            )}
+          </div>
         )}
 
         <SystemsGroup
           collapsed={bucketCollapsed["systems"] === true}
           onToggle={() => setBucketCollapsed((c) => ({ ...c, systems: !c["systems"] }))}
+          selectedId={selectedId}
+          openId={openId}
+          compact={compact}
+          onSelect={onSelect}
+          onOpen={onOpen}
+          onToggleOpen={onToggleOpen}
         />
-        <div style={{ height: 24 }} />
       </div>
 
       <div className="side-foot">
