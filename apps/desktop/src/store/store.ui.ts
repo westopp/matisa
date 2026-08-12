@@ -21,6 +21,12 @@ interface UiState {
   drawerTab: DrawerTab
   /** Narrow the drawer to the project in the URL. Off = the whole network. */
   drawerScoped: boolean
+  /** The Terminals card on the project route. It lives here rather than in the
+   *  card's own state because starting something has to be able to reveal it:
+   *  running a command while the terminals are collapsed would otherwise open a
+   *  pane onto nothing you can see. Shared across projects on purpose — collapse
+   *  is a preference about the page, not about one project. */
+  terminalsOpen: boolean
   toggleTheme: () => void
   toggleFleet: () => void
   collapseFleet: () => void
@@ -31,6 +37,11 @@ interface UiState {
   openDrawer: (tab: DrawerTab) => void
   setDrawerTab: (tab: DrawerTab) => void
   setDrawerScoped: (scoped: boolean) => void
+  setTerminalsOpen: (open: boolean) => void
+  /** Called by anything that starts a process — the terminal it opens must be
+   *  on screen. Never closes: a second command starting is not a reason to hide
+   *  the first one's output. */
+  revealTerminals: () => void
 }
 
 const stored = (): Theme => (localStorage.getItem("matisa.theme") === "light" ? "light" : "dark")
@@ -51,6 +62,7 @@ export const useUi = create<UiState>()((set) => ({
   drawerOpen: false,
   drawerTab: storedTab(),
   drawerScoped: true,
+  terminalsOpen: true,
   toggleTheme: () =>
     set((s) => {
       const theme: Theme = s.theme === "dark" ? "light" : "dark"
@@ -64,7 +76,9 @@ export const useUi = create<UiState>()((set) => ({
   closeDrawer: () => set({ drawerOpen: false }),
   openDrawer: (tab) => set({ drawerOpen: true, drawerTab: rememberTab(tab) }),
   setDrawerTab: (tab) => set({ drawerTab: rememberTab(tab) }),
-  setDrawerScoped: (drawerScoped) => set({ drawerScoped })
+  setDrawerScoped: (drawerScoped) => set({ drawerScoped }),
+  setTerminalsOpen: (terminalsOpen) => set({ terminalsOpen }),
+  revealTerminals: () => set({ terminalsOpen: true })
 }))
 
 document.documentElement.setAttribute("data-theme", useUi.getState().theme)

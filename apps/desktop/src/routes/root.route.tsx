@@ -59,8 +59,6 @@ const Titlebar = ({
       </div>
       <div className="title-text">
         <span className="brand">Matisa</span>
-        <span className="brand-sub">·</span>
-        <span className="title-sub">Local Services</span>
       </div>
       <div className="title-right">
         <button

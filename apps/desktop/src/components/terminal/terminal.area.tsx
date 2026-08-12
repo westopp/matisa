@@ -1,9 +1,11 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { ProjectWithState } from "@matisa/core"
 import { useEngine } from "~/store/store.engine"
 import { collectPaneIds, runPaneId, useTerminals, type LayoutNode } from "~/store/store.terminals"
+import { useUi } from "~/store/store.ui"
 import { Icons } from "../icons"
 import { CollapsibleCard } from "../panels"
+import { QuickMenu } from "../quick.commands"
 import { commandLine } from "../primitives"
 import { sweepHosts } from "./terminal.hosts"
 import { TerminalPane } from "./terminal.pane"
@@ -112,8 +114,15 @@ export const TerminalArea = ({ project, theme }: { project: ProjectWithState; th
   const panes = useTerminals((s) => s.panes)
   const fullscreen = useTerminals((s) => s.fullscreen)
   const openPane = useTerminals((s) => s.openPane)
+  // The collapse is the UI store's, not this component's — see `terminalsOpen`.
+  const terminalsOpen = useUi((s) => s.terminalsOpen)
+  const setTerminalsOpen = useUi((s) => s.setTerminalsOpen)
 
   const ensureRunSession = useEngine((s) => s.ensureRunSession)
+  const regionRef = useRef<HTMLDivElement | null>(null)
+  const [quick, setQuick] = useState<HTMLElement | null>(null)
+  /** Where the column was when a pane was zoomed, so exiting can put it back. */
+  const returnTo = useRef<number | null>(null)
 
   const shown = collectPaneIds(layout)
 
@@ -149,9 +158,29 @@ export const TerminalArea = ({ project, theme }: { project: ProjectWithState; th
   }, [layouts])
 
   const fullPane = fullscreen === null ? undefined : panes[fullscreen]
+  const zoomed = fullPane !== undefined && fullPane.projectId === project.id
+
+  // The overlay is `position: absolute; inset: 0` against the detail column,
+  // and an absolutely positioned child of a scroll container is anchored to the
+  // TOP of that container's content — it scrolls with the page rather than
+  // covering the viewport. Fullscreening from a page scrolled down to the
+  // terminals therefore opened it somewhere above the fold. Take the column to
+  // the overlay, and give the reader their place back when it closes: landing
+  // at the top of the project after exiting is the same problem in reverse.
+  useEffect(() => {
+    const scroller = regionRef.current?.closest(".main")
+    if (!(scroller instanceof HTMLElement)) return
+    const to = zoomed ? 0 : returnTo.current
+    returnTo.current = zoomed ? scroller.scrollTop : null
+    if (to === null) return
+    // Instant, not smooth: zooming a pane empties the tile it came from, so the
+    // column reflows in the same commit — a smooth scroll gets clamped by the
+    // height it is animating through and stops short of the overlay.
+    scroller.scrollTo({ top: to, behavior: "instant" })
+  }, [zoomed])
 
   return (
-    <div className="term-region">
+    <div className="term-region" ref={regionRef}>
       {/* Collapsible like Environment, Commands and Runtime — the terminals are
           the tallest thing on the page and not always what you came for.
           Collapsing HIDES them; it does not close them. The panes stay mounted
@@ -163,7 +192,31 @@ export const TerminalArea = ({ project, theme }: { project: ProjectWithState; th
         icon={<Icons.Terminal size={14} />}
         title="Terminals"
         head={<span className="term-bar-count">{shown.length} open</span>}
-        defaultOpen
+        // The same picker the Commands card and every project card carry, in the
+        // place a terminal actually comes from. Running something IS how a
+        // terminal opens (there is no "new terminal" button, and there should
+        // not be — it would be a window onto nothing), so the control that runs
+        // things belongs on the card that shows them.
+        actions={
+          <>
+            <button
+              className="card-quick"
+              title="Start or stop a command"
+              onClick={(e) => {
+                const el = e.currentTarget
+                setQuick((open) => (open === null ? el : null))
+              }}
+            >
+              <Icons.Play size={10} />
+              <Icons.ChevronDown size={10} sw={2.4} />
+            </button>
+            {quick !== null && (
+              <QuickMenu project={project} trigger={quick} onClose={() => setQuick(null)} />
+            )}
+          </>
+        }
+        open={terminalsOpen}
+        onOpenChange={setTerminalsOpen}
       >
         {layout === null ? (
           <div className="term-empty">No terminals open</div>
@@ -174,7 +227,7 @@ export const TerminalArea = ({ project, theme }: { project: ProjectWithState; th
         )}
       </CollapsibleCard>
 
-      {fullPane !== undefined && fullPane.projectId === project.id && (
+      {zoomed && fullPane !== undefined && (
         <div className="term-fullscreen">
           <TerminalPane pane={fullPane} project={project} theme={theme} fullscreen canClose={false} />
         </div>

@@ -113,26 +113,46 @@ export const Icons = {
     <Icon {...p} d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Zm9 4v6m-3-3h6" />
   ),
   Power: (p: IconProps) => <Icon {...p} d="M12 3v9M6.6 6.6a7.5 7.5 0 1 0 10.8 0" />,
-  /** Force-kill. Lucide's `skull`, in two weights off one outline.
+  /** Force-kill. Skull AND crossbones — the mark, not just the head: a bare
+   *  skull is an anatomy glyph, and the crossed bones under it are what make it
+   *  read as a warning at a glance.
+   *
+   *  The skull is the same silhouette as before at 78%, moved up to make room,
+   *  so the two parts stack inside the 24 grid rather than fighting for it. The
+   *  bones are round-capped strokes with no knobs: at the 12–15px these draw at,
+   *  a knob is under a pixel across and turns to mush — the cap already gives
+   *  the end its weight.
    *
    *  `filled` is the live state: the same silhouette flooded with colour, with
    *  the sockets and nose punched back out by `evenodd` rather than painted in
    *  a background colour — a knockout stays a hole on any surface the button
    *  sits on. The sockets are a hair wider than the stroke version's because a
    *  2px hole in a solid shape closes up at this size, while the same circle
-   *  drawn as a ring does not. */
-  Skull: ({ filled = false, ...p }: IconProps & { readonly filled?: boolean }) =>
-    filled ? (
+   *  drawn as a ring does not. The bones carry their own stroke either way,
+   *  since the filled variant zeroes the shared one. */
+  Skull: ({ filled = false, ...p }: IconProps & { readonly filled?: boolean }) => {
+    const bones = (
+      <path
+        d="M3.6 17.8 20.4 22.2M3.6 22.2 20.4 17.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={filled ? 3 : 2.2}
+      />
+    )
+    return filled ? (
       <Icon
         {...p}
         fill="currentColor"
         sw={0}
         d={
-          <path
-            fillRule="evenodd"
-            clipRule="evenodd"
-            d="M15 22a1 1 0 0 0 1-1v-1a2 2 0 0 0 1.56-3.25 8 8 0 1 0-11.12 0A2 2 0 0 0 8 20v1a1 1 0 0 0 1 1zM12.5 17l-.5-1-.5 1h1zM16.35 12a1.35 1.35 0 1 1-2.7 0 1.35 1.35 0 0 1 2.7 0zM10.35 12a1.35 1.35 0 1 1-2.7 0 1.35 1.35 0 0 1 2.7 0z"
-          />
+          <>
+            <path
+              fillRule="evenodd"
+              clipRule="evenodd"
+              d="M14.34 17.2a.78.78 0 0 0 .78-.78v-.78a1.56 1.56 0 0 0 1.22-2.53 6.24 6.24 0 1 0-8.68 0 1.56 1.56 0 0 0 1.22 2.53v.78a.78.78 0 0 0 .78.78zM12.39 13.3l-.39-.78-.39.78h.78zM15.39 9.4a1.05 1.05 0 1 1-2.1 0 1.05 1.05 0 0 1 2.1 0zM10.71 9.4a1.05 1.05 0 1 1-2.1 0 1.05 1.05 0 0 1 2.1 0z"
+            />
+            {bones}
+          </>
         }
       />
     ) : (
@@ -140,14 +160,16 @@ export const Icons = {
         {...p}
         d={
           <>
-            <path d="m12.5 17-.5-1-.5 1h1z" />
-            <path d="M15 22a1 1 0 0 0 1-1v-1a2 2 0 0 0 1.56-3.25 8 8 0 1 0-11.12 0A2 2 0 0 0 8 20v1a1 1 0 0 0 1 1z" />
-            <circle cx="15" cy="12" r="1" />
-            <circle cx="9" cy="12" r="1" />
+            <path d="m12.39 13.3-.39-.78-.39.78h.78z" />
+            <path d="M14.34 17.2a.78.78 0 0 0 .78-.78v-.78a1.56 1.56 0 0 0 1.22-2.53 6.24 6.24 0 1 0-8.68 0 1.56 1.56 0 0 0 1.22 2.53v.78a.78.78 0 0 0 .78.78z" />
+            <circle cx="14.34" cy="9.4" r=".85" />
+            <circle cx="9.66" cy="9.4" r=".85" />
+            {bones}
           </>
         }
       />
-    ),
+    )
+  },
   Logs: (p: IconProps) => <Icon {...p} d="M4 6h16M4 10h10M4 14h16M4 18h7" />,
   /** Back to the full board — four tiles, which is what the board looks like. */
   Grid: (p: IconProps) => (
@@ -165,11 +187,6 @@ export const Icons = {
   More: (p: IconProps) => <Icon {...p} d="M5 12h.01M12 12h.01M19 12h.01" sw={2.4} />,
   Refresh: (p: IconProps) => <Icon {...p} d="M21 12a9 9 0 1 1-2.7-6.4M21 4v5h-5" />,
   CollapseAll: (p: IconProps) => <Icon {...p} d="M8 4l4 4 4-4M8 20l4-4 4 4M4 12h16" />,
-  /** Show only this one — brackets closing in on a single subject. Distinct
-   *  from CollapseAll, which shuts everything including what you are looking at. */
-  Focus: (p: IconProps) => (
-    <Icon {...p} d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8m8 0h2.5A1.5 1.5 0 0 1 20 5.5V8m0 8v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16m10.5-4a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0Z" />
-  ),
   ExpandAll: (p: IconProps) => <Icon {...p} d="M8 9l4-4 4 4M8 15l4 4 4-4M4 12h16" />,
   Maximize: (p: IconProps) => <Icon {...p} d="M4 9V5a1 1 0 0 1 1-1h4M20 15v4a1 1 0 0 1-1 1h-4M15 4h4a1 1 0 0 1 1 1v4M9 20H5a1 1 0 0 1-1-1v-4" />,
   Minimize: (p: IconProps) => <Icon {...p} d="M9 4v4a1 1 0 0 1-1 1H4m16 0h-4a1 1 0 0 1-1-1V4M4 15h4a1 1 0 0 1 1 1v4m6 0v-4a1 1 0 0 1 1-1h4" />,

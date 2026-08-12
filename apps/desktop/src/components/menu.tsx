@@ -34,8 +34,8 @@ export interface MenuItem {
    *  labels sideways. */
   readonly selected?: boolean
   /** Status light in the same leading column as the check: green up, amber
-   *  mid-transition, red down. */
-  readonly dot?: "success" | "warning" | "danger" | "muted"
+   *  mid-transition, blue at rest, red only when something actually broke. */
+  readonly dot?: "success" | "warning" | "idle" | "danger" | "muted"
   /** A second, independent control at the end of the row. It is NOT the row's
    *  action — clicking it never triggers `onSelect`. */
   readonly action?: {

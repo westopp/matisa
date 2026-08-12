@@ -3,6 +3,7 @@ import { Collapsible } from "@westopp/react-collapsible"
 import {
   BASE_CONTEXT_ID,
   ContextId,
+  type CommandVar,
   type EnvContext,
   type EnvVar,
   type NamedCommand,
@@ -27,6 +28,14 @@ import { ConfirmDialog } from "./forms/confirm"
 const maskIfSecret = (value: string, secret: boolean): string =>
   secret ? "•".repeat(Math.min(12, Math.max(4, value.length))) : value
 
+/** A command's own overrides, as the tooltip behind its "n vars" tag. Nothing is
+ *  masked: a command variable has no secret flag — the dialog that writes them
+ *  offers none — so masking here would imply a protection that does not exist. */
+const varsTooltip = (vars: ReadonlyArray<CommandVar>): string =>
+  // Blank line under the heading: without it the first variable reads as a
+  // continuation of the sentence rather than the start of the list.
+  ["Command environment — applied on every run", "", ...vars.map((v) => `${v.key}=${v.value}`)].join("\n")
+
 
 /** Card shell: a header that toggles, and a body that animates open/closed.
  *  The toggle is the TITLE, not the whole header — the header also carries pills
@@ -38,6 +47,8 @@ export const CollapsibleCard = ({
   head,
   actions,
   defaultOpen = false,
+  open: controlled,
+  onOpenChange,
   children
 }: {
   id: string
@@ -48,19 +59,25 @@ export const CollapsibleCard = ({
   /** Closed by default. These cards are reference material — you open them to
    *  change something — and the terminals below are what the page is for. */
   defaultOpen?: boolean
+  /** Hand the collapse to the caller. Only the Terminals card needs this: its
+   *  state has to be reachable from wherever a process is started, and a card
+   *  that owns its own boolean cannot be opened by anything but its header. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   children: ReactNode
 }) => {
-  const [open, setOpen] = useState(defaultOpen)
+  const [uncontrolled, setUncontrolled] = useState(defaultOpen)
+  const open = controlled ?? uncontrolled
+
+  const toggle = (): void => {
+    if (onOpenChange === undefined) setUncontrolled(!open)
+    else onOpenChange(!open)
+  }
 
   return (
     <section className={`card ${open ? "open" : "closed"}`}>
       <header className="card-head">
-        <button
-          className="card-toggle"
-          onClick={() => setOpen((o) => !o)}
-          aria-expanded={open}
-          aria-controls={id}
-        >
+        <button className="card-toggle" onClick={toggle} aria-expanded={open} aria-controls={id}>
           <span className="card-caret">
             {open ? <Icons.ChevronDown size={12} sw={2} /> : <Icons.ChevronRight size={12} sw={2} />}
           </span>
@@ -707,7 +724,19 @@ export const CommandsCard = ({ project }: { project: ProjectWithState }) => {
                 <td className="mono trunc" title={c.command}>
                   {c.command}
                 </td>
-                <td>{c.vars.length > 0 && <span className="tag">{c.vars.length} vars</span>}</td>
+                {/* Only the vars the command carries of its own — the project's
+                    base and active environment are underneath every row and
+                    saying so on each one would be noise. The count is the
+                    headline; what they actually are is a hover away, because
+                    "which override is this run getting" is the question the
+                    count raises and cannot answer. */}
+                <td>
+                  {c.vars.length > 0 && (
+                    <span className="tag" title={varsTooltip(c.vars)}>
+                      {c.vars.length === 1 ? "1 var" : `${c.vars.length} vars`}
+                    </span>
+                  )}
+                </td>
                 <td>
                   <span className="row-actions">
                     <button className="ico" title="Edit" onClick={() => setEditing(c)} disabled={busy}>

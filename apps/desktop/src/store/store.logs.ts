@@ -10,6 +10,10 @@ import type { ProjectId } from "@matisa/core"
 // ────────────────────────────────────────────────────────────────────────────
 
 export interface LogEntry {
+  /** Monotonic across the session — the render key. Keying on the array index
+   *  remounted every visible line whenever the ring rolled, because content
+   *  shifts under stable indices. */
+  readonly id: number
   readonly ts: number
   readonly stream: "stdout" | "stderr"
   readonly line: string
@@ -17,7 +21,18 @@ export interface LogEntry {
   readonly service?: string
 }
 
+/** What callers hand to `append` — identity and normalisation happen here. */
+export type LogInput = Omit<LogEntry, "id">
+
 const MAX_LINES = 2_000
+
+let nextId = 1
+
+/** Colour belongs to the pane theme, not the container. Stripped ONCE here at
+ *  append rather than per render — the old per-render strip re-ran this regex
+ *  over the whole visible window on every flush. */
+// eslint-disable-next-line no-control-regex
+const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g
 
 // Appends are BATCHED: lines land in a plain module-level buffer and the store
 // publishes once per flush interval, so a container logging hundreds of lines a
@@ -45,14 +60,15 @@ const flush = (): void => {
 
 interface LogsState {
   logs: Record<string, ReadonlyArray<LogEntry>>
-  append: (projectId: ProjectId, entry: LogEntry) => void
+  append: (projectId: ProjectId, entry: LogInput) => void
   clear: (projectId: ProjectId) => void
 }
 
 export const useLogs = create<LogsState>()((set) => ({
   logs: {},
 
-  append: (projectId, entry) => {
+  append: (projectId, input) => {
+    const entry: LogEntry = { ...input, id: nextId++, line: input.line.replace(ANSI, "") }
     const bucket = pending.get(projectId)
     if (bucket === undefined) pending.set(projectId, [entry])
     else bucket.push(entry)

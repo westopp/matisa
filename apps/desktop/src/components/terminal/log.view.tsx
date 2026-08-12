@@ -19,11 +19,6 @@ const NONE: ReadonlyArray<LogEntry> = []
 /** How many lines the DOM holds; the buffer keeps MAX_LINES regardless. */
 const WINDOW = 300
 
-/** Colour belongs to the pane theme, not the container. */
-// eslint-disable-next-line no-control-regex
-const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g
-const plain = (line: string): string => line.replace(ANSI, "")
-
 export const LogView = ({ project }: { project: ProjectWithState }) => {
   const entries = useLogs((s) => s.logs[project.id]) ?? NONE
   const clear = useLogs((s) => s.clear)
@@ -116,12 +111,15 @@ export const LogView = ({ project }: { project: ProjectWithState }) => {
             {hidden > 0 && (
               <div className="log-more">… {hidden} earlier lines buffered</div>
             )}
-            {visible.map((e, i) => (
-              <div key={i} className={`log-line ${e.stream}`}>
+            {/* Keyed on the entry's own id: under key={i} every visible line
+                remounted per append once the buffer rolled, since content
+                shifts beneath stable indices. ANSI is stripped at append. */}
+            {visible.map((e) => (
+              <div key={e.id} className={`log-line ${e.stream}`}>
                 {filter === null && e.service !== undefined && (
                   <span className="log-service">{e.service}</span>
                 )}
-                <span className="log-text">{plain(e.line)}</span>
+                <span className="log-text">{e.line}</span>
               </div>
             ))}
           </>

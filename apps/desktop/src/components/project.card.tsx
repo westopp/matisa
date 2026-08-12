@@ -330,6 +330,15 @@ export const ProjectCard = ({
     <div
       className={`svc-row st-${project.state} ${active ? "active" : ""} ${busy ? "busy" : ""}`}
       onClick={openOnSelect ? onOpen : onSelect}
+      // The chevron is still the deliberate way in, but a double click is what
+      // a list of things has always meant by "open this one" — and on the board,
+      // where a single click only selects, it saves crossing the card to reach
+      // the chevron. Never from a control inside the card: the buttons stop
+      // clicks from selecting the row, and a fast second press on kill or start
+      // must not be read as "open" either.
+      onDoubleClick={(e) => {
+        if (!(e.target as HTMLElement).closest("button")) onOpen()
+      }}
       role="button"
       tabIndex={0}
     >

@@ -388,6 +388,10 @@ export const useEngine = create<EngineState>()((set, get) => ({
 
   refreshResources: async () => {
     const snapshot = await rpc.call("resources.snapshot", undefined)
+    // Idle steady-state — nothing running before, nothing running now. Minting
+    // a fresh map identity here re-rendered every subscriber of `resources`
+    // 20×/min forever, for an app doing nothing.
+    if (snapshot.samples.length === 0 && Object.keys(get().resources).length === 0) return
     const next: Record<string, ResourceSample> = {}
     for (const sample of snapshot.samples) next[sample.projectId] = sample
     set({ resources: next })

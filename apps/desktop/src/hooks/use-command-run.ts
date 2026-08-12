@@ -3,6 +3,7 @@ import type { ProjectId, RuntimeState } from "@matisa/core"
 import { closeSession, expectSelfBridged, sendInput, SIGINT_SEQUENCE } from "~/rpc/rpc.pty"
 import { useEngine } from "~/store/store.engine"
 import { commandPaneId, useTerminals } from "~/store/store.terminals"
+import { useUi } from "~/store/store.ui"
 
 // ────────────────────────────────────────────────────────────────────────────
 // Running a named command, in one place. Two surfaces reach for it — the
@@ -41,6 +42,7 @@ export const useCommandRunner = (projectId: ProjectId): CommandRunner => {
   const bindSession = useTerminals((s) => s.bindSession)
   const panes = useTerminals((s) => s.panes)
   const markExited = useTerminals((s) => s.markExited)
+  const revealTerminals = useUi((s) => s.revealTerminals)
   const [starting, setStarting] = useState<ReadonlyArray<string>>([])
 
   const statusOf = useCallback(
@@ -69,6 +71,10 @@ export const useCommandRunner = (projectId: ProjectId): CommandRunner => {
 
   const run = useCallback(
     async (name: string, command: string): Promise<void> => {
+      // Before the round-trip, not after: the point is that the pane is already
+      // on screen when its first output lands. Every surface that starts a
+      // command goes through here, so none of them can forget to do it.
+      revealTerminals()
       setStarting((s) => (s.includes(name) ? s : [...s, name]))
       try {
         // Geometry is provisional — the pane re-negotiates it via pty.resize as
@@ -95,7 +101,7 @@ export const useCommandRunner = (projectId: ProjectId): CommandRunner => {
         setStarting((s) => s.filter((n) => n !== name))
       }
     },
-    [bindSession, openPane, projectId, runCommand]
+    [bindSession, openPane, projectId, revealTerminals, runCommand]
   )
 
   const stop = useCallback(

@@ -18,17 +18,23 @@ export const Spinner = ({ size = 14 }: { size?: number }) => (
 )
 
 /** The one place a runtime state becomes a colour — shared by the dot and the
- *  running-man glyph so both read the same at a glance. */
+ *  running-man glyph so both read the same at a glance.
+ *
+ *  Red is reserved for failure. A stopped project has not gone wrong — it is
+ *  simply not up — so `idle` takes the trim colour, which leaves coral meaning
+ *  exactly one thing wherever it appears. */
 export const stateColor = (state: RuntimeState): string =>
   state === "running"
     ? "var(--success)"
-    : state === "crashed" || state === "errored" || state === "idle"
+    : state === "crashed" || state === "errored"
       ? "var(--danger)"
-      : state === "starting" || state === "stopping"
-        ? "var(--warning)"
-        : state === "unmanaged"
-          ? "var(--text-dim)"
-          : "var(--text-faint)"
+      : state === "idle"
+        ? "var(--accent)"
+        : state === "starting" || state === "stopping"
+          ? "var(--warning)"
+          : state === "unmanaged"
+            ? "var(--text-dim)"
+            : "var(--text-faint)"
 
 export const StatusDot = ({ state, size = 8 }: { state: RuntimeState; size?: number }) => {
   const transient = state === "starting" || state === "stopping"

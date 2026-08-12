@@ -48,8 +48,10 @@ export const createTerminal = (host: HTMLElement): XtermHandle => {
     convertEol: false,
     cursorBlink: true,
     fontFamily: token("--font-mono") || "monospace",
-    fontSize: 12,
-    lineHeight: 1.25,
+    // Log lines get the loosest leading in the app: they are read as a wall of
+    // wrapped output, not as rows, and 1.25 packed them into a block.
+    fontSize: 11.5,
+    lineHeight: 1.8,
     scrollback: 10_000,
     theme: terminalTheme()
   })

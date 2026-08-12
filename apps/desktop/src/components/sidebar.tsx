@@ -24,9 +24,10 @@ const BUCKETS: ReadonlyArray<{ kind: ProjectKind; label: string }> = [
 
 const UNGROUPED = "__ungrouped__"
 
-/** A group's tally: how many are up, how many broke, out of how many there are.
- *  The two numerators are the whole reason to read a collapsed group at all —
- *  the total on its own never said whether anything was wrong. */
+/** A group's tally: how many are up, out of how many there are — plus how many
+ *  broke, and ONLY when something did. A permanent `• 0` is a slot reserved for
+ *  bad news that spends its whole life reporting none, and it made every healthy
+ *  group carry a second number to read past. Its arrival is the signal. */
 const tallyOf = (projects: ReadonlyArray<ProjectWithState>) => ({
   running: projects.filter((p) => p.state === "running").length,
   failed: projects.filter((p) => p.state === "crashed" || p.state === "errored").length,
@@ -41,12 +42,71 @@ const Tally = ({ projects }: { projects: ReadonlyArray<ProjectWithState> }) => {
       title={`${running} running · ${failed} failed · ${total} total`}
     >
       <span className={running > 0 ? "tally-run" : ""}>{running}</span>
-      <span className="tally-sep">•</span>
-      <span className={failed > 0 ? "tally-bad" : ""}>{failed}</span>
+      {failed > 0 && (
+        <>
+          <span className="tally-sep">•</span>
+          <span className="tally-bad">{failed}</span>
+        </>
+      )}
       <span className="tally-of">/{total}</span>
     </span>
   )
 }
+
+/** A band's title row: the band's own collapse (the whole row), and beside it
+ *  the control that folds what is INSIDE it. The two are deliberately different
+ *  operations — folding the groups leaves the band's structure on screen, which
+ *  is what you want when you are looking for a group rather than hiding a whole
+ *  kind of thing.
+ *
+ *  A div, not a button: it contains a button, and a button cannot. */
+const BandHead = ({
+  collapsed,
+  title,
+  count,
+  onToggle,
+  fold,
+  holdsSelection = false
+}: {
+  collapsed: boolean
+  title: string
+  count: number
+  onToggle: () => void
+  /** Absent for a band with nothing nested to fold. */
+  fold?: { readonly folded: boolean; readonly label: string; readonly onToggle: () => void }
+  /** The selected project is inside, and shut in — see `selectionAt`. */
+  holdsSelection?: boolean
+}) => (
+  <div
+    className={`parent-head ${holdsSelection ? "holds-selection" : ""}`}
+    role="button"
+    tabIndex={0}
+    onClick={onToggle}
+    onKeyDown={(e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault()
+        onToggle()
+      }
+    }}
+  >
+    {collapsed ? <Icons.ChevronRight size={11} sw={2} /> : <Icons.ChevronDown size={11} sw={2} />}
+    <span>{title}</span>
+    <span className="parent-count">{count}</span>
+    {fold !== undefined && (
+      <button
+        className="parent-fold"
+        title={fold.label}
+        aria-label={fold.label}
+        onClick={(e) => {
+          e.stopPropagation()
+          fold.onToggle()
+        }}
+      >
+        {fold.folded ? <Icons.ExpandAll size={13} /> : <Icons.CollapseAll size={13} />}
+      </button>
+    )}
+  </div>
+)
 
 interface Section {
   readonly key: string
@@ -215,7 +275,18 @@ const SystemCard = ({
   children: React.ReactNode
 }) => (
   <div className={`svc-cell ${active ? "active" : ""}`} style={{ viewTransitionName: cardName(id) }}>
-    <div className="sys-row" onClick={openOnSelect ? onOpen : onSelect} role="button" tabIndex={0}>
+    {/* Double click opens, exactly as it does on a project card — a system row
+        is the same card with a different subject, and the gesture that opens one
+        must open the other. */}
+    <div
+      className="sys-row"
+      onClick={openOnSelect ? onOpen : onSelect}
+      onDoubleClick={(e) => {
+        if (!(e.target as HTMLElement).closest("button")) onOpen()
+      }}
+      role="button"
+      tabIndex={0}
+    >
       <span className="sys-icon">{icon}</span>
       <span className="svc-body">
         <span className="svc-name">{name}</span>
@@ -247,6 +318,7 @@ const SystemCard = ({
 
 const SystemsGroup = ({
   collapsed,
+  holdsSelection,
   onToggle,
   selectedId,
   openId,
@@ -256,6 +328,7 @@ const SystemsGroup = ({
   onToggleOpen
 }: {
   collapsed: boolean
+  holdsSelection: boolean
   onToggle: () => void
   selectedId: ProjectId | null
   openId: ProjectId | null
@@ -290,11 +363,15 @@ const SystemsGroup = ({
 
   return (
     <div className="parent-group">
-      <button className="parent-head" onClick={onToggle}>
-        {collapsed ? <Icons.ChevronRight size={11} sw={2} /> : <Icons.ChevronDown size={11} sw={2} />}
-        <span>Systems</span>
-        <span className="parent-count">{(engineUp ? 1 : 0) + (dockerUp ? 1 : 0)}</span>
-      </button>
+      {/* No fold control: Systems has no group layer under it — its cards ARE
+          its children — so the button could only repeat what the head does. */}
+      <BandHead
+        collapsed={collapsed}
+        title="Systems"
+        count={(engineUp ? 1 : 0) + (dockerUp ? 1 : 0)}
+        onToggle={onToggle}
+        holdsSelection={holdsSelection}
+      />
 
       <Collapsible id="bucket-systems" open={!collapsed} transitionDuration={COLLAPSE_DURATION} initialOpen>
         <div className="band-groups">
@@ -407,7 +484,10 @@ export const Sidebar = ({
 }: Props) => {
   const projects = useEngine((s) => s.projects)
   const groups = useEngine((s) => s.groups)
-  const resources = useEngine((s) => s.resources)
+  // The scalar, not the map: zustand skips notification when the selected value
+  // is Object.is-equal, so the 3s resource poll only re-renders this tree when
+  // the total actually moves — a fresh map identity alone no longer does.
+  const totalRss = useEngine((s) => Object.values(s.resources).reduce((a, r) => a + r.rssBytes, 0))
   const status = useEngine((s) => s.status)
 
   const removeGroup = useEngine((s) => s.removeGroup)
@@ -432,24 +512,66 @@ export const Sidebar = ({
   })).filter((b) => b.sections.length > 0)
 
   const sectionKeys = buckets.flatMap((b) => b.sections.map((s) => `${b.kind}:${s.key}`))
-  const allCollapsed = sectionKeys.length > 0 && sectionKeys.every((k) => collapsed[k] === true)
-  const toggleAll = (): void =>
-    setCollapsed(Object.fromEntries(sectionKeys.map((k) => [k, !allCollapsed])))
-
-  /** Shut everything except one group — its own band stays open because the
-   *  group lives inside it, and every other band, including Systems, goes.
-   *  The board is the whole window now, so "just show me this one" is the
-   *  cheapest way to get a long catalog out of the way. */
-  const focusSection = (kind: string, key: string): void => {
-    setCollapsed(Object.fromEntries(sectionKeys.map((k) => [k, k !== `${kind}:${key}`])))
-    setBucketCollapsed({
-      ...Object.fromEntries(BUCKETS.map((b) => [b.kind, b.kind !== kind])),
-      systems: true
-    })
+  // Systems counts as one of the things "all" means. It is a band in the same
+  // tree, and leaving it standing while every group folded made the control look
+  // like it had missed something.
+  const allCollapsed =
+    sectionKeys.every((k) => collapsed[k] === true) && bucketCollapsed["systems"] === true
+  const toggleAll = (): void => {
+    const next = !allCollapsed
+    setCollapsed(Object.fromEntries(sectionKeys.map((k) => [k, next])))
+    setBucketCollapsed((c) => ({ ...c, systems: next }))
   }
 
+  /** The keys of one band's groups. Derived from `buckets`, so a band whose
+   *  groups are filtered out by the search folds only what is on screen. */
+  const keysIn = (kind: string): ReadonlyArray<string> =>
+    buckets.find((b) => b.kind === kind)?.sections.map((s) => `${kind}:${s.key}`) ?? []
+
+  /** Nothing of this band's contents is on screen — either every group in it is
+   *  shut, or the band itself is. Both are the state "expand" undoes. */
+  const bandFolded = (kind: string): boolean => {
+    const keys = keysIn(kind)
+    return bucketCollapsed[kind] === true || (keys.length > 0 && keys.every((k) => collapsed[k] === true))
+  }
+
+  /** Collapse folds the groups and leaves the band standing — the band's own
+   *  head is how you shut that. Expand is not its mirror: it opens the band too,
+   *  because "expand all" from a shut band that only reopened invisible groups
+   *  would look like it had done nothing. */
+  const foldBand = (kind: string): void => {
+    const next = !bandFolded(kind)
+    setCollapsed((c) => ({ ...c, ...Object.fromEntries(keysIn(kind).map((k) => [k, next])) }))
+    if (!next) setBucketCollapsed((c) => ({ ...c, [kind]: false }))
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Where the selection shows.
+  //
+  // The selected project must be findable at every collapse state, and a card
+  // that is shut inside a group cannot say so itself. So the mark moves OUTWARD
+  // to whatever the outermost closed thing is: the band if the band is shut, its
+  // group if only the group is, and the card itself when nothing hides it. One
+  // mark, always exactly one, at the level you can actually see.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /** Which row carries the selection mark, or `null` when the card shows it. */
+  const selectionAt = ((): { readonly kind: string; readonly key?: string } | null => {
+    if (selectedId === null) return null
+    if (SYSTEM_IDS.engine === selectedId || SYSTEM_IDS.docker === selectedId) {
+      return bucketCollapsed["systems"] === true ? { kind: "systems" } : null
+    }
+    for (const b of buckets) {
+      for (const s of b.sections) {
+        if (!s.projects.some((p) => p.id === selectedId)) continue
+        if (bucketCollapsed[b.kind] === true) return { kind: b.kind }
+        return collapsed[`${b.kind}:${s.key}`] === true ? { kind: b.kind, key: s.key } : null
+      }
+    }
+    return null
+  })()
+
   const running = projects.filter((p) => p.state === "running").length
-  const totalRss = Object.values(resources).reduce((a, s) => a + s.rssBytes, 0)
 
   return (
     <aside className="sidebar">
@@ -500,18 +622,20 @@ export const Sidebar = ({
       <div className="side-list scroll">
         {buckets.map((bucket) => (
           <div key={bucket.kind} className="parent-group">
-            <button
-              className="parent-head"
-              onClick={() => setBucketCollapsed((c) => ({ ...c, [bucket.kind]: !c[bucket.kind] }))}
-            >
-              {bucketCollapsed[bucket.kind] === true ? (
-                <Icons.ChevronRight size={11} sw={2} />
-              ) : (
-                <Icons.ChevronDown size={11} sw={2} />
-              )}
-              <span>{bucket.label}</span>
-              <span className="parent-count">{bucket.sections.reduce((a, s) => a + s.projects.length, 0)}</span>
-            </button>
+            <BandHead
+              collapsed={bucketCollapsed[bucket.kind] === true}
+              title={bucket.label}
+              count={bucket.sections.reduce((a, s) => a + s.projects.length, 0)}
+              onToggle={() => setBucketCollapsed((c) => ({ ...c, [bucket.kind]: !c[bucket.kind] }))}
+              holdsSelection={selectionAt?.kind === bucket.kind && selectionAt.key === undefined}
+              fold={{
+                folded: bandFolded(bucket.kind),
+                label: bandFolded(bucket.kind)
+                  ? `Expand every group in ${bucket.label}`
+                  : `Collapse every group in ${bucket.label}`,
+                onToggle: () => foldBand(bucket.kind)
+              }}
+            />
 
             <Collapsible
               id={`bucket-${bucket.kind}`}
@@ -530,7 +654,11 @@ export const Sidebar = ({
                   // projects belong to which group is never in question.
                   <div key={key} className={`section ${expanded ? "open" : ""}`}>
                     <div
-                      className="section-head"
+                      className={`section-head ${
+                        selectionAt?.kind === bucket.kind && selectionAt.key === section.key
+                          ? "holds-selection"
+                          : ""
+                      }`}
                       onClick={() => setCollapsed((c) => ({ ...c, [key]: !c[key] }))}
                       role="button"
                       tabIndex={0}
@@ -540,19 +668,10 @@ export const Sidebar = ({
                       </span>
                       <span className="section-title">{section.title}</span>
                       <Tally projects={section.projects} />
-                      {/* Beside the tally, on hover: collapse everything that
-                          is not this group. */}
-                      <button
-                        className="section-focus"
-                        title={`Show only ${section.title}`}
-                        aria-label={`Show only ${section.title}`}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          focusSection(bucket.kind, section.key)
-                        }}
-                      >
-                        <Icons.Focus size={12} />
-                      </button>
+                      {/* No collapse control here: the group's own head IS its
+                          toggle, and the band above folds every group at once.
+                          A third button saying a version of the same thing was
+                          the one the eye had to stop and read. */}
                       {/* No per-project dots on a collapsed group. The tally
                           beside the title already says how many there are and
                           how many are up; a second, coarser rendering of the
@@ -640,6 +759,7 @@ export const Sidebar = ({
 
         <SystemsGroup
           collapsed={bucketCollapsed["systems"] === true}
+          holdsSelection={selectionAt?.kind === "systems"}
           onToggle={() => setBucketCollapsed((c) => ({ ...c, systems: !c["systems"] }))}
           selectedId={selectedId}
           openId={openId}

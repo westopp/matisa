@@ -47,7 +47,7 @@ export const QuickMenu = ({
   const items: ReadonlyArray<MenuItem> = [
     {
       key: "__project__",
-      dot: projectUp ? "success" : projectMoving || busy ? "warning" : "danger",
+      dot: projectUp ? "success" : projectMoving || busy ? "warning" : "idle",
       verb: projectUp ? "stop" : "start",
       label: project.name,
       // Only a transition earns words. "running" and "stopped" are already what
@@ -71,7 +71,7 @@ export const QuickMenu = ({
       const up = status === "running"
       return {
         key: c.name,
-        dot: up ? "success" : status === "starting" ? "warning" : "danger",
+        dot: up ? "success" : status === "starting" ? "warning" : "idle",
         verb: up ? "stop" : "start",
         label: c.name,
         ...(status === "starting" ? { note: "starting" } : {}),

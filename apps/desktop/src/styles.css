@@ -9,35 +9,31 @@
    reading. The variable axis covers 100–900 in one file per family.
    ══════════════════════════════════════════════════════════════════════════ */
 
-@font-face {
-  font-family: "Inter Variable";
-  font-style: normal;
-  font-weight: 100 900;
-  font-display: optional;
-  src: url("@fontsource-variable/inter/files/inter-latin-wght-normal.woff2") format("woff2-variations");
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
-    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
+/* Two families, and the split between them is semantic rather than decorative:
+   Manrope sets everything a PERSON wrote — names, titles, labels, buttons,
+   failure messages — and JetBrains Mono sets everything a MACHINE reported:
+   ports, pids, cpu/mem, paths, env values, timestamps, exit codes, log lines.
+   Reading a value in mono is how you know the engine said it.
 
-/* The display face — the one thing set in something other than the UI sans.
-   Brand, band titles, tile names, the hero name and every card title: the
-   design's voice lives in Montserrat at 800 with the tracking pulled in. */
+   There is no third, heavier display face any more. On a dark UI the weights
+   stay light — 600 is the top of the range and it is used for headings only. */
 @font-face {
-  font-family: "Montserrat Variable";
+  font-family: "Manrope Variable";
   font-style: normal;
-  font-weight: 100 900;
+  font-weight: 200 800;
   font-display: optional;
-  src: url("@fontsource-variable/montserrat/files/montserrat-latin-wght-normal.woff2") format("woff2-variations");
+  src: url("@fontsource-variable/manrope/files/manrope-latin-wght-normal.woff2") format("woff2-variations");
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
     U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
 @font-face {
-  font-family: "Geist Mono Variable";
+  font-family: "JetBrains Mono Variable";
   font-style: normal;
-  font-weight: 100 900;
+  font-weight: 100 800;
   font-display: optional;
-  src: url("@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2") format("woff2-variations");
+  src: url("@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2")
+    format("woff2-variations");
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
     U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
@@ -49,64 +45,104 @@
    ══════════════════════════════════════════════════════════════════════════ */
 
 :root {
-  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
-  /* The display face is only ever used through `.display` (or a rule that opts
-     in), never as a body font — it is a voice, not a text face. */
-  --font-display: "Montserrat Variable", "Inter Variable", sans-serif;
+  --font-sans: "Manrope Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+  /* Kept only so the `.display` utility and any rule still asking for a
+     "display face" resolve to something. There is no separate display voice
+     any more: headings are Manrope at 600, the same family as everything else,
+     and the hierarchy is carried by size and weight rather than by a change of
+     typeface. */
+  --font-display: var(--font-sans);
   --radius-sm: 8px;
   --radius: 11px;
   --radius-lg: 14px;
   --radius-xl: 20px;
 }
 
-/* ── v2 surfaces ────────────────────────────────────────────────────────────
-   Five steps of elevation, no borders doing the work: canvas → sheet → raise
-   → raise-2, with sunken below the canvas for anything that reads as a well
-   (terminals, inputs). Lines exist but only ever whisper; a card is separated
-   from its background by lightness, not by an outline. The legacy token names
-   below are kept as aliases so nothing downstream has to know this changed. */
+/* ── Type scale ─────────────────────────────────────────────────────────────
+   Manrope 400/500/600 for UI copy, JetBrains Mono 400/500 for machine values.
+   The weights stay light because the UI is dark — 600 on near-black already
+   reads as bold, and 700+ blooms.
+
+     hero name        24  / 600 / -0.02em
+     card name        14.5/ 500 / -0.01em
+     section + band   14  / 500–600 / -0.01em
+     body + rows      12.5–13 / 500
+     labels + second  12–12.5 / 400, muted
+     mono values      11.5–12.5 / 400
+     terminal + logs  11.5 mono / 1.8
+     smallest chips   10–10.5 mono
+
+   Every rule below that sets a font-size is one of these eight; if a new one
+   is needed, it belongs on this list first. */
+
+/* ── v3 surfaces ────────────────────────────────────────────────────────────
+   The elevation ramp is now SHALLOW and the lines are load-bearing. Where v2
+   separated a card from its background by lightness alone and let the lines
+   whisper, the steps here sit close together on a near-black canvas and a 1px
+   edge is what draws the boundary. Two consequences worth knowing before
+   touching these numbers: `--line` must stay visible against `--raise` (it is
+   the only thing describing a card's shape), and the chroma is roughly halved
+   across the ramp, so the greys read as grey rather than as dark blue.
+
+   The legacy token names further down are kept as aliases so nothing
+   downstream has to know this changed. */
 :root,
 [data-theme="dark"] {
-  --canvas: oklch(0.135 0.004 288);
-  --sheet: oklch(0.175 0.005 288);
-  --sunken: oklch(0.108 0.004 288);
-  --raise: oklch(0.215 0.006 288);
-  --raise-2: oklch(0.26 0.007 288);
+  --canvas: oklch(0.115 0.002 288);
+  --sheet: oklch(0.142 0.003 288);
+  --sunken: oklch(0.098 0.002 288);
+  --raise: oklch(0.202 0.003 288);
+  --raise-2: oklch(0.235 0.004 288);
   /* One step past hover — what a selected card sits at when its state gives it
      no colour of its own. */
-  --raise-3: oklch(0.325 0.008 288);
+  --raise-3: oklch(0.285 0.005 288);
 
-  --line: oklch(0.24 0.005 288);
-  --line-soft: oklch(0.215 0.005 288);
-  --line-hi: oklch(0.35 0.008 288);
+  /* Not decoration any more: this is what makes a card a card. */
+  --line: oklch(0.285 0.005 288);
+  --line-soft: oklch(0.225 0.004 288);
+  --line-hi: oklch(0.4 0.007 288);
 
   /* Each accent comes in three forms and they are NOT interchangeable:
      the plain token is the readable one (text, glyphs, hairlines), `-fill` is
      the surface a card or a pill takes with `--ink` on top, and `-wash` is the
      translucent version. On dark the readable tone doubles as the fill; on
-     light it cannot — a pale lavender that works as a filled card is invisible
-     as a word, which is why the two are separate tokens at all. */
-  --ink: oklch(0.2 0.03 300);
-  --lav: oklch(0.845 0.085 300);
-  --lav-fill: oklch(0.845 0.085 300);
-  --lav-wash: oklch(0.845 0.085 300 / 0.14);
-  --ice: oklch(0.865 0.06 233);
-  --ice-fill: oklch(0.865 0.06 233);
-  --ice-wash: oklch(0.865 0.06 233 / 0.14);
-  --coral: oklch(0.795 0.1 25);
-  --coral-fill: oklch(0.795 0.1 25);
-  --coral-wash: oklch(0.795 0.1 25 / 0.14);
-  --mint: oklch(0.85 0.1 158);
-  --mint-fill: oklch(0.85 0.1 158);
-  --mint-wash: oklch(0.85 0.1 158 / 0.14);
-  --amber: oklch(0.875 0.1 88);
-  --amber-fill: oklch(0.875 0.1 88);
-  --amber-wash: oklch(0.875 0.1 88 / 0.14);
+     light it cannot — a pale ice that works as a filled card is invisible as a
+     word, which is why the two are separate tokens at all.
+
+     `--ice` is the trim of the whole app: selection, focus, primary buttons and
+     the active environment all take it. There is no second chromatic accent —
+     the remaining hues are STATUS (mint/coral/amber), and a decorative accent
+     sitting beside them only ever competed with what they were reporting.
+
+     Chroma is carried high on purpose. The original ramp sat around 0.06–0.1,
+     which on a near-black canvas reads as chalk rather than as colour — a green
+     that pale says "some kind of label", not "this thing is UP". Lightness is
+     what keeps `--ink` legible on a fill, and lightness is untouched here, so
+     the saturation costs nothing in contrast. */
+  --ink: oklch(0.2 0.03 233);
+  --ice: oklch(0.845 0.105 233);
+  --ice-fill: oklch(0.845 0.105 233);
+  --ice-wash: oklch(0.845 0.105 233 / 0.16);
+  --coral: oklch(0.76 0.17 25);
+  --coral-fill: oklch(0.76 0.17 25);
+  --coral-wash: oklch(0.76 0.17 25 / 0.16);
+  --mint: oklch(0.84 0.17 158);
+  --mint-fill: oklch(0.84 0.17 158);
+  --mint-wash: oklch(0.84 0.17 158 / 0.16);
+  --amber: oklch(0.86 0.16 88);
+  --amber-fill: oklch(0.86 0.16 88);
+  --amber-wash: oklch(0.86 0.16 88 / 0.16);
   --idle: oklch(0.42 0.01 288);
-  /* The one saturated green kept from the old palette: a run control reads as
-     GO, and the mint the status system uses is too pale to carry that. */
-  --run: oklch(0.72 0.17 150);
+  /* The transport pair, and the only two saturated marks in the app: a run
+     control reads as GO and a stop as HALT, which the status palette's mint and
+     coral are too pale to carry — those are for REPORTING a state, and a control
+     you are about to press should not look like a label. Kept apart from
+     `--coral` deliberately: making the status red this loud would have every
+     failure shouting at the same volume as the button that causes one. */
+  --run: oklch(0.76 0.22 148);
+  --stop: oklch(0.68 0.21 27);
+  --stop-wash: oklch(0.68 0.21 27 / 0.14);
 
   --window-bg: var(--canvas);
   --panel-bg: var(--canvas);
@@ -127,8 +163,11 @@
   --text-dim: oklch(0.56 0.012 288);
   --text-faint: oklch(0.46 0.012 288);
 
-  --accent: var(--lav);
-  --accent-soft: var(--lav-wash);
+  --accent: var(--ice);
+  --accent-soft: var(--ice-wash);
+  /* The surface an accented control takes, with `--accent-fg` on top. Aliased
+     rather than inlined so the light theme's separate fill tone follows. */
+  --accent-fill: var(--ice-fill);
   --accent-fg: var(--ink);
 
   --success: var(--mint);
@@ -139,11 +178,11 @@
   --warning-soft: var(--amber-wash);
   --info: var(--ice);
   --info-soft: var(--ice-wash);
-  --magenta: oklch(0.83 0.09 330);
+  --magenta: oklch(0.8 0.16 330);
 
   /* Tints are washes now, not solid mixes, and their "borders" are the wash
      again rather than a ring — the v2 surfaces are separated by lightness. */
-  --accent-tint: var(--lav-wash);
+  --accent-tint: var(--ice-wash);
   --accent-tint-bot: transparent;
   --danger-tint: var(--coral-wash);
   --danger-tint-bot: transparent;
@@ -151,7 +190,7 @@
   --success-tint-bot: transparent;
   --info-tint: var(--ice-wash);
   --info-tint-bot: transparent;
-  --magenta-tint: oklch(0.83 0.09 330 / 0.14);
+  --magenta-tint: oklch(0.8 0.16 330 / 0.16);
   --magenta-tint-bot: transparent;
   --warning-tint: var(--amber-wash);
   --warning-tint-bot: transparent;
@@ -162,57 +201,58 @@
 }
 
 [data-theme="light"] {
-  --canvas: oklch(0.965 0.003 288);
+  /* Same shallow ramp inverted: the card sits just ABOVE the canvas rather than
+     below it, and the same 1px edge draws its shape. */
+  --canvas: oklch(0.975 0.002 288);
   --sheet: oklch(1 0 0);
-  --sunken: oklch(0.99 0.002 288);
-  --raise: oklch(0.93 0.005 288);
-  --raise-2: oklch(0.9 0.006 288);
-  --raise-3: oklch(0.845 0.008 288);
+  --sunken: oklch(0.985 0.002 288);
+  --raise: oklch(0.995 0.001 288);
+  --raise-2: oklch(0.965 0.003 288);
+  --raise-3: oklch(0.925 0.004 288);
 
-  --line: oklch(0.905 0.005 288);
-  --line-soft: oklch(0.93 0.005 288);
-  --line-hi: oklch(0.8 0.008 288);
+  --line: oklch(0.875 0.004 288);
+  --line-soft: oklch(0.925 0.003 288);
+  --line-hi: oklch(0.76 0.007 288);
 
   /* Fills keep the design's pale tones; the readable tones are pulled down to
      mid-lightness so the same token can be a word on white. */
-  --ink: oklch(0.2 0.03 300);
-  --lav: oklch(0.5 0.19 300);
-  --lav-fill: oklch(0.82 0.1 300);
-  --lav-wash: oklch(0.5 0.19 300 / 0.12);
-  --ice: oklch(0.5 0.15 233);
-  --ice-fill: oklch(0.84 0.075 233);
-  --ice-wash: oklch(0.5 0.15 233 / 0.12);
-  --coral: oklch(0.55 0.2 25);
-  --coral-fill: oklch(0.8 0.11 25);
-  --coral-wash: oklch(0.55 0.2 25 / 0.12);
-  --mint: oklch(0.55 0.14 158);
-  --mint-fill: oklch(0.8 0.11 158);
-  --mint-wash: oklch(0.55 0.14 158 / 0.13);
-  --amber: oklch(0.58 0.13 82);
-  --amber-fill: oklch(0.82 0.13 85);
-  --amber-wash: oklch(0.58 0.13 82 / 0.14);
+  --ink: oklch(0.2 0.03 233);
+  --ice: oklch(0.52 0.2 233);
+  --ice-fill: oklch(0.82 0.11 233);
+  --ice-wash: oklch(0.52 0.2 233 / 0.14);
+  --coral: oklch(0.55 0.22 25);
+  --coral-fill: oklch(0.78 0.15 25);
+  --coral-wash: oklch(0.55 0.22 25 / 0.14);
+  --mint: oklch(0.56 0.18 158);
+  --mint-fill: oklch(0.79 0.15 158);
+  --mint-wash: oklch(0.56 0.18 158 / 0.15);
+  --amber: oklch(0.62 0.17 82);
+  --amber-fill: oklch(0.84 0.16 85);
+  --amber-wash: oklch(0.62 0.17 82 / 0.16);
   --idle: oklch(0.78 0.008 288);
-  --run: oklch(0.55 0.17 150);
+  --run: oklch(0.58 0.21 148);
+  --stop: oklch(0.56 0.23 27);
+  --stop-wash: oklch(0.56 0.23 27 / 0.14);
 
   --text: oklch(0.2 0.012 288);
   --text-muted: oklch(0.44 0.012 288);
   --text-dim: oklch(0.6 0.012 288);
   --text-faint: oklch(0.68 0.012 288);
 
-  --magenta: oklch(0.6 0.16 330);
-  --magenta-tint: oklch(0.6 0.16 330 / 0.12);
+  --magenta: oklch(0.6 0.2 330);
+  --magenta-tint: oklch(0.6 0.2 330 / 0.14);
 
   --shadow-card: 0 8px 24px oklch(0 0 0 / 0.06);
   --shadow-pop: 0 16px 40px oklch(0 0 0 / 0.14), 0 2px 6px oklch(0 0 0 / 0.07);
   --shadow-inset: none;
 }
 
-/* The display voice. Applied by class so the sans stays the default everywhere
-   and nothing inherits 800-weight Montserrat by accident. */
+/* Kept for the handful of call sites that opt into "heading", now that the
+   heading is a weight rather than a family. */
 .display {
-  font-family: var(--font-display);
-  font-weight: 800;
-  letter-spacing: -0.03em;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 .mono {
   font-family: var(--font-mono);
@@ -255,10 +295,15 @@ body {
 }
 body {
   font-family: var(--font-sans);
-  font-weight: 450;
+  /* The scale's floor. 450 was an Inter-era half-step; Manrope's named weights
+     are what the scale is written in, so anything inheriting from here gets a
+     real 400 and steps up to 500/600 explicitly. */
+  font-weight: 400;
+  font-size: 12.5px;
   background: var(--canvas);
   color: var(--text);
-  font-feature-settings: "cv11", "ss01";
+  /* `cv11`/`ss01` were Inter's single-storey alternates and are gone with it —
+     Manrope has no such features to ask for. */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
@@ -356,25 +401,12 @@ button {
   justify-content: center;
 }
 .brand {
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 17px;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 15px;
   line-height: 1;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.02em;
   color: var(--text);
-}
-.brand-sub {
-  color: var(--text-dim);
-  font-size: 12.5px;
-}
-/* Set as a label rather than a subtitle: small, tracked wide, uppercase — the
-   counterweight to the display brand beside it. */
-.title-sub {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--text-dim);
 }
 .title-right {
   display: inline-flex;
@@ -887,15 +919,15 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 19px;
-  letter-spacing: -0.03em;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
   color: var(--text);
   flex-shrink: 0;
 }
 .ws-avatar {
-  color: var(--lav);
+  color: var(--accent);
   display: inline-flex;
 }
 .ws-caret {
@@ -956,7 +988,7 @@ button {
   color: var(--text-dim);
 }
 .search-wrap:focus-within {
-  box-shadow: inset 0 0 0 1px var(--lav);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 .search-wrap input {
   flex: 1;
@@ -995,23 +1027,67 @@ button {
   align-items: center;
   gap: 9px;
   align-self: flex-start;
-  padding: 2px 6px 2px 0;
+  /* Padded on both sides and pulled back by the same amount: the title sits
+     exactly where it did, but there is now room inside the row for a background
+     to sit behind it without hugging the glyph. */
+  padding: 3px 8px;
+  margin-left: -8px;
   background: transparent;
   border: 0;
   border-radius: 9px;
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 19px;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 14px;
   line-height: 1.1;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.01em;
   text-transform: none;
   color: var(--text);
+  cursor: pointer;
+}
+/* The selected project is shut inside this row. The mark is the same ice tone a
+   selected card takes, so "where am I" reads as one idea at every level of the
+   tree rather than as three different highlights. */
+.parent-head.holds-selection,
+.section-head.holds-selection {
+  background: color-mix(in oklab, var(--ice) 14%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent-soft);
+}
+.parent-head.holds-selection > svg,
+.section-head.holds-selection .caret,
+.section-head.holds-selection .section-title {
+  color: var(--accent);
 }
 .parent-head > svg {
   color: var(--text-dim);
   transition: color 0.14s;
 }
 .parent-head:hover > svg {
+  color: var(--text);
+}
+/* Folds the band's groups — a different act from collapsing the band, so it is
+   a separate control rather than a second meaning for the row. Always drawn,
+   never hover-revealed: it is the only way to fold a band's groups in one go,
+   and a control you have to find by hovering is one you do not know exists. */
+.parent-fold {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+.parent-fold:hover,
+.parent-fold:focus-visible {
+  background: var(--raise);
   color: var(--text);
 }
 .parent-count {
@@ -1053,9 +1129,13 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  /* Same trick as `.parent-head`: padded evenly and pulled back by the
+     difference, so the title stays where it was while the row gains room for a
+     background to sit behind it. */
+  width: calc(100% + 8px);
+  margin-left: -8px;
   height: 30px;
-  padding: 0 10px 0 2px;
+  padding: 0 10px;
   background: transparent;
   border: 0;
   border-radius: 9px;
@@ -1073,9 +1153,10 @@ button {
   order: 2;
 }
 .section-title {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-size: 12.5px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--text-muted);
   white-space: nowrap;
   order: 1;
 }
@@ -1114,34 +1195,6 @@ button {
 /* Collapse everything that is not this group. Hover-revealed, in the header's
    own flow so nothing shifts when it appears — it takes the slot the spacer
    would have had. */
-.section-focus {
-  order: 4;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: inherit;
-  opacity: 0;
-  cursor: pointer;
-  transition:
-    opacity 0.12s,
-    background 0.12s,
-    color 0.12s;
-}
-.section:hover .section-focus,
-.section-focus:focus-visible {
-  opacity: 0.6;
-}
-.section:hover .section-focus:hover {
-  opacity: 1;
-  background: var(--raise);
-  color: var(--text);
-}
 .section-spacer {
   flex: 1;
   order: 6;
@@ -1196,64 +1249,83 @@ button {
 }
 
 /* ── The card ───────────────────────────────────────────────────────────────
-   Two lines, no outline: a raised surface with a 20px radius, the name set in
-   the display face at 22px, and the facts as pills underneath. It is the same
-   element on the board and in the rail — `.compact` on the fleet is what pulls
-   it down to a 14px radius and a 16px name (see the compact block below). */
+   Two lines and an OUTLINE: a near-flat surface a step above the canvas, drawn
+   by its 1px edge rather than by how much lighter it is. The edge is an inset
+   shadow, not a border, so it costs the card no box metrics and can thicken on
+   selection without anything inside reflowing.
+
+   It is the same element on the board and in the rail — the fleet's container
+   query is what pulls it down to a 12px radius and a 16px name. */
 .svc-row {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  /* Sized to a 14.5px name, not the 22px display name this used to carry —
+     the old 14/15 padding and 10px gap left a card mostly empty once the type
+     came down. */
+  gap: 7px;
   width: 100%;
-  padding: 14px 15px;
+  padding: 11px 12px;
   background: var(--raise);
   border: 0;
-  border-radius: 20px;
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 1px var(--line);
   color: var(--text);
   text-align: left;
   cursor: pointer;
   --run-tone: var(--run);
   transition:
-    transform 0.16s cubic-bezier(0.3, 0.8, 0.3, 1),
     background 0.16s,
     box-shadow 0.16s,
     padding 0.3s ease,
     border-radius 0.3s ease;
 }
+/* The edge brightens rather than the card rising. A lift reads as depth, and
+   there is no depth in this palette to be had — everything sits on one plane
+   and is told apart by its outline. */
 .svc-row:hover {
   background: var(--raise-2);
-  transform: translateY(-2px);
+  box-shadow: inset 0 0 0 1px var(--line-hi);
 }
-/* Selection is a filled card, never a grey one — and the fill means SELECTED,
-   nothing else. It used to shift with the runtime state (purple running, pink
-   broken, blue otherwise), which put state in two places at once: a card could
-   say "running" with its colour while its own figure said "crashed", and only
-   the selected card said anything at all. One blue, always. State is the
-   figure's job — it is the same reading on every card, selected or not.
 
-   The tone is declared on the CELL, not on the card, because the command pills
-   underneath belong to the same selection and have to take the same fill.
+/* ── Selection ──────────────────────────────────────────────────────────────
+   A RING, not a fill. The card keeps its own dark surface and states its
+   selection on the edge that already describes it, which leaves the contents
+   alone: the status figure keeps the colour its state gives it, and the chips
+   keep the ink they have everywhere else.
 
-   `--on-fill` is the muted ink the chips and quiet controls take, `--on-glyph`
-   the darker one the status figure needs to survive on a light fill. */
+   That is the whole reason these four values are tokens. Every rule that
+   dresses a selected card reads them rather than restating a colour, so
+   selection is a matter of redefining four values in one place — the previous
+   scheme filled the card with pale ice and had to invert twenty-odd rules onto
+   it, and each of those was a chance for one of them to be missed.
+
+   They are declared on the CELL, not the card, because the command pills
+   underneath belong to the same selection and have to take the same treatment. */
+.svc-cell {
+  --cell-fill: var(--raise);
+  /* Quiet ink: chips, the chevron, the manage button. */
+  --on-fill: var(--text-dim);
+  /* Emphasised ink: the same things on hover, and the pills' names. */
+  --on-fill-strong: var(--text);
+  /* The scrim a chip or the artwork tile sits on, INSIDE a card. */
+  --on-scrim: oklch(1 0 0 / 0.07);
+}
+[data-theme="light"] .svc-cell {
+  --on-scrim: oklch(0 0 0 / 0.05);
+}
 .svc-cell.active {
-  --cell-fill: var(--ice-fill);
-  --run-tone: oklch(0.48 0.18 150);
-  --on-fill: oklch(0.3 0.05 235 / 0.85);
-  --on-glyph: oklch(0.38 0.13 235);
+  /* Ice-tinted, but only just — enough that a selected card reads as chosen
+     with the ring covered, and not so much that it competes with the state
+     colours the figure and the chips are carrying. */
+  --cell-fill: color-mix(in oklab, var(--ice) 9%, var(--raise));
+  --on-fill: var(--text-muted);
+  --on-scrim: color-mix(in oklab, var(--ice) 16%, transparent);
 }
-.svc-row.active {
-  color: var(--ink);
-  background: var(--cell-fill);
-  box-shadow: none;
-}
-/* Hover lifts the tone rather than changing it — a selected card has already
-   said what colour it is. */
+.svc-row.active,
 .svc-row.active:hover {
   background: var(--cell-fill);
-  filter: brightness(1.04);
-  transform: translateY(-2px);
+  box-shadow: inset 0 0 0 1.5px var(--ice);
 }
 
 /* The card's first line: artwork, name, controls. */
@@ -1263,35 +1335,19 @@ button {
   gap: 11px;
   min-width: 0;
 }
-.svc-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 10px;
-  background: oklch(1 0 0 / 0.07);
+.svc-icon,
+.svc-icon.stack,
+.svc-icon.compose {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--on-scrim);
   border: 0;
   color: var(--text-muted);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-}
-[data-theme="light"] .svc-icon {
-  background: oklch(0 0 0 / 0.05);
-}
-/* On a filled selection the chip sits on a light surface, so it flips to a
-   white scrim and inherits the card's ink. */
-.svc-cell.active .svc-icon {
-  background: oklch(1 0 0 / 0.32);
-  color: var(--ink);
-}
-.svc-icon.stack,
-.svc-icon.compose {
-  background: oklch(1 0 0 / 0.07);
-  color: var(--text-muted);
-}
-[data-theme="light"] .svc-icon.stack,
-[data-theme="light"] .svc-icon.compose {
-  background: oklch(0 0 0 / 0.05);
 }
 .svc-body {
   display: flex;
@@ -1301,11 +1357,11 @@ button {
   flex: 1;
 }
 .svc-name {
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 22px;
-  line-height: 1.1;
-  letter-spacing: -0.035em;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 14.5px;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
   color: inherit;
   white-space: nowrap;
   overflow: hidden;
@@ -1799,39 +1855,38 @@ button {
   display: flex;
   align-items: center;
   gap: 11px;
-  min-height: 88px;
-  padding: 14px 15px;
-  border-radius: 20px;
+  /* Matched to a project card's new height, the way it always was — the number
+     just moved with the type. */
+  min-height: 66px;
+  padding: 11px 12px;
+  border-radius: 16px;
   background: var(--raise);
-  transition: background 0.16s;
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition:
+    background 0.16s,
+    box-shadow 0.16s;
 }
 .sys-row:hover {
   background: var(--raise-2);
+  box-shadow: inset 0 0 0 1px var(--line-hi);
 }
 /* A system card is a card: it selects, it opens, it takes the selection fill
    from its cell exactly as a project's does. */
 .sys-row {
   cursor: pointer;
 }
-.svc-cell.active .sys-row {
-  background: var(--cell-fill);
-  color: var(--ink);
-}
+.svc-cell.active .sys-row,
 .svc-cell.active .sys-row:hover {
   background: var(--cell-fill);
-  filter: brightness(1.04);
+  box-shadow: inset 0 0 0 1.5px var(--ice);
 }
 .svc-cell.active .sys-icon {
-  background: oklch(1 0 0 / 0.32);
-  color: var(--ink);
+  background: var(--on-scrim);
 }
 .sys-row .svc-open {
   margin-left: 0;
 }
-.sys-row .svc-name {
-  font-size: 18px;
-  letter-spacing: -0.03em;
-}
+/* A system's name is a card name — same rule, no override. */
 .sys-row .svc-body {
   gap: 7px;
 }
@@ -1880,7 +1935,7 @@ button {
   gap: 2px;
   padding: 4px 9px;
   border-radius: 999px;
-  background: oklch(1 0 0 / 0.07);
+  background: var(--on-scrim);
   color: var(--text-dim);
   font-family: var(--font-mono);
   font-size: 10.5px;
@@ -1889,11 +1944,8 @@ button {
   flex-shrink: 0;
   border: 0;
 }
-[data-theme="light"] .svc-chip {
-  background: oklch(0 0 0 / 0.05);
-}
 .svc-cell.active .svc-chip {
-  background: oklch(1 0 0 / 0.32);
+  background: var(--on-scrim);
   color: var(--on-fill);
 }
 .chip-sep {
@@ -1901,23 +1953,11 @@ button {
   opacity: 0.45;
 }
 
-/* The status glyph carries its colour as an inline style (one function owns
-   the state→colour rule for every surface), so a filled card has to shout to
-   darken it — mint on lavender, coral on coral, grey on blue all vanish
-   otherwise. */
-.svc-cell.active .figure {
-  color: var(--on-glyph) !important;
-}
-.svc-cell.active .status-dot {
-  background: var(--on-glyph) !important;
-}
-.svc-cell.active .failure-mark {
-  color: var(--on-glyph);
-}
-/* Same problem for the words beside it. */
-.svc-cell.active .svc-health {
-  color: var(--on-fill);
-}
+/* The status glyph used to be overridden on a selected card: it carries its
+   colour as an inline style, and mint-on-lavender or coral-on-coral vanished
+   against the old pale fill. A ring leaves the card's own dark surface in
+   place, so the figure keeps the colour its STATE gives it — which is the
+   reading it should always have had. Nothing to override. */
 
 /* The environment is the one chip that is also a control — everything else on
    the row is a reading. The chevron is what says so. */
@@ -1929,12 +1969,8 @@ button {
     color 0.12s;
 }
 .svc-chip.env:hover {
-  background: var(--lav-wash);
-  color: var(--lav);
-}
-.svc-cell.active .svc-chip.env:hover {
-  background: oklch(1 0 0 / 0.5);
-  color: var(--ink);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 /* Locked while the project is up: the vars were read at spawn, so offering the
    switch here would show one environment and run another. */
@@ -1959,10 +1995,6 @@ button {
 .svc-chip.quick:hover {
   background: color-mix(in oklab, var(--run) 18%, transparent);
   color: var(--run);
-}
-.svc-cell.active .svc-chip.quick:hover {
-  background: oklch(1 0 0 / 0.5);
-  color: var(--ink);
 }
 
 /* The card's second line as a whole: the strip of facts, and the way in at the
@@ -2014,8 +2046,8 @@ button {
 }
 .svc-cell.active .svc-open:hover,
 .svc-cell.active .svc-row:hover .svc-open {
-  background: oklch(1 0 0 / 0.32);
-  color: var(--ink);
+  background: var(--on-scrim);
+  color: var(--on-fill-strong);
 }
 
 /* ── Secondary commands, UNDER the card ──────────────────────────────────────
@@ -2053,11 +2085,14 @@ button {
   padding: 4px 6px 4px 12px;
   border-radius: 999px;
   background: var(--raise);
+  box-shadow: inset 0 0 0 1px var(--line);
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.2;
-  transition: background 0.16s;
+  transition:
+    background 0.16s,
+    box-shadow 0.16s;
 }
 .cmd-pill:hover {
   background: var(--raise-2);
@@ -2065,16 +2100,13 @@ button {
 /* Selected: the pills are part of the same selection as the card above them and
    take the same fill, so a chosen project reads as one object rather than as a
    coloured card with grey satellites. */
-.svc-cell.active .cmd-pill {
-  background: var(--cell-fill);
-  color: var(--ink);
-}
+.svc-cell.active .cmd-pill,
 .svc-cell.active .cmd-pill:hover {
   background: var(--cell-fill);
-  filter: brightness(1.04);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ice) 45%, transparent);
 }
 .svc-cell.active .cmd-pill-name {
-  color: var(--ink);
+  color: var(--on-fill-strong);
 }
 .cmd-pill-name {
   overflow: hidden;
@@ -2122,9 +2154,6 @@ button {
 .cmd-pill .cmd-pill-x:hover:not(:disabled) {
   opacity: 1;
   color: var(--coral);
-}
-.svc-cell.active .cmd-pill .cmd-pill-x:hover:not(:disabled) {
-  color: var(--ink);
 }
 .cmd-pill .cmd-pill-x:disabled {
   cursor: default;
@@ -2190,10 +2219,7 @@ button {
   color: var(--run-tone);
 }
 .svc-controls .ico-primary.danger {
-  color: var(--coral);
-}
-.svc-cell.active .svc-controls .ico-primary.danger {
-  color: var(--ink);
+  color: var(--stop);
 }
 .svc-controls .ico-primary:hover:not(:disabled) {
   background: transparent;
@@ -2207,7 +2233,7 @@ button {
   opacity: 0.72;
 }
 .svc-cell.active .svc-controls .ico:hover:not(:disabled) {
-  color: var(--ink);
+  color: var(--on-fill-strong);
   opacity: 1;
 }
 .svc-controls .ico:disabled {
@@ -2260,22 +2286,24 @@ button {
   color: var(--run);
 }
 .ico-primary.danger {
-  color: var(--coral);
+  color: var(--stop);
 }
+/* Derived from the token rather than restated, so the wash can never drift from
+   the mark it sits under. */
 .ico-primary.success:hover {
-  background: oklch(0.72 0.17 150 / 0.14);
+  background: oklch(from var(--run) l c h / 0.14);
 }
 .ico-primary.danger:hover {
-  background: var(--coral-wash);
+  background: var(--stop-wash);
 }
 
 .empty-row {
   padding: 40px 0;
   text-align: center;
-  font-family: var(--font-display);
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  font-size: 22px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -2302,8 +2330,8 @@ button {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--lav);
-  box-shadow: 0 0 0 3px var(--lav-wash);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .foot-spacer {
   flex: 1;
@@ -2329,8 +2357,11 @@ button {
     padding: 10px 12px 6px;
     gap: 6px;
   }
+  /* Nothing here changes a font-size any more. The scale is small enough at
+     board width that the rail can use it verbatim — the old overrides existed
+     only to pull a 22px display name down to something a 318px column could
+     hold, and there is no 22px anything left. */
   .workspace-pill {
-    font-size: 15px;
     gap: 7px;
   }
   .ico-btn {
@@ -2354,12 +2385,7 @@ button {
     gap: 6px;
   }
   .parent-head {
-    font-size: 15px;
-    letter-spacing: -0.02em;
     padding-left: 8px;
-  }
-  .parent-count {
-    font-size: 9.5px;
   }
   .band-groups {
     margin-left: 10px;
@@ -2373,33 +2399,18 @@ button {
   .section-head {
     height: 26px;
   }
-  .section-title {
-    font-size: 12.5px;
-  }
   .section-body,
   .sys-body {
     grid-template-columns: minmax(0, 1fr);
     gap: 7px;
   }
+  /* Only the radius tightens now. The padding, gaps and artwork the rail used
+     to override are what the board already uses at this type size. */
   .svc-row {
-    border-radius: 14px;
-    padding: 10px 11px;
-    gap: 7px;
-  }
-  .svc-row:hover {
-    transform: none;
+    border-radius: 12px;
   }
   .svc-mid {
     gap: 9px;
-  }
-  .svc-icon {
-    width: 25px;
-    height: 25px;
-    border-radius: 8px;
-  }
-  .svc-name {
-    font-size: 16px;
-    letter-spacing: -0.03em;
   }
   /* At rail width the strip cannot wrap without doubling the card's height, so
      it scrolls sideways instead — same contract as the environment pills. */
@@ -2413,26 +2424,14 @@ button {
     display: none;
   }
   .svc-chip {
-    font-size: 9.5px;
     padding: 3px 7px;
   }
   .sys-row {
-    border-radius: 14px;
-    padding: 10px 11px;
-    min-height: 72px;
+    border-radius: 12px;
     gap: 9px;
-  }
-  .sys-row .svc-name {
-    font-size: 16px;
-  }
-  .sys-icon {
-    width: 25px;
-    height: 25px;
-    border-radius: 8px;
   }
   .empty-row {
     padding: 24px 0;
-    font-size: 16px;
   }
   .side-foot {
     padding: 0 14px;
@@ -2526,9 +2525,9 @@ button {
    surface that changes colour is a second, coarser status display competing
    with the real one two lines below it. */
 .hero-icon {
-  width: 46px;
-  height: 46px;
-  border-radius: 14px;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
   background: var(--ice-fill);
   border: 0;
   color: var(--ink);
@@ -2557,8 +2556,11 @@ button {
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
+/* The word and the figure beside it are one reading, so they take the same
+   colours `stateColor` assigns: green up, amber in transit, coral broken, and
+   the trim blue at rest. */
 .hero-status-label.running {
-  color: var(--lav);
+  color: var(--success);
 }
 .hero-status-label.starting,
 .hero-status-label.stopping {
@@ -2568,7 +2570,9 @@ button {
 .hero-status-label.errored {
   color: var(--coral);
 }
-.hero-status-label.idle,
+.hero-status-label.idle {
+  color: var(--accent);
+}
 .hero-status-label.unmanaged {
   color: var(--text-dim);
 }
@@ -2576,11 +2580,11 @@ button {
   color: var(--text-dim);
 }
 .hero-name {
-  font-family: var(--font-display);
-  font-size: 38px;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: -0.04em;
+  font-family: var(--font-sans);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
   margin: 4px 0 0;
   display: inline-flex;
   align-items: center;
@@ -2736,11 +2740,11 @@ button {
   filter: brightness(1.07);
 }
 .btn.primary {
-  background: var(--lav-fill);
+  background: var(--accent-fill);
   color: var(--ink);
 }
 .btn.primary:hover:not(:disabled) {
-  background: var(--lav-fill);
+  background: var(--accent-fill);
   filter: brightness(1.07);
 }
 /* The quiet outline variant, kept for the section tools that sit on a sheet
@@ -2873,7 +2877,8 @@ button {
 /* The captured tail of a crashed process — why it died, verbatim. */
 .log-tail {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 11.5px;
+  line-height: 1.8;
   color: var(--text-muted);
   background: var(--input-bg);
   border: 1px solid var(--border-soft);
@@ -2907,10 +2912,10 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 16px;
-  letter-spacing: -0.03em;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
   color: var(--text);
 }
 .term-bar-title svg {
@@ -3174,7 +3179,7 @@ button {
   padding: 8px 12px;
   font-family: var(--font-mono);
   font-size: 11.5px;
-  line-height: 1.55;
+  line-height: 1.8;
 }
 .log-line {
   display: flex;
@@ -3440,6 +3445,9 @@ button {
 .menu-dot.warning {
   background: var(--warning);
 }
+.menu-dot.idle {
+  background: var(--accent);
+}
 .menu-dot.danger {
   background: var(--danger);
 }
@@ -3519,10 +3527,10 @@ button {
   background: transparent;
 }
 .dialog-title {
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 16px;
-  letter-spacing: -0.03em;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
 }
 .dialog-body {
   padding: 16px;
@@ -3811,10 +3819,9 @@ button {
 .tbl tr:hover .row-actions {
   opacity: 1;
 }
-/* The supervised command — the project's own — leads the commands table. */
-.tbl tr.tbl-primary td {
-  background: var(--card-bg-hover);
-}
+/* The supervised command — the project's own — leads the commands table. Its
+   position and its `main` tag are what mark it; a filled row read as a
+   permanent hover state and made the table look like it had a selection. */
 .tbl tr.tbl-primary td.mono {
   color: var(--text);
   font-weight: 500;
@@ -3824,14 +3831,15 @@ button {
   padding-right: 0;
 }
 
-/* A section of the detail pane: a sheet floating on the canvas, no border and
-   no internal rule — the header is separated from its body by space. */
+/* A section of the detail pane. Same rule as a project card: a near-flat
+   surface drawn by its edge, not by how far it floats above the canvas. No
+   internal rule — the header is still separated from its body by space alone. */
 .card {
   flex-shrink: 0;
   background: var(--sheet);
   border: 0;
-  border-radius: 18px;
-  box-shadow: none;
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 1px var(--line);
   overflow: hidden;
 }
 .card-head {
@@ -3843,10 +3851,10 @@ button {
   background: transparent;
 }
 .card-title {
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 16px;
-  letter-spacing: -0.03em;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
   color: var(--text);
 }
 .card-body {
@@ -3869,12 +3877,8 @@ button {
   color: var(--text-dim);
 }
 .tag.base {
-  background: var(--ice-wash);
-  color: var(--ice);
-}
-.tag.ctx {
-  background: var(--lav-wash);
-  color: var(--lav);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 /* ---- docker daemon banner ---- */
@@ -3918,10 +3922,10 @@ button {
   align-items: center;
 }
 .board-empty-title {
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 24px;
-  letter-spacing: -0.03em;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
   color: var(--text-muted);
 }
 .board-empty-sub {
@@ -3932,9 +3936,6 @@ button {
 @container fleet (width < 560px) {
   .board-empty {
     padding: 40px 0;
-  }
-  .board-empty-title {
-    font-size: 18px;
   }
 }
 
@@ -4345,7 +4346,7 @@ button {
 }
 .btn.sm.primary {
   color: var(--ink);
-  background: var(--lav-fill);
+  background: var(--accent-fill);
   border-color: transparent;
 }
 .btn.sm.primary:hover:not(:disabled) {
@@ -4386,12 +4387,12 @@ button {
 /* The selected environment is filled, not tinted — same rule as a selected
    card: what is chosen takes the accent as a surface. */
 .env-pill.active {
-  background: var(--lav-fill);
+  background: var(--accent-fill);
   border-color: transparent;
   color: var(--ink);
 }
 .env-pill.active:hover:not(.disabled):not(:disabled) {
-  background: var(--lav-fill);
+  background: var(--accent-fill);
   color: var(--ink);
   filter: brightness(1.06);
 }
@@ -4498,7 +4499,7 @@ button {
 }
 .env-pill.editing {
   background: var(--sunken);
-  border-color: var(--lav);
+  border-color: var(--accent);
   box-shadow: none;
   cursor: default;
   padding-right: 4px;
