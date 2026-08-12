@@ -1,7 +1,7 @@
 import { Effect, Either, Ref, Runtime } from "effect"
 import { SessionId, type Project } from "@matisa/core"
 import type { EnvRepoShape, RuntimeRepoShape, RuntimePatch } from "@matisa/store"
-import { crashed, healthChanged, logLine, stateChanged } from "../../shared/events.js"
+import { crashed, healthChanged, stateChanged } from "../../shared/events.js"
 import { resolveEnv } from "../catalog/catalog.env-resolve.js"
 import type { EventsHubShape } from "../../server/server.events-hub.js"
 import type { AppConfigShape } from "../../config/config.app-config.js"
@@ -195,9 +195,13 @@ const runProcess = (project: Project, deps: RunnerDeps): Effect.Effect<void> =>
           // Readiness probe races the child's lifetime; both scoped fibers.
           yield* probeReadiness(project, driver).pipe(Effect.forkScoped)
 
-          child.pty.onData((chunk: string) => {
-            Runtime.runFork(deps.rt)(deps.events.emit(logLine(project.id, "stdout", chunk)))
-          })
+          // No log_line emission here — that would be the SECOND stream of this
+          // output. PtyManager.register (above) already feeds scrollback and the
+          // pty.output bridge, which is how every renderer of process output —
+          // the desktop terminal, `logs -f` — actually reads it. The log_line
+          // copy doubled every chunk on the socket for a ring buffer no process
+          // surface renders. Cost: `watch`/`events` no longer carry process
+          // stdout (docker/compose still emit; they have no PTY).
 
           const exit = yield* child.awaitExit
           yield* deps.pty.sessionExited(sessionId, exit.code)

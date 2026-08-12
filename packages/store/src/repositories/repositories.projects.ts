@@ -1,6 +1,5 @@
 import { Context, Effect, Layer, Option } from "effect"
 import { randomUUID } from "node:crypto"
-import type Database from "better-sqlite3"
 import {
   ContextId,
   GroupSlug,
@@ -14,8 +13,6 @@ import {
 } from "@matisa/core"
 import { Store } from "../store.client.js"
 import { NotFound, PortConflict, StoreQueryError } from "../store.errors.js"
-
-type Sqlite = Database.Database
 
 interface ProjectRowRaw {
   readonly id: string
@@ -39,31 +36,32 @@ interface PortRowRaw {
   readonly description: string | null
 }
 
-const buildProject = (sqlite: Sqlite, row: ProjectRowRaw): Project => {
-  const portRows = sqlite
-    .prepare("SELECT number, protocol, description FROM ports WHERE project_id = ? ORDER BY number")
-    .all(row.id) as ReadonlyArray<PortRowRaw>
-  return {
-    id: ProjectId.make(row.id),
-    name: row.name,
-    root: row.root,
-    kind: row.kind as Project["kind"],
-    command: row.command_json ? (JSON.parse(row.command_json) as Command) : undefined,
-    image: row.image ?? undefined,
-    composeFile: row.compose_file ?? undefined,
-    groupSlug: row.group_slug ? GroupSlug.make(row.group_slug) : undefined,
-    ports: portRows.map((p) => ({
-      number: p.number,
-      protocol: p.protocol as PortProtocol,
-      description: p.description ?? undefined
-    })),
-    activeContextId: row.active_context_id ? ContextId.make(row.active_context_id) : undefined,
-    pathToIcon: row.path_to_icon ?? undefined,
-    exposure: row.exposure_json ? (JSON.parse(row.exposure_json) as Exposure) : undefined,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  }
-}
+const toPort = (p: PortRowRaw): Project["ports"][number] => ({
+  number: p.number,
+  protocol: p.protocol as PortProtocol,
+  description: p.description ?? undefined
+})
+
+/** Ports arrive pre-fetched: `list` gets them in one grouped query, `get` in
+ *  one lookup. buildProject issuing its own query per row made `list` an N+1 —
+ *  fine at rest, but scheduleCatalogRefresh drives it at up to 5/s during a
+ *  mass start. */
+const buildProject = (row: ProjectRowRaw, ports: ReadonlyArray<PortRowRaw>): Project => ({
+  id: ProjectId.make(row.id),
+  name: row.name,
+  root: row.root,
+  kind: row.kind as Project["kind"],
+  command: row.command_json ? (JSON.parse(row.command_json) as Command) : undefined,
+  image: row.image ?? undefined,
+  composeFile: row.compose_file ?? undefined,
+  groupSlug: row.group_slug ? GroupSlug.make(row.group_slug) : undefined,
+  ports: ports.map(toPort),
+  activeContextId: row.active_context_id ? ContextId.make(row.active_context_id) : undefined,
+  pathToIcon: row.path_to_icon ?? undefined,
+  exposure: row.exposure_json ? (JSON.parse(row.exposure_json) as Exposure) : undefined,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at
+})
 
 // ────────────────────────────────────────────────────────────────────────────
 // ProjectsRepo — the catalog persistence surface. `create` is atomic (project
@@ -94,29 +92,48 @@ export const ProjectsRepoLive = Layer.effect(
     const q = <A>(fn: () => A): Effect.Effect<A, StoreQueryError> =>
       Effect.try({ try: fn, catch: (cause) => new StoreQueryError({ cause }) })
 
+    // The hot-path statements, compiled once at layer construction. `prepare`
+    // inside the handlers compiled fresh SQL on every call — ~5 statements per
+    // project per list at the catalog-refresh rate.
+    const stmtPortHolder = sqlite.prepare("SELECT project_id FROM ports WHERE number = ?")
+    const stmtProjectById = sqlite.prepare("SELECT * FROM projects WHERE id = ?")
+    const stmtProjectsAll = sqlite.prepare("SELECT * FROM projects ORDER BY created_at")
+    const stmtPortsByProject = sqlite.prepare(
+      "SELECT number, protocol, description FROM ports WHERE project_id = ? ORDER BY number"
+    )
+    // One query for every project's ports, grouped in memory. The catalog is
+    // small (tens of rows) — fetching the whole table beats an IN (...) build,
+    // and rows for projects not in this list simply group into unused buckets.
+    const stmtPortsAll = sqlite.prepare(
+      "SELECT project_id, number, protocol, description FROM ports ORDER BY number"
+    )
+
     const isTaken: ProjectsRepoShape["isTaken"] = (port) =>
       q(() => {
-        const r = sqlite
-          .prepare("SELECT project_id FROM ports WHERE number = ?")
-          .get(port) as { project_id: string } | undefined
+        const r = stmtPortHolder.get(port) as { project_id: string } | undefined
         return r ? Option.some(ProjectId.make(r.project_id)) : Option.none<ProjectId>()
       })
 
     const get: ProjectsRepoShape["get"] = (id) =>
       Effect.gen(function* () {
-        const row = yield* q(
-          () => sqlite.prepare("SELECT * FROM projects WHERE id = ?").get(id) as ProjectRowRaw | undefined
-        )
+        const row = yield* q(() => stmtProjectById.get(id) as ProjectRowRaw | undefined)
         if (!row) return yield* Effect.fail(new NotFound({ entity: "project", id }))
-        return yield* q(() => buildProject(sqlite, row))
+        return yield* q(() =>
+          buildProject(row, stmtPortsByProject.all(id) as ReadonlyArray<PortRowRaw>)
+        )
       })
 
     const list: ProjectsRepoShape["list"] = () =>
       q(() => {
-        const rows = sqlite
-          .prepare("SELECT * FROM projects ORDER BY created_at")
-          .all() as ReadonlyArray<ProjectRowRaw>
-        return rows.map((r) => buildProject(sqlite, r))
+        const rows = stmtProjectsAll.all() as ReadonlyArray<ProjectRowRaw>
+        const portRows = stmtPortsAll.all() as ReadonlyArray<PortRowRaw & { project_id: string }>
+        const byProject = new Map<string, Array<PortRowRaw>>()
+        for (const p of portRows) {
+          const bucket = byProject.get(p.project_id)
+          if (bucket === undefined) byProject.set(p.project_id, [p])
+          else bucket.push(p)
+        }
+        return rows.map((r) => buildProject(r, byProject.get(r.id) ?? []))
       })
 
     const create: ProjectsRepoShape["create"] = (input) =>
