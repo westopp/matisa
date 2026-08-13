@@ -12,7 +12,9 @@ import {
   ownerId,
   routeFor,
   selectLoopbackPort,
+  selectWildcardPort,
   slugify,
+  wildcardPortFree,
   type RouteSpec
 } from "../modules/exposure/exposure.caddy.js"
 
@@ -250,6 +252,53 @@ const fakeAdmin = async (
   const port = typeof address === "object" && address !== null ? address.port : 0
   return { port, loads, close: () => new Promise<void>((r) => server.close(() => r())) }
 }
+
+// A LAN listener binds 0.0.0.0, so that is the address its port has to be free
+// on. The two probes are deliberately different questions, and the gap between
+// them is load-bearing in both directions.
+describe("selectWildcardPort — LAN listener ports", () => {
+  const LAN = BASE + 300
+
+  it("takes the preferred port when the wildcard address is free", async () => {
+    assert.equal(await Effect.runPromise(selectWildcardPort(LAN)), LAN)
+  })
+
+  it("steps up past a port already held on the wildcard address", async () => {
+    await withListener("0.0.0.0", LAN + 1, async () => {
+      assert.equal(await Effect.runPromise(wildcardPortFree(LAN + 1)), false)
+      assert.equal(await Effect.runPromise(selectWildcardPort(LAN + 1)), LAN + 2)
+    })
+  })
+
+  it("does NOT consider caddy's loopback-only ports taken — they are excluded by the caller", async () => {
+    // The reason `allocateLanPort` passes them in `exclude`: a listener on
+    // 127.0.0.1 leaves 0.0.0.0 bindable, so probing alone would hand a LAN
+    // listener the port caddy already serves stable URLs on, and Caddy would be
+    // asked to listen twice on one port.
+    await withListener("127.0.0.1", LAN + 4, async () => {
+      assert.equal(await Effect.runPromise(wildcardPortFree(LAN + 4)), true)
+      assert.equal(
+        await Effect.runPromise(selectWildcardPort(LAN + 4, { exclude: [LAN + 4] })),
+        LAN + 5
+      )
+    })
+  })
+
+  it("reuses a released port instead of climbing past it", async () => {
+    // `Math.max(used) + 1` walked away from the base forever; probing means a
+    // project that stops sharing gives its port back.
+    assert.equal(await Effect.runPromise(selectWildcardPort(LAN + 7, { exclude: [LAN + 8] })), LAN + 7)
+  })
+
+  it("undefined when the span is exhausted, so the toggle can refuse cleanly", async () => {
+    await withListener("0.0.0.0", LAN + 10, async () => {
+      assert.equal(
+        await Effect.runPromise(selectWildcardPort(LAN + 10, { span: 1 })),
+        undefined
+      )
+    })
+  })
+})
 
 describe("makeAdmin — ownership gate", () => {
   it("loads when the endpoint reports our marker", async () => {

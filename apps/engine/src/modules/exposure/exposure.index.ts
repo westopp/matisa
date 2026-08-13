@@ -21,6 +21,7 @@ import {
   findCaddyBinary,
   makeAdmin,
   selectLoopbackPort,
+  selectWildcardPort,
   slugify,
   superviseCaddy,
   writeBootstrap,
@@ -192,14 +193,26 @@ const make = Effect.gen(function* () {
   /** Running AND ours — a caddy we could not identify is not a caddy we use. */
   const running = () => (child?.isRunning() ?? false) && child?.ownershipFault() === undefined
 
-  /** Push the full desired config — graceful in-process swap, never a restart. */
+  /** Push the full desired config — graceful in-process swap, never a restart.
+   *
+   *  Skipped while caddy is not ready, and quietly: the supervisor pushes
+   *  `desired()` itself the moment the admin endpoint answers as ours, so a
+   *  change made in that window is already accounted for — nothing is lost by
+   *  not sending it now. Reporting it was worse than useless: boot reconciles
+   *  one project at a time, so a five-project catalog logged five warnings
+   *  about a condition that had already resolved by the time anyone read them,
+   *  in the log people are told to check when something is actually wrong. */
   const push = available
-    ? desired().pipe(
-        Effect.flatMap((cfg) => admin.load(cfg)),
-        Effect.tapError((e) =>
-          Effect.logWarning(`exposure: config push failed: ${e.detail ?? e.path}`)
-        ),
-        Effect.ignore
+    ? Effect.suspend(() =>
+        child?.isReady() !== true
+          ? Effect.logDebug("exposure: caddy not ready yet — its own initial push carries this")
+          : desired().pipe(
+              Effect.flatMap((cfg) => admin.load(cfg)),
+              Effect.tapError((e) =>
+                Effect.logWarning(`exposure: config push failed: ${e.detail ?? e.path}`)
+              ),
+              Effect.ignore
+            )
       )
     : Effect.void
 
@@ -324,12 +337,26 @@ const make = Effect.gen(function* () {
 
   // ——— lan toggle ———
 
+  /** A free wildcard port for a project's LAN listener, or undefined if the scan
+   *  span is exhausted.
+   *
+   *  Probed, not counted: `Math.max(used) + 1` assumed every port above the
+   *  highest allocation was ours to take. Anything else on the machine holding
+   *  it made the next `POST /load` fail as a whole — Caddy validates listeners
+   *  atomically — so one unlucky port took every project's routes down, not
+   *  just this project's share. Probing also lets a released port be reused
+   *  instead of climbing away from the base forever. */
   const allocateLanPort = Effect.gen(function* () {
     const rows = yield* exposures.listAll().pipe(Effect.orElseSucceed(() => []))
     const used = rows
       .map((r) => r.config?.["lanPort"])
       .filter((p): p is number => typeof p === "number")
-    return used.length === 0 ? config.lanPortBase : Math.max(...used) + 1
+    // Caddy's own two ports are excluded explicitly. The wildcard probe would
+    // not catch them: they are held on loopback only, so 0.0.0.0 binds beside
+    // them cleanly — and then Caddy is asked to listen twice on one port.
+    return yield* selectWildcardPort(config.lanPortBase, {
+      exclude: [...used, httpPort, opts.adminPort]
+    })
   })
 
   const lanSet: ExposureShape["lanSet"] = (id, enabled) =>
@@ -366,10 +393,22 @@ const make = Effect.gen(function* () {
           const existing = (yield* exposures.forProject(id).pipe(Effect.orElseSucceed(() => []))).find(
             (r) => r.kind === "lan"
           )
-          const lanPort =
+          // An existing allocation is reused as-is — the published URL carries
+          // the port, so re-picking one would silently invalidate whatever the
+          // user already copied or scanned.
+          const allocated =
             typeof existing?.config?.["lanPort"] === "number"
               ? (existing.config["lanPort"] as number)
               : yield* allocateLanPort
+          if (allocated === undefined) {
+            return yield* Effect.fail(
+              new CaddyUnavailable({
+                reason: "port_unavailable",
+                message: `no free port for a LAN listener near ${config.lanPortBase} — free one up or set a different base`
+              })
+            )
+          }
+          const lanPort = allocated
           yield* exposures
             .upsert({
               projectId: id,

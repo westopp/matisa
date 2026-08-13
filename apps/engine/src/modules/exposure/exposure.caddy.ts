@@ -224,23 +224,45 @@ export const loopbackPortFree = (port: number): Effect.Effect<boolean> =>
     Effect.map((results) => results.every((ok) => ok))
   )
 
+/** True when nothing holds `port` on the wildcard address — the exact bind a
+ * per-project LAN listener performs. Distinct from `loopbackPortFree`: these
+ * listeners are reachable from the network, so the address they actually take
+ * is what has to be free. */
+export const wildcardPortFree = (port: number): Effect.Effect<boolean> =>
+  bindable(port, "0.0.0.0")
+
 /** First free port at or above `preferred`, skipping `exclude`. Ascending and
  * deterministic so successive boots on an unchanged machine land on the same
  * port and published URLs stay stable; `undefined` when the whole span is
  * taken (the caller degrades to `unavailable` — never a failed boot). */
-export const selectLoopbackPort = (
+const selectPort = (
+  free: (port: number) => Effect.Effect<boolean>,
   preferred: number,
-  options: { readonly span?: number; readonly exclude?: ReadonlyArray<number> } = {}
+  options: { readonly span?: number; readonly exclude?: ReadonlyArray<number> }
 ): Effect.Effect<number | undefined> =>
   Effect.gen(function* () {
     const span = options.span ?? PORT_SCAN_SPAN
     const exclude = options.exclude ?? []
     for (let port = preferred; port < preferred + span; port++) {
       if (exclude.includes(port)) continue
-      if (yield* loopbackPortFree(port)) return port
+      if (yield* free(port)) return port
     }
     return undefined
   })
+
+export const selectLoopbackPort = (
+  preferred: number,
+  options: { readonly span?: number; readonly exclude?: ReadonlyArray<number> } = {}
+): Effect.Effect<number | undefined> => selectPort(loopbackPortFree, preferred, options)
+
+/** The LAN-listener counterpart. Probed rather than counted upward from the
+ * last one used, because Caddy validates every listener in a `POST /load`
+ * atomically: one occupied LAN port does not degrade that project, it rejects
+ * the whole config and takes every other project's routes down with it. */
+export const selectWildcardPort = (
+  preferred: number,
+  options: { readonly span?: number; readonly exclude?: ReadonlyArray<number> } = {}
+): Effect.Effect<number | undefined> => selectPort(wildcardPortFree, preferred, options)
 
 // ——— admin-API client ———
 
@@ -362,6 +384,10 @@ export const makeAdmin = (adminPort: number, ownerToken: string): CaddyAdmin => 
 export interface CaddyChild {
   /** True while the child is alive. */
   readonly isRunning: () => boolean
+  /** True once the admin endpoint has answered as ours AND taken a config. Only
+   * then is an out-of-band `load` worth attempting: before it, the supervisor's
+   * own post-readiness push is what delivers the routes. */
+  readonly isReady: () => boolean
   /** Set when the admin endpoint on our port answered but is somebody else's
    * caddy: the supervisor gives up instead of respawning into a fight, and the
    * provider reports itself unusable. */
@@ -387,6 +413,7 @@ export const superviseCaddy = (opts: {
   Effect.gen(function* () {
     let child: ChildProcess | undefined
     let stopping = false
+    let ready = false
     let ownershipFault: string | undefined
     const admin = makeAdmin(opts.adminPort, opts.ownerToken)
 
@@ -425,10 +452,15 @@ export const superviseCaddy = (opts: {
       }
       const config = yield* opts.desired()
       yield* admin.load(config)
+      ready = true
     })
 
     const runLoop: Effect.Effect<void> = Effect.gen(function* () {
       while (!stopping) {
+        // A respawn starts from unready: the new child has no config until
+        // spawnOnce pushes it, and an out-of-band load in that window would be
+        // aimed at a caddy that is not listening yet.
+        ready = false
         yield* spawnOnce.pipe(
           Effect.tapError((e) =>
             Effect.logWarning(`caddy config push failed: ${e.detail ?? e.path}`)
@@ -463,6 +495,7 @@ export const superviseCaddy = (opts: {
 
     return {
       isRunning: () => child !== undefined && child.exitCode === null && !stopping,
+      isReady: () => ready && child?.exitCode === null && !stopping,
       ownershipFault: () => ownershipFault
     }
   })
