@@ -15,11 +15,15 @@ export const DEFAULT_LOG_PATH = `${MATISA_ROOT}/engine.log`
 /** File-backed keychain stub location (dev only). */
 export const DEFAULT_SECRETS_PATH = `${MATISA_ROOT}/secrets.json`
 
-/** Caddy admin API port (loopback-only; the exposure module drives it live). */
+/** PREFERRED Caddy admin API port (loopback-only; the exposure module drives it
+ * live). 2019 is also the stock default of any user-installed caddy, so this is
+ * a starting point for the probe in exposure.caddy, never an assumption. */
 export const CADDY_ADMIN_PORT = 2019
 
-/** The single HTTP listener every stable/LAN hostname routes through
- * (http://<slug>.localhost:<port>). High port — no privileged bind. */
+/** PREFERRED port for the single loopback HTTP listener every stable hostname
+ * routes through (http://<slug>.localhost:<port>). High port — no privileged
+ * bind. Like the admin port it is probed first and stepped up if taken; the
+ * port actually in use is reported as CaddyStatus.httpPort. */
 export const CADDY_HTTP_PORT = 7777
 
 /** First port of the per-project dedicated LAN listeners — the mDNS-free

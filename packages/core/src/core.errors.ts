@@ -77,7 +77,9 @@ export class PortBusy extends Schema.TaggedError<PortBusy>()("PortBusy", {
  * message (e.g. "brew install caddy") rather than retrying. */
 export class CaddyUnavailable extends Schema.TaggedError<CaddyUnavailable>()("CaddyUnavailable", {
   code: stableCode("E_CADDY_UNAVAILABLE"),
-  reason: Schema.Literal("binary_missing", "not_running"),
+  /** `port_unavailable` = a caddy exists but every candidate port for its
+   * admin/HTTP listener is held by something else on this machine. */
+  reason: Schema.Literal("binary_missing", "not_running", "port_unavailable"),
   message: Schema.String
 }) {}
 

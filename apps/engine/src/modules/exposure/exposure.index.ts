@@ -1,4 +1,5 @@
 import { Context, Effect, Layer, Option } from "effect"
+import { randomUUID } from "node:crypto"
 import {
   CaddyUnavailable,
   ValidationError,
@@ -14,11 +15,12 @@ import { AppConfig } from "../../config/config.app-config.js"
 import { CADDY_BOOTSTRAP_PATH } from "../../config/config.constants.js"
 import { exposureChanged } from "../../shared/events.js"
 import { EventsHub } from "../../server/server.events-hub.js"
-import { awaitPortBound } from "../supervisor/supervisor.probe.js"
+import { awaitPortBound, foreignListener } from "../supervisor/supervisor.probe.js"
 import {
   desiredConfig,
   findCaddyBinary,
   makeAdmin,
+  selectLoopbackPort,
   slugify,
   superviseCaddy,
   writeBootstrap,
@@ -34,10 +36,15 @@ import { makeMdnsPublisher } from "./exposure.mdns.js"
 //
 // Derivation rules:
 //   port declared            → `stable_url` row + http://<slug>.localhost:<p>
-//   LAN share toggled on     → `lan` row: <slug>.<domain> via mDNS, a dedicated
-//                              0.0.0.0 listener on an allocated port, and the
-//                              main listener flips loopback → 0.0.0.0
+//   LAN share toggled on     → `lan` row: <slug>.<domain> via mDNS plus a
+//                              dedicated 0.0.0.0 listener on an allocated port.
+//                              The shared loopback listener is NOT touched —
+//                              one project opting in must not publish the rest.
 //   port removed / project gone → rows and routes go with it
+//
+// Caddy's own two ports are chosen at boot, not assumed: `caddyPorts` below
+// probes the configured numbers and moves up until it finds a pair nothing else
+// holds, and every URL this module reports is built from what it actually got.
 //
 // Routes stay up when a project stops — a 502 is diagnosable, a dead hostname
 // is not. Exposure therefore reacts to CATALOG changes (via the events hub),
@@ -66,16 +73,71 @@ const make = Effect.gen(function* () {
   const hub = yield* EventsHub
   const sem = yield* Effect.makeSemaphore(1)
 
-  const opts = {
-    adminPort: config.caddyAdminPort,
-    httpPort: config.caddyHttpPort,
-    mdnsDomain: config.mdnsDomain
-  }
-
-  // ——— provider boot (degrades cleanly when caddy is absent) ———
+  // ——— provider boot (degrades cleanly when caddy is absent or the ports are
+  // already taken — neither may take the engine down) ———
 
   const binary = yield* findCaddyBinary().pipe(Effect.option)
-  const available = Option.isSome(binary)
+
+  /** Per-boot ownership marker: proves the admin endpoint we talk to is the
+   * child we spawned and not, say, the brew-managed caddy on :2019. */
+  const ownerToken = randomUUID()
+
+  /** Name whoever holds a port, so the log says why the URL moved. */
+  const holderOf = (port: number): Effect.Effect<string> =>
+    foreignListener(port).pipe(
+      Effect.map((held) =>
+        held === undefined
+          ? "unavailable"
+          : `held by ${held.processName ?? "unknown"} (pid ${held.pid ?? "?"})`
+      )
+    )
+
+  const caddyPorts = Option.isSome(binary)
+    ? yield* Effect.gen(function* () {
+        const adminPort = yield* selectLoopbackPort(config.caddyAdminPort)
+        if (adminPort === undefined) return undefined
+        const httpPort = yield* selectLoopbackPort(config.caddyHttpPort, {
+          exclude: [adminPort]
+        })
+        return httpPort === undefined ? undefined : { adminPort, httpPort }
+      })
+    : undefined
+
+  if (caddyPorts !== undefined) {
+    if (caddyPorts.adminPort !== config.caddyAdminPort) {
+      yield* Effect.logWarning(
+        `exposure: caddy admin :${config.caddyAdminPort} ${yield* holderOf(
+          config.caddyAdminPort
+        )} — using :${caddyPorts.adminPort} instead`
+      )
+    }
+    if (caddyPorts.httpPort !== config.caddyHttpPort) {
+      yield* Effect.logWarning(
+        `exposure: caddy http :${config.caddyHttpPort} ${yield* holderOf(
+          config.caddyHttpPort
+        )} — stable URLs will use :${caddyPorts.httpPort}`
+      )
+    }
+  }
+
+  /** The port every stable URL is built from — what we got, not what we asked
+   * for. Falls back to the configured number only for display when the provider
+   * is unusable and there is no live listener to name. */
+  const httpPort = caddyPorts?.httpPort ?? config.caddyHttpPort
+
+  const unusableReason: string | undefined = Option.isNone(binary)
+    ? "caddy not installed — brew install caddy"
+    : caddyPorts === undefined
+      ? `no free port for caddy near :${config.caddyAdminPort}/:${config.caddyHttpPort} — stable URLs unavailable`
+      : undefined
+  const available = unusableReason === undefined
+
+  const opts = {
+    adminPort: caddyPorts?.adminPort ?? config.caddyAdminPort,
+    httpPort,
+    mdnsDomain: config.mdnsDomain,
+    ownerToken
+  }
 
   const mdns = yield* makeMdnsPublisher((ip) =>
     Effect.logInfo(`exposure: LAN IP changed → ${ip ?? "none"}`).pipe(
@@ -106,27 +168,29 @@ const make = Effect.gen(function* () {
   const desired = () => specsFromStore.pipe(Effect.map((specs) => desiredConfig(specs, opts)))
 
   let child: CaddyChild | undefined
-  if (Option.isSome(binary)) {
-    yield* writeBootstrap(CADDY_BOOTSTRAP_PATH, config.caddyAdminPort)
+  if (Option.isSome(binary) && caddyPorts !== undefined) {
+    yield* writeBootstrap(CADDY_BOOTSTRAP_PATH, caddyPorts.adminPort, ownerToken)
     child = yield* superviseCaddy({
       binary: binary.value,
       bootstrapPath: CADDY_BOOTSTRAP_PATH,
-      adminPort: config.caddyAdminPort,
+      adminPort: caddyPorts.adminPort,
+      ownerToken,
       desired,
-      awaitReady: awaitPortBound(config.caddyAdminPort, 10_000),
-      onExit: (code) => Effect.logWarning(`exposure: caddy exited (code ${code ?? "?"}) — respawning`)
+      awaitReady: awaitPortBound(caddyPorts.adminPort, 10_000),
+      onExit: (code) => Effect.logWarning(`exposure: caddy exited (code ${code ?? "?"}) — respawning`),
+      onForeignAdmin: (detail) =>
+        Effect.logError(`exposure: ${detail} — not pushing config; stable URLs unavailable`)
     })
     yield* Effect.logInfo(
-      `exposure: caddy up (http :${config.caddyHttpPort}, admin :${config.caddyAdminPort})`
+      `exposure: caddy up (http :${caddyPorts.httpPort}, admin :${caddyPorts.adminPort})`
     )
   } else {
-    yield* Effect.logWarning(
-      "exposure: caddy binary not found (brew install caddy) — stable URLs unavailable"
-    )
+    yield* Effect.logWarning(`exposure: ${unusableReason ?? "caddy unusable"}`)
   }
 
-  const admin = makeAdmin(config.caddyAdminPort)
-  const running = () => child?.isRunning() ?? false
+  const admin = makeAdmin(opts.adminPort, ownerToken)
+  /** Running AND ours — a caddy we could not identify is not a caddy we use. */
+  const running = () => (child?.isRunning() ?? false) && child?.ownershipFault() === undefined
 
   /** Push the full desired config — graceful in-process swap, never a restart. */
   const push = available
@@ -147,15 +211,15 @@ const make = Effect.gen(function* () {
     const slug = slugify(project.name)
     const caddyState = !available ? "unavailable" : running() ? "active" : "error"
     const caddyMessage = !available
-      ? "caddy not installed — brew install caddy"
+      ? unusableReason
       : running()
         ? undefined
-        : "caddy not running"
+        : (child?.ownershipFault() ?? "caddy not running")
 
     const entries: Array<ExposureEntry> = [
       {
         kind: "stable_url",
-        url: `http://${slug}.localhost:${config.caddyHttpPort}`,
+        url: `http://${slug}.localhost:${httpPort}`,
         enabled: true,
         state: caddyState,
         ...(caddyMessage !== undefined ? { message: caddyMessage } : {})
@@ -168,22 +232,27 @@ const make = Effect.gen(function* () {
       const lanState = caddyState !== "active" ? caddyState : ip === undefined ? "error" : "active"
       const lanMessage =
         caddyMessage ?? (ip === undefined ? "no LAN interface available" : undefined)
-      entries.push({
-        kind: "lan",
-        url: `http://${slug}.${config.mdnsDomain}:${config.caddyHttpPort}`,
-        enabled: true,
-        state: lanState,
-        ...(lanMessage !== undefined ? { message: lanMessage } : {})
-      })
+      // Both LAN addresses point at the project's DEDICATED listener, never at
+      // the shared stable-URL port: that one is loopback-bound, so an off-machine
+      // client could not reach it even if we advertised it.
       const lanPort = lanRow.config?.["lanPort"]
-      if (typeof lanPort === "number" && ip !== undefined) {
+      if (typeof lanPort === "number") {
         entries.push({
           kind: "lan",
-          url: `http://${ip}:${lanPort}`,
+          url: `http://${slug}.${config.mdnsDomain}:${lanPort}`,
           enabled: true,
           state: lanState,
           ...(lanMessage !== undefined ? { message: lanMessage } : {})
         })
+        if (ip !== undefined) {
+          entries.push({
+            kind: "lan",
+            url: `http://${ip}:${lanPort}`,
+            enabled: true,
+            state: lanState,
+            ...(lanMessage !== undefined ? { message: lanMessage } : {})
+          })
+        }
       }
     }
     return entries
@@ -269,8 +338,8 @@ const make = Effect.gen(function* () {
         if (!available) {
           return yield* Effect.fail(
             new CaddyUnavailable({
-              reason: "binary_missing",
-              message: "caddy not installed — brew install caddy"
+              reason: Option.isNone(binary) ? "binary_missing" : "port_unavailable",
+              message: unusableReason ?? "caddy unusable"
             })
           )
         }
@@ -343,7 +412,7 @@ const make = Effect.gen(function* () {
         caddy: {
           available,
           running: running(),
-          httpPort: config.caddyHttpPort,
+          httpPort,
           ...(ip !== undefined ? { lanIp: ip } : {})
         },
         projects: perProject
