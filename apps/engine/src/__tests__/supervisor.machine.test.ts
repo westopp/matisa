@@ -38,6 +38,29 @@ describe("supervisor FSM — legal transitions", () => {
     assert.deepEqual(next(State.Idle(), Event.ForeignListener({ pid: 7 })), State.Unmanaged({ pid: 7 }))
   })
 
+  it("Unmanaged + Released → Idle", () => {
+    // The only exit from Unmanaged that is not a Start. It exists so a project
+    // stops reading `unmanaged` once the foreign holder goes away — and it is
+    // an OBSERVATION, which is why Reset (a dismissal) still cannot do it.
+    assert.equal(next(State.Unmanaged({ pid: 7 }), Event.Released())._tag, "Idle")
+    rejected(State.Unmanaged({ pid: 7 }), Event.Reset())
+  })
+
+  it("Released is meaningless anywhere but Unmanaged", () => {
+    // A late sweep must never talk a live project into Idle behind the
+    // runner's back — discovery only ever retracts its own observation.
+    for (const s of [
+      State.Idle(),
+      State.Starting({ attempt: 0 }),
+      State.Running({ pid: 1, since: 0 }),
+      State.Stopping(),
+      State.Crashed({ code: 1, signal: null }),
+      State.Errored({ reason: "x" })
+    ]) {
+      rejected(s, Event.Released())
+    }
+  })
+
   it("Starting + Healthy → Running (pid + since carried)", () => {
     assert.deepEqual(next(State.Starting({ attempt: 0 }), healthy), State.Running({ pid: 42, since: 1000 }))
   })

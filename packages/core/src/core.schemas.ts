@@ -279,6 +279,124 @@ export const ProjectPatch = Schema.Struct({
 export type ProjectPatch = typeof ProjectPatch.Type
 
 // ────────────────────────────────────────────────────────────────────────────
+// Discovery
+//
+// Everything above describes what the engine OWNS. This block describes what it
+// merely SEES: processes and containers on this machine that no matisa runner
+// spawned. Two different questions are answered from the same sweep.
+//
+//   1. "Is a configured project already up, started outside matisa?"  → a
+//      ForeignClaim against that project, and the project reads `unmanaged`.
+//      This is the redeemable case: the thing on the port is the user's own app.
+//   2. "What else is running that matisa knows nothing about?"        → an
+//      UnmanagedEntry, which the user can stop, start, or leave alone.
+//
+// Telling those apart is the whole point, and the discriminator is the process's
+// working directory: a pid whose cwd sits inside a project's root is that
+// project, whoever launched it. Containers use their name/image instead, since
+// a container's cwd is meaningless on the host.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** One TCP listener as `lsof` reports it, enriched with what the pid's own
+ *  working directory says about where it came from. `cwd` is absent when lsof
+ *  could not read it (a process owned by another user, or already gone). */
+export const ListeningPort = Schema.Struct({
+  pid: Schema.Int,
+  /** Process name as lsof reports it — `node`, `python3.12`, `com.docke`. */
+  command: Schema.String,
+  /** Raw bind address, e.g. `*:5173`, `127.0.0.1:5173`, `[::1]:5173`. */
+  address: Schema.String,
+  port: Schema.Int,
+  /** The pid's working directory. The evidence behind every ownership claim. */
+  cwd: Schema.optional(Schema.String),
+  /** Name from the nearest manifest at or above `cwd` (package.json, Cargo.toml,
+   *  pyproject.toml, go.mod) — what a human would call this thing. */
+  appName: Schema.optional(Schema.String)
+})
+export type ListeningPort = typeof ListeningPort.Type
+
+/** One container as `docker ps -a` reports it. */
+export const DiscoveredContainer = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  image: Schema.String,
+  /** running | exited | created | paused | … */
+  state: Schema.String,
+  status: Schema.String,
+  /** Host-side published ports, parsed out of the CLI's port string. */
+  hostPorts: Schema.Array(Schema.Int)
+})
+export type DiscoveredContainer = typeof DiscoveredContainer.Type
+
+/** One stack as `docker compose ls -a` reports it. */
+export const DiscoveredStack = Schema.Struct({
+  name: Schema.String,
+  status: Schema.String,
+  /** Absolute path(s) of the compose file(s), comma-joined as docker prints it. */
+  configFiles: Schema.String
+})
+export type DiscoveredStack = typeof DiscoveredStack.Type
+
+/** How confident the engine is that an unmanaged thing is a given project.
+ *  `root` — the pid's cwd is inside the project root: this IS the project.
+ *  `container` — the container carries the name matisa would have given it.
+ *  `port` — nothing but the port number matches, which is a coincidence often
+ *  enough that it is reported as the weak evidence it is. */
+export const ClaimEvidence = Schema.Literal("root", "container", "port")
+export type ClaimEvidence = typeof ClaimEvidence.Type
+
+/** A configured project that is up, run by something other than this engine.
+ *  The project reads `unmanaged` for as long as the claim holds. `port`/`pid`
+ *  are absent for a container or stack claim — a container's host pid belongs to
+ *  the daemon, and a stack has no single port. */
+export const ForeignClaim = Schema.Struct({
+  projectId: ProjectId,
+  projectName: Schema.String,
+  port: Schema.optional(Schema.Int),
+  pid: Schema.optional(Schema.Int),
+  /** Process name, container name, or stack name — whatever is actually holding it. */
+  holder: Schema.String,
+  cwd: Schema.optional(Schema.String),
+  /** What ties the holder to the project — see ClaimEvidence. `root`/`container`
+   *  mean "your app, started outside matisa" (take it over); `port` means
+   *  "something else is squatting on your port" (investigate first). */
+  evidence: ClaimEvidence,
+  /** Ready-to-print sentence explaining the claim and what it implies. */
+  message: Schema.String
+})
+export type ForeignClaim = typeof ForeignClaim.Type
+
+export const UnmanagedKind = Schema.Literal("process", "container")
+export type UnmanagedKind = typeof UnmanagedKind.Type
+
+/** Something running on this machine that is in no project's catalog entry.
+ *  `ref` is the address other RPCs take (`pid:1234`, `container:api-db-1`) —
+ *  a stable handle so a client never has to reconstruct one from parts. */
+export const UnmanagedEntry = Schema.Struct({
+  kind: UnmanagedKind,
+  ref: Schema.String,
+  /** Manifest name where one was found, else the container/process name. */
+  displayName: Schema.String,
+  /** The secondary line: image for a container, command for a process. */
+  detail: Schema.String,
+  pid: Schema.optional(Schema.Int),
+  port: Schema.optional(Schema.Int),
+  cwd: Schema.optional(Schema.String),
+  running: Schema.Boolean
+})
+export type UnmanagedEntry = typeof UnmanagedEntry.Type
+
+/** One sweep of the machine. `takenAt` is the probe time, not the request time —
+ *  a snapshot served from the TTL cache reports when it was actually taken. */
+export const DiscoverySnapshot = Schema.Struct({
+  takenAt: Schema.Number,
+  dockerDaemonRunning: Schema.Boolean,
+  claims: Schema.Array(ForeignClaim),
+  unmanaged: Schema.Array(UnmanagedEntry)
+})
+export type DiscoverySnapshot = typeof DiscoverySnapshot.Type
+
+// ────────────────────────────────────────────────────────────────────────────
 // JSON-RPC framing
 // The transport on both ends encodes/decodes these envelopes. Method-specific
 // `params`/`result` are Unknown at the frame level; the dispatcher validates

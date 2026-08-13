@@ -23,6 +23,10 @@ import { AppConfig } from "../../config/config.app-config.js"
 import { EventsHub } from "../../server/server.events-hub.js"
 import { stateChanged } from "../../shared/events.js"
 import { toEngineError } from "../../shared/error-map.js"
+import { isUnder } from "../discovery/discovery.classify.js"
+import { Discovery } from "../discovery/discovery.index.js"
+import { workingDirs } from "../discovery/discovery.probes.js"
+import { composeDownHard, inlineRemove } from "../docker/docker.actions.js"
 import { DockerDaemon } from "../docker/docker.daemon.js"
 import { PtyManager } from "../pty/pty.services.js"
 import { hardKill } from "./supervisor.kill.js"
@@ -46,6 +50,9 @@ export interface SupervisorShape {
   /** Acknowledge a terminal failure: `crashed`/`errored` → `idle`, and nothing
    *  else. No signal, no runner, no process on either side of it. */
   readonly reset: (id: ProjectId) => Effect.Effect<Accepted, EngineError>
+  /** Reclaim a project running outside the engine: end the foreign holder, then
+   *  start it here. See the implementation for what it refuses to do. */
+  readonly takeover: (id: ProjectId, force: boolean) => Effect.Effect<Accepted, EngineError>
   readonly status: (id: ProjectId) => Effect.Effect<RuntimeStatus, EngineError>
 }
 
@@ -59,6 +66,7 @@ const make = Effect.gen(function* () {
   const config = yield* AppConfig
   const ptyMgr = yield* PtyManager
   const daemon = yield* DockerDaemon
+  const discovery = yield* Discovery
   const scope = yield* Effect.scope
   const rt = yield* Effect.runtime<never>()
 
@@ -95,7 +103,22 @@ const make = Effect.gen(function* () {
         for (const p of project.ports) {
           const holder = yield* foreignListener(p.number)
           if (holder !== undefined) {
-            const message = `port ${p.number} is already in use by ${holder.processName ?? "an unknown process"}${holder.pid !== undefined ? ` (pid ${holder.pid})` : ""} — not managed by matisa`
+            // One extra lsof, only on the refusal path, and it changes what the
+            // refusal MEANS. Without the holder's working directory this can
+            // only say "something is on your port"; with it, the far more
+            // common case — the user already started this very project in a
+            // terminal — is stated as such, along with the command that fixes
+            // it. `port 3000 busy` and `your app is already up` are different
+            // problems and must not read the same.
+            const cwd =
+              holder.pid === undefined
+                ? undefined
+                : (yield* workingDirs([holder.pid])).get(holder.pid)
+            const isSelf = cwd !== undefined && isUnder(cwd, project.root)
+            const who = `${holder.processName ?? "an unknown process"}${holder.pid !== undefined ? ` (pid ${holder.pid})` : ""}`
+            const message = isSelf
+              ? `${project.name} is already running on port ${p.number} — ${who} started from ${cwd}, outside matisa. Use lifecycle.takeover to reclaim it, or stop it yourself first.`
+              : `port ${p.number} is already in use by ${who}${cwd !== undefined ? ` running in ${cwd}` : ""} — not managed by matisa, and not recognisable as ${project.name}`
             // Refused before any runner exists, so this is the only chance to
             // write it down. Without the record the refusal lived in one toast:
             // dismiss it and nothing anywhere said why the start did nothing.
@@ -200,6 +223,64 @@ const make = Effect.gen(function* () {
       return { id, state: "idle" as const }
     })
 
+  // ────────────────────────────────────────────────────────────────────────
+  // Takeover — the one operation that deliberately ends a process the engine
+  // does not own, so it is also the one with the most to get wrong.
+  //
+  // The refusal is the important part. Discovery grades its evidence: `root`
+  // and `container` mean the holder demonstrably belongs to this project (its
+  // working directory is inside the project root, or it carries the container
+  // name matisa itself would have used), while `port` means nothing matched
+  // except the port number. Acting on `port` evidence would let a stray
+  // `matisa takeover api` kill an unrelated program that happened to bind 3000
+  // — which is unrecoverable, unlike refusing. So `port` needs `force`, and the
+  // refusal names exactly what it found so the user can make that call.
+  // ────────────────────────────────────────────────────────────────────────
+  const takeover: SupervisorShape["takeover"] = (id, force) =>
+    Effect.gen(function* () {
+      const project = yield* projects.get(id).pipe(Effect.mapError(toEngineError))
+      const claim = yield* discovery.claimFor(id)
+
+      // Nothing foreign is holding it, so there is nothing to take over and
+      // `start` is the whole job. Not an error: it is the state the caller
+      // wanted, reached without us having to kill anything.
+      if (claim === undefined) return yield* start(id)
+
+      if (claim.evidence === "port" && !force) {
+        return yield* Effect.fail(
+          new PortBusy({
+            port: claim.port ?? 0,
+            pid: claim.pid,
+            processName: claim.holder,
+            message: `${claim.message}. Nothing links it to ${project.name} except the port number, so matisa will not kill it — verify it, then retry with force to proceed.`
+          })
+        )
+      }
+
+      if (project.kind === "docker") {
+        // `rm -f`, not `stop`: the container name is what the next start needs
+        // back, and a stopped-but-present container still holds it.
+        yield* inlineRemove(project.name).pipe(Effect.ignoreLogged)
+      } else if (project.kind === "compose") {
+        const file = project.composeFile
+        if (file !== undefined) yield* composeDownHard(file).pipe(Effect.ignoreLogged)
+      } else if (claim.pid !== undefined) {
+        yield* discovery.stop(`pid:${claim.pid}`).pipe(Effect.ignore)
+      }
+
+      yield* Effect.logInfo(
+        `supervisor: took over ${project.name} from ${claim.holder}${claim.pid !== undefined ? ` (pid ${claim.pid})` : ""} — ${claim.evidence} evidence${force ? ", forced" : ""}`
+      )
+
+      // The runtime row still says `unmanaged`, and `start` is legal from there
+      // (see supervisor.machine.ts) — but the row's pid now points at a corpse,
+      // so it is settled to idle first rather than left to be overwritten by
+      // whatever the new runner happens to write.
+      yield* runtimeRepo.setState(id, { state: "idle" }).pipe(Effect.ignore)
+      yield* events.emit(stateChanged(id, "unmanaged", "idle", `taken over from ${claim.holder}`))
+      return yield* start(id)
+    })
+
   const status: SupervisorShape["status"] = (id) =>
     runtimeRepo.getState(id).pipe(
       Effect.mapError(toEngineError),
@@ -218,7 +299,7 @@ const make = Effect.gen(function* () {
       )
     )
 
-  return Supervisor.of({ start, stop, restart, kill, reset, status })
+  return Supervisor.of({ start, stop, restart, kill, reset, takeover, status })
 })
 
 export const SupervisorLive = Layer.scoped(Supervisor, make)

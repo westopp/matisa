@@ -1,6 +1,8 @@
 import { Console, Context, Effect, Layer } from "effect"
 import type {
   Accepted,
+  DiscoveryActionResult,
+  DiscoverySnapshot,
   EngineEvent,
   EnvContext,
   ExposureEntry,
@@ -36,6 +38,8 @@ export interface RendererService {
     id: string,
     entries: ReadonlyArray<ExposureEntry>
   ) => Effect.Effect<void>
+  readonly discovery: (s: DiscoverySnapshot) => Effect.Effect<void>
+  readonly discoveryAction: (r: DiscoveryActionResult) => Effect.Effect<void>
   readonly event: (e: EngineEvent) => Effect.Effect<void>
   readonly cursor: (n: number) => Effect.Effect<void>
   /** Generic sink: `value` for --json, `human` for the table mode. */
@@ -66,6 +70,8 @@ const make = Effect.gen(function* () {
     status: (s) => emit(s, T.statusLine(s)),
     exposureSnapshot: (s) => emit(s, T.exposureTable(s)),
     exposureEntries: (id, entries) => emit({ projectId: id, entries }, T.exposureEntriesLines(id, entries)),
+    discovery: (s) => emit(s, T.discoveryTable(s)),
+    discoveryAction: (r) => emit(r, T.discoveryActionLine(r)),
     event: (e) => emit(e, formatEvent(e)),
     cursor: (n) => emit({ nextCursor: n }, `next-cursor ${n}`),
     raw: (value, human) => emit(value, human)

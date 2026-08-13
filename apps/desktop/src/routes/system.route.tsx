@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useNavigate, useParams } from "@tanstack/react-router"
-import type { ProjectId, RuntimeState } from "@matisa/core"
+import type { ForeignClaim, ProjectId, RuntimeState, UnmanagedEntry } from "@matisa/core"
 import { useEngine } from "~/store/store.engine"
 import { useUi } from "~/store/store.ui"
 import { systemKeyOf, SYSTEM_IDS, type SystemKey } from "~/store/store.systems"
@@ -277,6 +277,236 @@ const DockerPane = () => {
   )
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Discovery — the pane for everything matisa did NOT start.
+//
+// Two lists, and the order between them is the design. Claims come first
+// because each one is a decision waiting on the user: a project of theirs is
+// up and this engine is not running it. Unmanaged rows come second because
+// they are inventory — worth seeing, rarely worth acting on.
+//
+// The evidence is shown, not summarised away. "Reclaim" and "Force reclaim"
+// are the same call; which one a claim gets depends on whether the holder is
+// demonstrably that project (its working directory is inside the project
+// root), and the button says so rather than making the user infer it.
+// ────────────────────────────────────────────────────────────────────────────
+
+const ClaimRow = ({ claim }: { claim: ForeignClaim }) => {
+  const takeover = useEngine((s) => s.takeover)
+  const pending = useEngine((s) => s.pending[claim.projectId])
+  const [confirming, setConfirming] = useState(false)
+  const weak = claim.evidence === "port"
+
+  return (
+    <div className={`disc-claim ${weak ? "weak" : ""}`}>
+      <div className="disc-claim-head">
+        <Icons.Alert size={14} sw={2.2} />
+        <span className="disc-claim-name">{claim.projectName}</span>
+        <span className="disc-claim-holder mono">{claim.holder}</span>
+        {claim.port !== undefined && <span className="disc-chip mono">:{claim.port}</span>}
+        {claim.pid !== undefined && <span className="disc-chip mono">pid {claim.pid}</span>}
+      </div>
+      <div className="disc-claim-msg">{claim.message}</div>
+      {claim.cwd !== undefined && (
+        <div className="disc-claim-cwd mono" title={claim.cwd}>
+          {claim.cwd}
+        </div>
+      )}
+      <div className="disc-claim-actions">
+        {pending !== undefined ? (
+          <button className="btn sm" disabled>
+            <Spinner size={12} /> Reclaiming…
+          </button>
+        ) : weak ? (
+          <button
+            className="btn sm danger"
+            title="Nothing links this process to the project except the port number"
+            onClick={() => setConfirming(true)}
+          >
+            Force reclaim
+          </button>
+        ) : (
+          <button className="btn sm" onClick={() => void takeover(claim.projectId)}>
+            Reclaim
+          </button>
+        )}
+      </div>
+
+      {confirming && (
+        <ConfirmDialog
+          title={`Force reclaim ${claim.projectName}?`}
+          confirmLabel="Stop it and start mine"
+          danger
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => {
+            void takeover(claim.projectId, true)
+            setConfirming(false)
+          }}
+        >
+          {claim.holder} (pid {claim.pid}) will be stopped, and it is not recognisable as{" "}
+          {claim.projectName}
+          {claim.cwd === undefined ? "" : ` — it is running in ${claim.cwd}`}. This cannot be undone;
+          whatever that process was doing is lost.
+        </ConfirmDialog>
+      )}
+    </div>
+  )
+}
+
+const UnmanagedRow = ({ entry }: { entry: UnmanagedEntry }) => {
+  const stopUnmanaged = useEngine((s) => s.stopUnmanaged)
+  const startUnmanaged = useEngine((s) => s.startUnmanaged)
+
+  return (
+    <div className="disc-row">
+      <StatusFigure state={entry.running ? "unmanaged" : "idle"} size={14} dotSize={7} />
+      <div className="disc-row-text">
+        <div className="disc-row-name">
+          {entry.displayName}
+          {entry.port !== undefined && <span className="disc-chip mono">:{entry.port}</span>}
+          <span className="disc-chip mono">{entry.ref}</span>
+        </div>
+        <div className="disc-row-detail mono" title={entry.detail}>
+          {entry.detail}
+        </div>
+      </div>
+      {entry.running ? (
+        <button className="btn sm danger" title="Stop it" onClick={() => void stopUnmanaged(entry.ref)}>
+          Stop
+        </button>
+      ) : (
+        // Only containers reach here: a stopped process has no command left to
+        // re-run, so discovery never lists one.
+        <button className="btn sm" title="Start it" onClick={() => void startUnmanaged(entry.ref)}>
+          Start
+        </button>
+      )}
+    </div>
+  )
+}
+
+const DiscoveryPane = () => {
+  const snapshot = useEngine((s) => s.discovery)
+  const sweeping = useEngine((s) => s.discoverySweeping)
+  const refreshDiscovery = useEngine((s) => s.refreshDiscovery)
+
+  const claims = snapshot?.claims ?? []
+  const unmanaged = snapshot?.unmanaged ?? []
+  const state: RuntimeState = sweeping ? "starting" : claims.length > 0 ? "errored" : "idle"
+
+  return (
+    <>
+      <div className="hero">
+        <div className="hero-top">
+          <div className="hero-id">
+            <span className="hero-icon">
+              <Icons.Search size={22} />
+            </span>
+            <div className="hero-id-text">
+              <div className="hero-status-row">
+                <StatusFigure state={state} size={16} dotSize={8} />
+                <span className={`hero-status-label ${state}`}>
+                  {sweeping
+                    ? "sweeping"
+                    : snapshot === null
+                      ? "never swept"
+                      : claims.length > 0
+                        ? `${claims.length} outside matisa`
+                        : "nothing unaccounted for"}
+                </span>
+              </div>
+              <h1 className="hero-name">
+                Discovery
+                <span className="hero-kind">
+                  <Icons.Broadcast size={11} />
+                  system
+                </span>
+              </h1>
+            </div>
+          </div>
+
+          <div className="hero-top-actions">
+            <button
+              className="ico-btn"
+              title="Sweep again"
+              disabled={sweeping}
+              onClick={() => void refreshDiscovery(true)}
+            >
+              {sweeping ? <Spinner size={14} /> : <Icons.Refresh size={15} />}
+            </button>
+          </div>
+        </div>
+
+        <div className="hero-url-row">
+          <div className="sys-facts">
+            <Fact
+              label="swept"
+              value={snapshot === null ? "never" : new Date(snapshot.takenAt).toLocaleTimeString()}
+              mono={false}
+            />
+            <Fact
+              label="docker"
+              value={snapshot?.dockerDaemonRunning === true ? "running" : "down"}
+              mono={false}
+            />
+            <Fact label="unmanaged" value={String(unmanaged.length)} />
+          </div>
+        </div>
+      </div>
+
+      <section className="card open">
+        <header className="card-head">
+          <span className="card-toggle static">
+            <Icons.Alert size={14} />
+            <span className="card-title">Running outside matisa</span>
+          </span>
+        </header>
+        <div className="card-body">
+          {claims.length === 0 ? (
+            <div className="card-empty">
+              {/* The distinction matters: "we looked and found nothing" is not
+                  the same claim as "we have not looked". */}
+              {snapshot === null
+                ? "Not swept yet — press refresh to look."
+                : "Every configured project is either at rest or running under this engine."}
+            </div>
+          ) : (
+            <div className="disc-claims">
+              {claims.map((c) => (
+                <ClaimRow key={`${c.projectId}:${c.pid ?? c.holder}`} claim={c} />
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="card open">
+        <header className="card-head">
+          <span className="card-toggle static">
+            <Icons.Grid size={14} />
+            <span className="card-title">Unmanaged</span>
+          </span>
+        </header>
+        <div className="card-body">
+          {unmanaged.length === 0 ? (
+            <div className="card-empty">
+              {snapshot === null
+                ? "Not swept yet."
+                : "Nothing else on this machine looks like a dev server or a container of yours."}
+            </div>
+          ) : (
+            <div className="disc-rows">
+              {unmanaged.map((u) => (
+                <UnmanagedRow key={u.ref} entry={u} />
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+    </>
+  )
+}
+
 export const SystemRoute = () => {
   const { systemId } = useParams({ from: "/system/$systemId" })
   const navigate = useNavigate()
@@ -301,5 +531,9 @@ export const SystemRoute = () => {
   // Nothing below the header: a system has no environment to layer, no commands
   // to name and no terminals to tile. Inventing empty cards for all three would
   // make the pane look broken rather than finished.
-  return <main className="main">{key === "engine" ? <EnginePane /> : <DockerPane />}</main>
+  return (
+    <main className="main">
+      {key === "engine" ? <EnginePane /> : key === "docker" ? <DockerPane /> : <DiscoveryPane />}
+    </main>
+  )
 }

@@ -26,6 +26,13 @@ export const RPC_INTERNAL = -32603
 export const RPC_NOT_FOUND = -32004
 export const RPC_PORT_CONFLICT = -32005
 export const RPC_CADDY_UNAVAILABLE = -32006
+/** Someone outside matisa holds the port. Not an internal fault, and the
+ *  difference matters to an automated caller: this one is resolved by looking
+ *  at `discovery.snapshot` and deciding, not by retrying. */
+export const RPC_PORT_BUSY = -32007
+/** The action needs Docker and Docker is down — the client's cue to prompt,
+ *  call docker.daemon.start, and replay. Also not a fault. */
+export const RPC_DOCKER_DAEMON_REQUIRED = -32008
 
 const codeFor = (err: EngineError): number => {
   switch (err.code) {
@@ -37,6 +44,10 @@ const codeFor = (err: EngineError): number => {
       return RPC_PORT_CONFLICT
     case "E_CADDY_UNAVAILABLE":
       return RPC_CADDY_UNAVAILABLE
+    case "E_PORT_BUSY":
+      return RPC_PORT_BUSY
+    case "E_DOCKER_DAEMON_REQUIRED":
+      return RPC_DOCKER_DAEMON_REQUIRED
     case "E_INTERNAL":
     default:
       return RPC_INTERNAL

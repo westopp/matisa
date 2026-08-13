@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import type { ById, ClearFailuresParams, FailuresParams } from "@matisa/core"
+import type { ById, ClearFailuresParams, FailuresParams, TakeoverParams } from "@matisa/core"
 import type { RuntimeRepoShape } from "@matisa/store"
 import type { SupervisorShape } from "../../modules/supervisor/supervisor.services.js"
 import type { Handlers } from "../server.dispatcher.js"
@@ -17,6 +17,7 @@ export const lifecycleHandlers = (
   | "lifecycle.restart"
   | "lifecycle.kill"
   | "lifecycle.reset"
+  | "lifecycle.takeover"
   | "lifecycle.status"
   | "lifecycle.failures"
   | "lifecycle.clearFailures"
@@ -26,6 +27,10 @@ export const lifecycleHandlers = (
   "lifecycle.restart": (params) => supervisor.restart((params as ById).id),
   "lifecycle.kill": (params) => supervisor.kill((params as ById).id),
   "lifecycle.reset": (params) => supervisor.reset((params as ById).id),
+  "lifecycle.takeover": (params) => {
+    const p = params as TakeoverParams
+    return supervisor.takeover(p.id, p.force)
+  },
   "lifecycle.status": (params) => supervisor.status((params as ById).id),
   "lifecycle.failures": (params) => {
     const p = params as FailuresParams

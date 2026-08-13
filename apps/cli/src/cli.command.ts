@@ -18,6 +18,8 @@ export const cli = globals.pipe(
     C.run, // run <project> <command> — interactive PTY
     C.group, // group set | list | rm
     C.exposure, // exposure list | share | unshare (stable URLs + LAN)
+    C.discovery, // discovery list | stop | start — what matisa did NOT start
+    C.takeover, // takeover <id> — reclaim a project running outside the engine
     C.engine, // engine status | start | stop
     C.docker, // docker daemon status | start | stop
     C.logs, // logs <id> [--lines N] [-f]

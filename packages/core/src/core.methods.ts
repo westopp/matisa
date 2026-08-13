@@ -3,6 +3,7 @@ import { EngineEvent } from "./core.events.js"
 import {
   CommandVar,
   ContextId,
+  DiscoverySnapshot,
   DockerDaemonState,
   EnvContext,
   ExposureEntry,
@@ -142,6 +143,14 @@ export type ClearFailuresParams = typeof ClearFailuresParams.Type
 
 export const ClearedResult = Schema.Struct({ cleared: Schema.Int })
 export type ClearedResult = typeof ClearedResult.Type
+
+export const TakeoverParams = Schema.Struct({
+  id: ProjectId,
+  /** Proceed even when the only thing tying the holder to the project is the
+   *  port number. Off by default: see lifecycle.takeover. */
+  force: Schema.optionalWith(Schema.Boolean, { default: () => false })
+})
+export type TakeoverParams = typeof TakeoverParams.Type
 
 // —— named commands ——
 
@@ -323,6 +332,28 @@ export const ExposureEntries = Schema.Struct({
 })
 export type ExposureEntries = typeof ExposureEntries.Type
 
+// —— discovery ——
+
+/** A sweep costs a handful of `lsof`/`docker` shell-outs, so results are cached
+ *  briefly and concurrent callers share one probe. `refresh` forces a new sweep
+ *  — the honest thing to send right after acting on what a snapshot reported. */
+export const DiscoverySnapshotParams = Schema.Struct({
+  refresh: Schema.optionalWith(Schema.Boolean, { default: () => false })
+})
+export type DiscoverySnapshotParams = typeof DiscoverySnapshotParams.Type
+
+/** Address an unmanaged thing by the `ref` its snapshot entry carried. */
+export const ByRef = Schema.Struct({ ref: Schema.String })
+export type ByRef = typeof ByRef.Type
+
+export const DiscoveryActionResult = Schema.Struct({
+  ref: Schema.String,
+  /** What the entry is doing now, as observed after the action. */
+  running: Schema.Boolean,
+  message: Schema.String
+})
+export type DiscoveryActionResult = typeof DiscoveryActionResult.Type
+
 // —— events ——
 
 export const SubscribeParams = Schema.Struct({
@@ -430,6 +461,12 @@ export const methods = {
    *  A no-op from any other state, so a stale click can never disturb something
    *  that is actually alive. */
   "lifecycle.reset": { params: ById, result: Accepted },
+  /** Reclaim a project that is already up outside matisa: stop whatever holds
+   *  its declared port, then start it under the engine. Refuses when the holder
+   *  is only circumstantially linked to the project (evidence `port`) unless
+   *  `force` is set — killing a stranger's process on a port-number coincidence
+   *  is the one mistake this command must not make on its own. */
+  "lifecycle.takeover": { params: TakeoverParams, result: Accepted },
   "lifecycle.status": { params: ById, result: RuntimeStatus },
 
   "events.subscribe": { params: SubscribeParams, result: SubscribeResult },
@@ -474,6 +511,15 @@ export const methods = {
   "docker.daemon.stop": { params: Schema.Void, result: DaemonStatusResult },
 
   "resources.snapshot": { params: Schema.Void, result: ResourcesSnapshot },
+
+  "discovery.snapshot": { params: DiscoverySnapshotParams, result: DiscoverySnapshot },
+  /** Stop an unmanaged process (SIGTERM to its group, then SIGKILL) or
+   *  container (`docker stop`). Nothing is adopted — the engine ends something
+   *  it does not own because the user asked it to, and says so. */
+  "discovery.stop": { params: ByRef, result: DiscoveryActionResult },
+  /** Start a stopped unmanaged container. Containers only: a dead process has
+   *  no command left to re-run, which is precisely what a catalog entry is for. */
+  "discovery.start": { params: ByRef, result: DiscoveryActionResult },
 
   "exposure.snapshot": { params: Schema.Void, result: ExposureSnapshot },
   "exposure.lan.set": { params: ExposureLanSetParams, result: ExposureEntries }

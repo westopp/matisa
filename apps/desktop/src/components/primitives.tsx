@@ -488,12 +488,31 @@ export const ProjectAvatar = ({
 export const LifecycleButton = ({ project, size = 18 }: { project: ProjectWithState; size?: number }) => {
   const start = useEngine((s) => s.start)
   const stop = useEngine((s) => s.stop)
+  const takeover = useEngine((s) => s.takeover)
   const { busy, intent, running, stalled } = useLifecycleState(project)
 
   if (busy) {
     return (
       <button className="ico-primary busy" title={intentLabel(intent!)} disabled>
         <Spinner size={size - 4} />
+      </button>
+    )
+  }
+
+  // `unmanaged` is the one state where the obvious control is the wrong one.
+  // The project IS up — started in a terminal, or by a previous engine — so a
+  // Start would only fail on its own port, and a Stop has nothing here to
+  // signal. Reclaim is what the user actually wants: end the foreign holder,
+  // then run it under matisa. The engine refuses on weak evidence and says so,
+  // which is why this can be a single press rather than a dialog.
+  if (project.state === "unmanaged") {
+    return (
+      <button
+        className="ico-primary warn"
+        title="Running outside matisa — reclaim it (stops the process holding the port, then starts it here)"
+        onClick={() => void takeover(project.id)}
+      >
+        <Icons.Restart size={size} />
       </button>
     )
   }

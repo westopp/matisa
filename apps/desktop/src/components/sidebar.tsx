@@ -2,7 +2,7 @@ import { useMemo, useState } from "react"
 import { Collapsible } from "@westopp/react-collapsible"
 import type { Group, ProjectId, ProjectKind, ProjectWithState, RuntimeState } from "@matisa/core"
 import { useEngine } from "~/store/store.engine"
-import { SYSTEM_IDS } from "~/store/store.systems"
+import { SYSTEM_IDS, systemKeyOf } from "~/store/store.systems"
 import { cardName } from "~/lib/view-transition"
 import { Icons } from "./icons"
 import { ConfirmDialog } from "./forms/confirm"
@@ -343,6 +343,9 @@ const SystemsGroup = ({
   const startDaemon = useEngine((s) => s.startDaemon)
   const stopDaemon = useEngine((s) => s.stopDaemon)
   const shutdownEngine = useEngine((s) => s.shutdownEngine)
+  const discovery = useEngine((s) => s.discovery)
+  const sweeping = useEngine((s) => s.discoverySweeping)
+  const refreshDiscovery = useEngine((s) => s.refreshDiscovery)
   const [confirmShutdown, setConfirmShutdown] = useState(false)
 
   // Systems speak the same status vocabulary as projects — a running daemon is
@@ -361,6 +364,21 @@ const SystemsGroup = ({
   const engineUp = status === "open"
   const dockerUp = daemon.state === "running"
 
+  // Discovery is not a daemon — nothing about it can be up or down. Its state
+  // reports its FINDINGS, because that is the only thing a glance at the
+  // sidebar can usefully ask of it: a claim against a configured project is a
+  // problem the user has to resolve (`errored`), anything else is at rest.
+  const claims = discovery?.claims.length ?? 0
+  const unmanagedCount = discovery?.unmanaged.length ?? 0
+  const discoveryState: RuntimeState = sweeping ? "starting" : claims > 0 ? "errored" : "idle"
+  const discoveryMeta = sweeping
+    ? "sweeping"
+    : discovery === null
+      ? "never swept"
+      : claims > 0
+        ? `${claims} outside matisa`
+        : `${unmanagedCount} unmanaged`
+
   return (
     <div className="parent-group">
       {/* No fold control: Systems has no group layer under it — its cards ARE
@@ -368,7 +386,7 @@ const SystemsGroup = ({
       <BandHead
         collapsed={collapsed}
         title="Systems"
-        count={(engineUp ? 1 : 0) + (dockerUp ? 1 : 0)}
+        count={(engineUp ? 1 : 0) + (dockerUp ? 1 : 0) + (claims > 0 ? 1 : 0)}
         onToggle={onToggle}
         holdsSelection={holdsSelection}
       />
@@ -425,6 +443,31 @@ const SystemsGroup = ({
               onStart={() => void startDaemon()}
               onStop={() => void stopDaemon()}
             />
+          </SystemCard>
+
+          <SystemCard
+            id={SYSTEM_IDS.discovery}
+            name="Discovery"
+            icon={<Icons.Search size={14} />}
+            state={discoveryState}
+            meta={discoveryMeta}
+            active={selectedId === SYSTEM_IDS.discovery}
+            open={openId === SYSTEM_IDS.discovery}
+            openOnSelect={compact}
+            onSelect={() => onSelect(SYSTEM_IDS.discovery)}
+            onOpen={() => onOpen(SYSTEM_IDS.discovery)}
+            onToggleOpen={() => onToggleOpen(SYSTEM_IDS.discovery)}
+          >
+            {/* Not a SystemButton: there is nothing here to start or stop.
+                Sweeping again is the only action the card itself offers. */}
+            <button
+              className="ico-btn"
+              title="Sweep for anything running that matisa did not start"
+              disabled={sweeping}
+              onClick={() => void refreshDiscovery(true)}
+            >
+              {sweeping ? <Spinner size={13} /> : <Icons.Refresh size={14} />}
+            </button>
           </SystemCard>
         </div>
         </div>
@@ -558,7 +601,7 @@ export const Sidebar = ({
   /** Which row carries the selection mark, or `null` when the card shows it. */
   const selectionAt = ((): { readonly kind: string; readonly key?: string } | null => {
     if (selectedId === null) return null
-    if (SYSTEM_IDS.engine === selectedId || SYSTEM_IDS.docker === selectedId) {
+    if (systemKeyOf(selectedId) !== null) {
       return bucketCollapsed["systems"] === true ? { kind: "systems" } : null
     }
     for (const b of buckets) {

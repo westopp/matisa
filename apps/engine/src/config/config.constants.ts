@@ -90,3 +90,15 @@ export const SHELL_REAP_INTERVAL_MS = 60_000
  * else, and killing it would be an act of vandalism. */
 export const ORPHAN_PID_AGE_TOLERANCE_MS = 120_000
 export const ORPHAN_TERM_GRACE_MS = 2_000
+
+/** How long a discovery sweep stays fresh. Foreign processes emit no events, so
+ * seeing them at all means probing — several lsof/docker shell-outs per sweep.
+ * The TTL is what stops a polling client (or three) from paying that repeatedly
+ * for an answer that cannot have changed much; `refresh: true` bypasses it when
+ * a caller has just acted and needs the truth now. */
+export const DISCOVERY_TTL_MS = 5_000
+
+/** Grace given to an unmanaged process between SIGTERM and SIGKILL. Shorter
+ * than a supervised stop: this is not our process, we have no drain contract
+ * with it, and the user asked for it to be gone. */
+export const DISCOVERY_TERM_GRACE_MS = 3_000

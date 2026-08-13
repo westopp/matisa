@@ -8,6 +8,7 @@ import {
   type ContextId,
   type CrashRecord,
   type DaemonStatusResult,
+  type DiscoverySnapshot,
   type EngineStatus,
   type EnvContext,
   type EnvSetParams,
@@ -229,6 +230,13 @@ interface EngineState {
    *  and patched by exposure_changed events. */
   exposures: Record<string, ReadonlyArray<ExposureEntry>>
   caddy: ExposureSnapshot["caddy"] | null
+  /** The last sweep of what is running that matisa did NOT start. Null until
+   *  one has been taken — unlike every other slice here this one is not fed by
+   *  events, because foreign processes emit none: it only changes when someone
+   *  asks. `discoverySweeping` exists so the button can say it is working,
+   *  since an lsof over a busy machine is visibly not instant. */
+  discovery: DiscoverySnapshot | null
+  discoverySweeping: boolean
   runSessions: Record<string, RunSession>
   /** Projects with a lifecycle request in flight, by the intent that started it. */
   pending: Record<string, Intent>
@@ -246,6 +254,10 @@ interface EngineState {
   refreshContexts: () => Promise<void>
   refreshResources: () => Promise<void>
   refreshExposures: () => Promise<void>
+  /** Sweep for unmanaged processes/containers. `force` skips the engine's TTL
+   *  cache — what a user pressing Refresh means, and what a caller that just
+   *  stopped something needs. */
+  refreshDiscovery: (force?: boolean) => Promise<void>
   loadCommands: (projectId: ProjectId) => Promise<void>
   ensureRunSession: (projectId: ProjectId) => Promise<SessionId | null>
 
@@ -262,6 +274,14 @@ interface EngineState {
    *  engine no-ops it from any other state. The project's recorded failures go
    *  with it, since the state and the reason for it are one thing to dismiss. */
   resetProject: (projectId: ProjectId) => Promise<void>
+  /** Reclaim a project that is up outside the engine: end the holder, then
+   *  start it here. The engine refuses unless the holder is recognisably this
+   *  project's, so `force` is the user overriding that — never a default. */
+  takeover: (projectId: ProjectId, force?: boolean) => Promise<void>
+  /** Stop / start something matisa does not own. Neither adopts it into the
+   *  catalog; both re-sweep so the list reflects what just happened. */
+  stopUnmanaged: (ref: string) => Promise<void>
+  startUnmanaged: (ref: string) => Promise<void>
   /** Forget recorded failures — one project's, or every project's. */
   clearFailures: (projectId?: ProjectId) => Promise<void>
   /** Forget activity entries — one project's (or system's), or all of them.
@@ -323,6 +343,8 @@ export const useEngine = create<EngineState>()((set, get) => ({
   engine: null,
   exposures: {},
   caddy: null,
+  discovery: null,
+  discoverySweeping: false,
   runSessions: {},
   pending: {},
 
@@ -377,6 +399,10 @@ export const useEngine = create<EngineState>()((set, get) => ({
       rpc.call("docker.daemon.status", undefined).then((daemon) => set({ daemon })),
       rpc.call("lifecycle.failures", { limit: 20 }).then((failures) => set({ failures })),
       get().refreshExposures(),
+      // Swept once on connect so a project already up outside matisa reads
+      // `unmanaged` from the first paint, rather than sitting there as `idle`
+      // with a Run button that would fail on the port.
+      get().refreshDiscovery(),
       // History, not liveness: the live subscription starts at `cursor`, so this
       // reaches BACK of it. A pull that fails costs the Activity tab its
       // backfill and nothing else — never the whole handshake.
@@ -412,6 +438,24 @@ export const useEngine = create<EngineState>()((set, get) => ({
       set({ exposures: next, caddy: snapshot.caddy })
     } catch {
       set({ exposures: {}, caddy: null })
+    }
+  },
+
+  refreshDiscovery: async (force = false) => {
+    set({ discoverySweeping: true })
+    try {
+      // The sweep also reconciles idle↔unmanaged engine-side, so the catalog is
+      // re-read after it: without that the pane could name a project as held
+      // while its own card still showed `idle`.
+      const snapshot = await rpc.call("discovery.snapshot", { refresh: force })
+      set({ discovery: snapshot })
+      if (snapshot.claims.length > 0) await get().refreshCatalog()
+    } catch {
+      // Version skew with an engine that predates the module: no listing is
+      // degraded, not a failure worth a toast on every poll.
+      set({ discovery: null })
+    } finally {
+      set({ discoverySweeping: false })
     }
   },
 
@@ -519,6 +563,46 @@ export const useEngine = create<EngineState>()((set, get) => ({
     } catch (cause) {
       reportError(cause, "could not reset")
     }
+  },
+
+  takeover: async (projectId, force = false) => {
+    get().markPending(projectId, "starting")
+    try {
+      await rpc.call("lifecycle.takeover", { id: projectId, force })
+      await get().refreshDiscovery(true)
+    } catch (cause) {
+      get().clearPending(projectId)
+      // E_PORT_BUSY here is the engine declining to kill a process it cannot
+      // tie to this project. That is a decision for the user, so it is recorded
+      // rather than left in a toast they may dismiss without reading.
+      reportError(cause, "could not take over")
+      get().recordFailure({
+        projectId,
+        ts: Date.now(),
+        kind: "error",
+        summary: describe(cause).title
+      })
+    }
+  },
+
+  stopUnmanaged: async (ref) => {
+    try {
+      const result = await rpc.call("discovery.stop", { ref })
+      toast.success(result.message)
+    } catch (cause) {
+      reportError(cause, "could not stop it")
+    }
+    await get().refreshDiscovery(true)
+  },
+
+  startUnmanaged: async (ref) => {
+    try {
+      const result = await rpc.call("discovery.start", { ref })
+      toast.success(result.message)
+    } catch (cause) {
+      reportError(cause, "could not start it")
+    }
+    await get().refreshDiscovery(true)
   },
 
   clearFailures: async (projectId) => {

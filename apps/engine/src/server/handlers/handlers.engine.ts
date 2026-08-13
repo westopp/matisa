@@ -39,8 +39,8 @@ export const engineHandlers = (
       startedAt,
       socketPath: config.socketPath,
       dbPath: config.dbPath,
-      modulesFull: ["catalog", "supervisor", "events", "pty", "docker", "commands", "groups", "resources", "exposure"],
-      modulesStub: ["discovery"]
+      modulesFull: ["catalog", "supervisor", "events", "pty", "docker", "commands", "groups", "resources", "exposure", "discovery"],
+      modulesStub: []
     }),
   "engine.shutdown": () =>
     Effect.sync(() => {

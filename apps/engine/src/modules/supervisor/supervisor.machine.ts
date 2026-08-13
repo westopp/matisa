@@ -29,6 +29,11 @@ export type Event = Data.TaggedEnum<{
   Exit: { readonly code: number | null; readonly signal: string | null }
   Timeout: {}
   ForeignListener: { readonly pid: number }
+  /** The foreign holder is gone — discovery swept and found nothing on the
+   *  project's port. The counterpart to ForeignListener, and the ONLY way out
+   *  of Unmanaged that is not a Start: `unmanaged` is an observation, so only a
+   *  fresh observation may retract it. */
+  Released: {}
   /** Acknowledge a terminal failure. The user has read why it died and wants
    *  the project back at rest — a dismissal, not a lifecycle action: there is
    *  no process on either side of it. Legal ONLY from Crashed/Errored, so it
@@ -108,6 +113,7 @@ export const transition = (state: State, event: Event): Option.Option<State> => 
     case "Unmanaged":
       if (event._tag === "Start") return Option.some(State.Starting({ attempt: event.attempt }))
       if (event._tag === "Fault") return Option.some(State.Errored({ reason: event.reason }))
+      if (event._tag === "Released") return Option.some(State.Idle())
       return Option.none()
   }
 }
