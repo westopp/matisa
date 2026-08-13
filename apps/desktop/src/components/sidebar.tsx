@@ -1,6 +1,13 @@
 import { useMemo, useState } from "react"
 import { Collapsible } from "@westopp/react-collapsible"
-import type { Group, ProjectId, ProjectKind, ProjectWithState, RuntimeState } from "@matisa/core"
+import type {
+  Group,
+  ProjectId,
+  ProjectKind,
+  ProjectWithState,
+  RuntimeState,
+  UnmanagedEntry
+} from "@matisa/core"
 import { useEngine } from "~/store/store.engine"
 import { SYSTEM_IDS, systemKeyOf } from "~/store/store.systems"
 import { cardName } from "~/lib/view-transition"
@@ -242,6 +249,57 @@ const SystemButton = ({
   )
 }
 
+/** One unmanaged thing, as a row in the Systems band.
+ *
+ *  Deliberately NOT a SystemCard: there is nothing to select and nothing to
+ *  open. Matisa knows this process only as a pid and a port — no command, no
+ *  environment, no logs — so a chevron would lead to a pane with nothing in it.
+ *  The one control is the one action that is actually available.
+ *
+ *  Start appears only for containers. A stopped process has no command left to
+ *  re-run, and inventing one from a pid we watched die is exactly the kind of
+ *  guess that gets the wrong thing launched. */
+const UnmanagedCard = ({
+  entry,
+  onStop,
+  onStart
+}: {
+  entry: UnmanagedEntry
+  onStop: () => void
+  onStart: () => void
+}) => (
+  <div className="svc-cell">
+    <div className="sys-row unmanaged" title={entry.detail}>
+      <span className="sys-icon">
+        {entry.kind === "container" ? <Icons.Docker size={14} /> : <Icons.Terminal size={14} />}
+      </span>
+      <span className="svc-body">
+        <span className="svc-name">{entry.displayName}</span>
+        <span className="svc-meta">
+          <StatusFigure state={entry.running ? "unmanaged" : "idle"} size={14} />
+          {entry.port !== undefined && <span className="svc-chip">:{entry.port}</span>}
+          {/* A container's ref is `container:<its own name>`, which is the line
+              above it again. Its image is the thing that actually says what it
+              is. A process keeps its ref, because `pid:1234` is new information
+              and is what the CLI takes. */}
+          <span className="svc-chip trunc">{entry.kind === "container" ? entry.detail : entry.ref}</span>
+        </span>
+      </span>
+      <span className="sys-actions" onClick={(e) => e.stopPropagation()}>
+        {entry.running ? (
+          <button className="ico-primary danger" title={`Stop ${entry.displayName}`} onClick={onStop}>
+            <Icons.Stop size={16} />
+          </button>
+        ) : (
+          <button className="ico-primary success" title={`Start ${entry.displayName}`} onClick={onStart}>
+            <Icons.Play size={16} />
+          </button>
+        )}
+      </span>
+    </div>
+  </div>
+)
+
 /** A system's card. Same interaction contract as a project's — a click selects,
  *  the chevron opens the detail pane, a click in the rail switches the pane —
  *  because a system that could only be looked at was the one thing on the board
@@ -316,6 +374,142 @@ const SystemCard = ({
   </div>
 )
 
+// ────────────────────────────────────────────────────────────────────────────
+// Unmanaged — a band of its own, the peer of Projects, Containers and Systems.
+//
+// It is not a system and it does not belong inside one. A system is a piece of
+// matisa's own machinery that the user can inspect; these are other people's
+// processes, and the only thing they have in common with the engine is that
+// neither is a project. So they get their own band, split the same way the
+// catalog is — Projects for processes, Docker containers for containers —
+// because "an unmanaged node server" and "an unmanaged postgres container" are
+// as different from each other as their managed counterparts are.
+//
+// There is no Discovery card any more. Discovery is the mechanism that fills
+// this band, not a thing to look at: its findings are either here, or they are
+// on the project's own card as `unmanaged` with a Reclaim button. A card whose
+// whole content was a count of two lists that both sit in the sidebar already
+// was a row that said nothing twice.
+// ────────────────────────────────────────────────────────────────────────────
+
+const UNMANAGED_SECTIONS: ReadonlyArray<{
+  readonly key: UnmanagedEntry["kind"]
+  readonly title: string
+}> = [
+  { key: "process", title: "Projects" },
+  { key: "container", title: "Docker containers" }
+]
+
+const UnmanagedGroup = ({
+  collapsed,
+  onToggle
+}: {
+  collapsed: boolean
+  onToggle: () => void
+}) => {
+  const discovery = useEngine((s) => s.discovery)
+  const sweeping = useEngine((s) => s.discoverySweeping)
+  const refreshDiscovery = useEngine((s) => s.refreshDiscovery)
+  const stopUnmanaged = useEngine((s) => s.stopUnmanaged)
+  const startUnmanaged = useEngine((s) => s.startUnmanaged)
+  const [shut, setShut] = useState<Record<string, boolean>>({})
+
+  const entries = discovery?.unmanaged ?? []
+  const sections = UNMANAGED_SECTIONS.map((s) => ({
+    ...s,
+    entries: entries.filter((e) => e.kind === s.key)
+  })).filter((s) => s.entries.length > 0)
+
+  // Nothing found and nothing to say. The band appears when there is something
+  // in it, so a tidy machine is not made to carry an empty heading forever.
+  if (sections.length === 0) return null
+
+  const running = entries.filter((e) => e.running).length
+
+  return (
+    <div className="parent-group">
+      <BandHead
+        collapsed={collapsed}
+        title="Unmanaged"
+        count={running}
+        onToggle={onToggle}
+      />
+
+      <Collapsible
+        id="bucket-unmanaged"
+        open={!collapsed}
+        transitionDuration={COLLAPSE_DURATION}
+        initialOpen
+      >
+        <div className="band-groups">
+          {sections.map((section) => {
+            const expanded = shut[section.key] !== true
+            const sectionRunning = section.entries.filter((e) => e.running).length
+            return (
+              <div key={section.key} className={`section ${expanded ? "open" : ""}`}>
+                <div
+                  className="section-head"
+                  onClick={() => setShut((c) => ({ ...c, [section.key]: !c[section.key] }))}
+                  role="button"
+                  tabIndex={0}
+                >
+                  <span className="caret">
+                    {expanded ? (
+                      <Icons.ChevronDown size={11} sw={2} />
+                    ) : (
+                      <Icons.ChevronRight size={11} sw={2} />
+                    )}
+                  </span>
+                  <span className="section-title">{section.title}</span>
+                  {/* Running, then total — the same tally a project group
+                      carries, minus the failure count: matisa did not start
+                      these, so it has no standing to call any of them failed. */}
+                  <span
+                    className="section-count"
+                    title={`${sectionRunning} running · ${section.entries.length} found`}
+                  >
+                    <span className={sectionRunning > 0 ? "tally-run" : ""}>{sectionRunning}</span>
+                    <span className="tally-of">/{section.entries.length}</span>
+                  </span>
+                  <span className="section-spacer" />
+                  <span className="section-tools" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      className="ico"
+                      title="Sweep again"
+                      disabled={sweeping}
+                      onClick={() => void refreshDiscovery(true)}
+                    >
+                      {sweeping ? <Spinner size={12} /> : <Icons.Refresh size={12} />}
+                    </button>
+                  </span>
+                </div>
+
+                <Collapsible
+                  id={`group-unmanaged-${section.key}`}
+                  open={expanded}
+                  transitionDuration={COLLAPSE_DURATION}
+                  initialOpen
+                >
+                  <div className="section-body">
+                    {section.entries.map((entry) => (
+                      <UnmanagedCard
+                        key={entry.ref}
+                        entry={entry}
+                        onStop={() => void stopUnmanaged(entry.ref)}
+                        onStart={() => void startUnmanaged(entry.ref)}
+                      />
+                    ))}
+                  </div>
+                </Collapsible>
+              </div>
+            )
+          })}
+        </div>
+      </Collapsible>
+    </div>
+  )
+}
+
 const SystemsGroup = ({
   collapsed,
   holdsSelection,
@@ -343,9 +537,6 @@ const SystemsGroup = ({
   const startDaemon = useEngine((s) => s.startDaemon)
   const stopDaemon = useEngine((s) => s.stopDaemon)
   const shutdownEngine = useEngine((s) => s.shutdownEngine)
-  const discovery = useEngine((s) => s.discovery)
-  const sweeping = useEngine((s) => s.discoverySweeping)
-  const refreshDiscovery = useEngine((s) => s.refreshDiscovery)
   const [confirmShutdown, setConfirmShutdown] = useState(false)
 
   // Systems speak the same status vocabulary as projects — a running daemon is
@@ -368,16 +559,6 @@ const SystemsGroup = ({
   // reports its FINDINGS, because that is the only thing a glance at the
   // sidebar can usefully ask of it: a claim against a configured project is a
   // problem the user has to resolve (`errored`), anything else is at rest.
-  const claims = discovery?.claims.length ?? 0
-  const unmanagedCount = discovery?.unmanaged.length ?? 0
-  const discoveryState: RuntimeState = sweeping ? "starting" : claims > 0 ? "errored" : "idle"
-  const discoveryMeta = sweeping
-    ? "sweeping"
-    : discovery === null
-      ? "never swept"
-      : claims > 0
-        ? `${claims} outside matisa`
-        : `${unmanagedCount} unmanaged`
 
   return (
     <div className="parent-group">
@@ -386,7 +567,7 @@ const SystemsGroup = ({
       <BandHead
         collapsed={collapsed}
         title="Systems"
-        count={(engineUp ? 1 : 0) + (dockerUp ? 1 : 0) + (claims > 0 ? 1 : 0)}
+        count={(engineUp ? 1 : 0) + (dockerUp ? 1 : 0)}
         onToggle={onToggle}
         holdsSelection={holdsSelection}
       />
@@ -445,30 +626,6 @@ const SystemsGroup = ({
             />
           </SystemCard>
 
-          <SystemCard
-            id={SYSTEM_IDS.discovery}
-            name="Discovery"
-            icon={<Icons.Search size={14} />}
-            state={discoveryState}
-            meta={discoveryMeta}
-            active={selectedId === SYSTEM_IDS.discovery}
-            open={openId === SYSTEM_IDS.discovery}
-            openOnSelect={compact}
-            onSelect={() => onSelect(SYSTEM_IDS.discovery)}
-            onOpen={() => onOpen(SYSTEM_IDS.discovery)}
-            onToggleOpen={() => onToggleOpen(SYSTEM_IDS.discovery)}
-          >
-            {/* Not a SystemButton: there is nothing here to start or stop.
-                Sweeping again is the only action the card itself offers. */}
-            <button
-              className="ico-btn"
-              title="Sweep for anything running that matisa did not start"
-              disabled={sweeping}
-              onClick={() => void refreshDiscovery(true)}
-            >
-              {sweeping ? <Spinner size={13} /> : <Icons.Refresh size={14} />}
-            </button>
-          </SystemCard>
         </div>
         </div>
       </Collapsible>
@@ -555,15 +712,17 @@ export const Sidebar = ({
   })).filter((b) => b.sections.length > 0)
 
   const sectionKeys = buckets.flatMap((b) => b.sections.map((s) => `${b.kind}:${s.key}`))
-  // Systems counts as one of the things "all" means. It is a band in the same
-  // tree, and leaving it standing while every group folded made the control look
-  // like it had missed something.
+  // Systems and Unmanaged count as things "all" means. They are bands in the
+  // same tree, and leaving either standing while every group folded made the
+  // control look like it had missed something.
   const allCollapsed =
-    sectionKeys.every((k) => collapsed[k] === true) && bucketCollapsed["systems"] === true
+    sectionKeys.every((k) => collapsed[k] === true) &&
+    bucketCollapsed["systems"] === true &&
+    bucketCollapsed["unmanaged"] === true
   const toggleAll = (): void => {
     const next = !allCollapsed
     setCollapsed(Object.fromEntries(sectionKeys.map((k) => [k, next])))
-    setBucketCollapsed((c) => ({ ...c, systems: next }))
+    setBucketCollapsed((c) => ({ ...c, systems: next, unmanaged: next }))
   }
 
   /** The keys of one band's groups. Derived from `buckets`, so a band whose
@@ -810,6 +969,15 @@ export const Sidebar = ({
           onSelect={onSelect}
           onOpen={onOpen}
           onToggleOpen={onToggleOpen}
+        />
+
+        {/* Last band. What matisa does not run belongs after everything it
+            does — the catalog first, its own machinery next, and other
+            people's processes at the bottom where they are visible without
+            being in the way. */}
+        <UnmanagedGroup
+          collapsed={bucketCollapsed["unmanaged"] === true}
+          onToggle={() => setBucketCollapsed((c) => ({ ...c, unmanaged: !c["unmanaged"] }))}
         />
       </div>
 

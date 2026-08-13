@@ -16,16 +16,14 @@ import { ProjectId } from "@matisa/core"
 
 export const SYSTEM_IDS = {
   engine: ProjectId.make("sys:engine"),
-  docker: ProjectId.make("sys:docker"),
-  discovery: ProjectId.make("sys:discovery")
+  docker: ProjectId.make("sys:docker")
 } as const
 
 export type SystemKey = keyof typeof SYSTEM_IDS
 
 const NAMES: Record<string, string> = {
   [SYSTEM_IDS.engine]: "Engine",
-  [SYSTEM_IDS.docker]: "Docker",
-  [SYSTEM_IDS.discovery]: "Discovery"
+  [SYSTEM_IDS.docker]: "Docker"
 }
 
 export const isSystemId = (id: string): boolean => id in NAMES
@@ -35,10 +33,4 @@ export const isSystemId = (id: string): boolean => id in NAMES
 export const systemName = (id: string): string | undefined => NAMES[id]
 
 export const systemKeyOf = (id: string): SystemKey | null =>
-  id === SYSTEM_IDS.engine
-    ? "engine"
-    : id === SYSTEM_IDS.docker
-      ? "docker"
-      : id === SYSTEM_IDS.discovery
-        ? "discovery"
-        : null
+  id === SYSTEM_IDS.engine ? "engine" : id === SYSTEM_IDS.docker ? "docker" : null

@@ -258,6 +258,9 @@ interface EngineState {
    *  cache — what a user pressing Refresh means, and what a caller that just
    *  stopped something needs. */
   refreshDiscovery: (force?: boolean) => Promise<void>
+  /** Re-read the Docker daemon's state. Polled, because the daemon can come
+   *  and go entirely outside matisa and there is no event to hear. */
+  refreshDaemon: () => Promise<void>
   loadCommands: (projectId: ProjectId) => Promise<void>
   ensureRunSession: (projectId: ProjectId) => Promise<SessionId | null>
 
@@ -456,6 +459,21 @@ export const useEngine = create<EngineState>()((set, get) => ({
       set({ discovery: null })
     } finally {
       set({ discoverySweeping: false })
+    }
+  },
+
+  refreshDaemon: async () => {
+    try {
+      const daemon = await rpc.call("docker.daemon.status", undefined)
+      // Identity-stable when nothing changed: this runs every 10s forever, and
+      // minting a fresh object each time would re-render every subscriber of
+      // `daemon` for an app sitting still.
+      const current = get().daemon
+      if (daemon.state === current.state && daemon.message === current.message) return
+      set({ daemon })
+    } catch {
+      // A failed probe is not a daemon that stopped. Leave the last known
+      // state alone rather than reporting a Docker outage on a dropped call.
     }
   },
 
@@ -1005,9 +1023,35 @@ rpc.onOpen(() => {
     .catch((cause) => reportError(cause, "engine handshake failed"))
 })
 
-// Resource sampling is a poll by nature (ps / docker stats expose no event
-// stream). Everything else in this store is event-driven.
+// ────────────────────────────────────────────────────────────────────────────
+// The two polls.
+//
+// Everything else in this store is event-driven, which is right for anything
+// the engine causes. These two are things it only OBSERVES, and neither has an
+// event stream to subscribe to.
+//
+// Resources: `ps` has no push channel, so sampling is the only option.
+//
+// The Docker daemon: it can start or stop entirely outside matisa — from the
+// menu bar, from `colima`, from a reboot — and the engine finds out only by
+// running `docker info`. Without this the daemon status was read exactly three
+// times (on connect, on a start refused for want of it, and on the user's own
+// start/stop press), so Docker coming up while the app was open was never
+// noticed and every docker project stayed unstartable behind a banner that was
+// no longer true.
+//
+// Ten seconds, not three: `docker info` shells out with its own 3s timeout,
+// and a daemon that just came up is not urgent the way a CPU reading is. The
+// engine short-circuits this to a cached answer while a start it initiated is
+// still in flight, so polling cannot disturb the starting spinner.
+// ────────────────────────────────────────────────────────────────────────────
 const RESOURCE_POLL_MS = 3_000
+const DAEMON_POLL_MS = 10_000
+
 setInterval(() => {
   if (useEngine.getState().status === "open") void useEngine.getState().refreshResources().catch(() => {})
 }, RESOURCE_POLL_MS)
+
+setInterval(() => {
+  if (useEngine.getState().status === "open") void useEngine.getState().refreshDaemon()
+}, DAEMON_POLL_MS)

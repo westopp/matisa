@@ -4272,37 +4272,15 @@ button {
   margin-top: 2px;
 }
 
-.disc-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+/* An unmanaged row in the sidebar's own group. A system row that cannot be
+   selected or opened, so it loses the affordances that would promise either:
+   no pointer, no hover lift, no chevron. Its controls still light up. */
+.sys-row.unmanaged {
+  cursor: default;
+  border-style: dashed;
 }
-.disc-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
-  border-radius: 12px;
-  background: color-mix(in oklab, var(--text) 4%, transparent);
-}
-.disc-row-text {
-  flex: 1;
-  min-width: 0;
-}
-.disc-row-name {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--text);
-}
-.disc-row-detail {
-  font-size: 11px;
-  color: var(--text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.sys-row.unmanaged:hover {
+  transform: none;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

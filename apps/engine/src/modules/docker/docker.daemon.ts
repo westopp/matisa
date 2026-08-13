@@ -41,8 +41,13 @@ const make = Effect.gen(function* () {
       if (cur.s === "starting") return { state: cur.s, message: cur.message }
       const up = yield* daemonRunning()
       const next: DockerDaemonState = up ? "running" : cur.s === "start_failed" ? "start_failed" : "stopped"
-      yield* SynchronizedRef.set(state, { s: next, message: cur.message })
-      return { state: next, message: cur.message }
+      // The message explains a `start_failed` and nothing else. Carrying it
+      // across a recovery left "Docker didn't come up within 60s" pinned to a
+      // daemon that is plainly running — a dead reason for a state that no
+      // longer holds. It dies with the state it belongs to.
+      const message = next === "start_failed" ? cur.message : undefined
+      yield* SynchronizedRef.set(state, { s: next, message })
+      return { state: next, message }
     })
 
   const awaitReady = Effect.gen(function* () {

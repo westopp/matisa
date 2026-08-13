@@ -255,12 +255,14 @@ export const ProjectCard = ({
 }) => {
   const sample = useEngine((s) => s.resources[project.id])
   const kill = useEngine((s) => s.kill)
+  const takeover = useEngine((s) => s.takeover)
   const removeProject = useEngine((s) => s.removeProject)
   const { busy, running, warmingUp } = useLifecycleState(project)
 
   const [menu, setMenu] = useState<HTMLElement | null>(null)
   const [editing, setEditing] = useState(false)
   const [removing, setRemoving] = useState(false)
+  const [forcing, setForcing] = useState(false)
 
   const port = primaryPort(project)
   // Alive or mid-transition. Both are states a kill is FOR: the second one more
@@ -302,6 +304,21 @@ export const ProjectCard = ({
       icon: <Icons.Copy size={13} />,
       onSelect: () => void navigator.clipboard?.writeText(project.root)
     },
+    // Only while something else is holding this project. The card's Reclaim
+    // button already covers the ordinary case; this is the override for when
+    // the engine refuses because the holder is not recognisably this project's
+    // — evidence the user has, and matisa does not.
+    ...(project.state === "unmanaged"
+      ? [
+          {
+            key: "force-takeover",
+            label: "Force reclaim…",
+            icon: <Icons.Skull size={13} />,
+            danger: true,
+            onSelect: () => setForcing(true)
+          }
+        ]
+      : []),
     {
       key: "remove",
       label: "Remove project…",
@@ -436,6 +453,23 @@ export const ProjectCard = ({
             {running
               ? ", and the running process is left alone — stop it first if you want it down."
               : "."}
+          </ConfirmDialog>
+        )}
+
+        {forcing && (
+          <ConfirmDialog
+            title={`Force reclaim ${project.name}?`}
+            confirmLabel="Stop it and start mine"
+            danger
+            onCancel={() => setForcing(false)}
+            onConfirm={() => {
+              setForcing(false)
+              void takeover(project.id, true)
+            }}
+          >
+            Whatever is holding {project.name}&rsquo;s port is stopped, even though matisa cannot
+            tell that it belongs to this project. Use this when you know what that process is —
+            it gets no chance to shut down cleanly, and anything it was doing is lost.
           </ConfirmDialog>
         )}
       </span>
