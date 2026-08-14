@@ -5,7 +5,7 @@ import type { Command as CoreCommand, NewProject, Port, ProjectPatch } from "@ma
 import { call } from "../transport/transport.index.js"
 import { Renderer } from "../render/render.index.js"
 import { applyGlobals } from "../cli.globals.js"
-import { resolveProject } from "../cli.resolve.js"
+import { resolveProject, resolveProjectRow } from "../cli.resolve.js"
 
 // project add|list|update|rm — args map to catalog.* control calls. The
 // strict-port guard and all validation live in the engine; these handlers only
@@ -153,6 +153,34 @@ const update = Command.make(
     })
 )
 
+// project path <id> [--reveal] — where the project lives.
+//
+// Prints the root and NOTHING else, because the shell is the consumer:
+// `cd $(matisa project path web)` is the thing this is for, and a label or a
+// trailing summary would end up in the argument. `--reveal` hands the same path
+// to the file manager, which was the one desktop affordance with no headless
+// counterpart. Reveal is macOS-only in the engine and says so itself.
+const path = Command.make(
+  "path",
+  {
+    id: Args.text({ name: "id" }),
+    reveal: Options.boolean("reveal").pipe(
+      Options.withDescription("Also open the project's folder in the file manager")
+    )
+  },
+  ({ id, reveal }) =>
+    Effect.gen(function* () {
+      yield* applyGlobals
+      const render = yield* Renderer
+      const project = yield* resolveProjectRow(id)
+      if (reveal) yield* call("fs.reveal", { path: project.root })
+      yield* render.raw(
+        { id: project.id, root: project.root, ...(reveal ? { revealed: true } : {}) },
+        project.root
+      )
+    })
+)
+
 const rm = Command.make("rm", { id: Args.text({ name: "id" }) }, ({ id }) =>
   Effect.gen(function* () {
     yield* applyGlobals
@@ -163,5 +191,5 @@ const rm = Command.make("rm", { id: Args.text({ name: "id" }) }, ({ id }) =>
 )
 
 export const project = Command.make("project").pipe(
-  Command.withSubcommands([add, list, update, rm])
+  Command.withSubcommands([add, list, update, path, rm])
 )

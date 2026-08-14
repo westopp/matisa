@@ -64,7 +64,11 @@ const TIMEOUTS: Partial<Record<Method, number>> = {
   "lifecycle.stop": 360_000,
   "docker.daemon.start": 120_000,
   "docker.daemon.stop": 120_000,
+  // Both spawn a pty through the same engine path, and both wait on the
+  // project's environment being resolved first — contexts read from the DB,
+  // secrets from the keychain.
   "commands.run": 60_000,
+  "pty.open": 60_000,
   "logs.tail": 30_000
 }
 

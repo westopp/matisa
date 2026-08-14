@@ -329,6 +329,12 @@ interface EngineState {
   setCommand: (params: CommandSetParams) => Promise<boolean>
   removeCommand: (projectId: ProjectId, name: string) => Promise<void>
   runCommand: (params: CommandRunParams) => Promise<PtySession | null>
+  /** An ad-hoc $SHELL in the project's directory, with the project's resolved
+   *  environment — the layered contexts and keychain secrets its own process
+   *  gets. That environment exists nowhere else, which is the whole reason this
+   *  is not "open a terminal yourself". Nothing is persisted: the session is
+   *  reaped once no pane has been attached to it for a while. */
+  openShell: (projectId: ProjectId, cols: number, rows: number) => Promise<PtySession | null>
   setLanShare: (projectId: ProjectId, enabled: boolean) => Promise<boolean>
 
   applyEvent: (raw: unknown) => void
@@ -889,6 +895,15 @@ export const useEngine = create<EngineState>()((set, get) => ({
       return await rpc.call("commands.run", params)
     } catch (cause) {
       reportError(cause, `could not run "${params.name}"`)
+      return null
+    }
+  },
+
+  openShell: async (projectId, cols, rows) => {
+    try {
+      return await rpc.call("pty.open", { projectId, cols, rows })
+    } catch (cause) {
+      reportError(cause, "could not open a shell")
       return null
     }
   },

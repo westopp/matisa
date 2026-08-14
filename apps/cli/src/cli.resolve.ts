@@ -1,5 +1,5 @@
 import { Data, Effect, Option } from "effect"
-import { ProjectId } from "@matisa/core"
+import { ProjectId, type ProjectWithState } from "@matisa/core"
 import { call, NotFound } from "./transport/transport.index.js"
 import type { EngineClient } from "./transport/transport.index.js"
 import type { TransportError } from "./transport/transport.index.js"
@@ -82,6 +82,37 @@ export const resolveProject = (
           })
         )
     }
+  })
+
+/** The catalog ROW behind a token, not just its id — for the commands that need
+ *  a field of the project itself rather than something to address it by.
+ *
+ *  Resolving to an id and then reading the catalog to look that id back up
+ *  would cost two round trips for what one `catalog.list` has already answered,
+ *  so this matches against the list it fetched. A uuid is matched here rather
+ *  than trusted through, because the caller asked for a row and an id that is
+ *  in no catalog has none — the engine's "unknown project" error would arrive
+ *  one call later saying the same thing. */
+export const resolveProjectRow = (
+  token: string
+): Effect.Effect<ProjectWithState, TransportError | AmbiguousProject, EngineClient> =>
+  Effect.gen(function* () {
+    const projects = yield* call("catalog.list", undefined)
+    const verdict = matchProject(projects, token)
+    if (verdict._tag === "many") {
+      return yield* Effect.fail(new AmbiguousProject({ token, matches: verdict.matches }))
+    }
+    const row = verdict._tag === "none" ? undefined : projects.find((p) => p.id === verdict.id)
+    if (row === undefined) {
+      return yield* Effect.fail(
+        new NotFound({
+          entity: "project",
+          id: token,
+          message: `no project with that id or name (${projects.length} in the catalog)`
+        })
+      )
+    }
+    return row
   })
 
 /** The same, for the commands whose project argument is optional — `undefined`

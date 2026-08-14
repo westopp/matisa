@@ -64,6 +64,7 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
     kill: killCommand
   } = useCommandRunner(project.id)
   const closePane = useTerminals((s) => s.closePane)
+  const markExited = useTerminals((s) => s.markExited)
   const setFullscreen = useTerminals((s) => s.setFullscreen)
   const setDrag = useTerminals((s) => s.setDrag)
   const setDropTarget = useTerminals((s) => s.setDropTarget)
@@ -104,6 +105,25 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
     }
   }, [pane.paneId, sessionId, owns])
 
+  // A RUN pane's liveness is the project's, never its session handle. The
+  // handle deliberately outlives the process — that is what keeps the output
+  // readable, and clearable, after a stop — so a non-null session id stopped
+  // being evidence that anything is running. A command or shell pane has no
+  // supervised state to consult, so there the session IS the answer.
+  const running =
+    pane.kind === "run" ? project.state === "running" : pane.sessionId !== null && !pane.exited
+
+  /** What this pane is watching, in whichever vocabulary owns the answer. Only
+   *  ever compared against "running" — the retry below is the one caller. */
+  const attachedTo =
+    pane.kind === "run"
+      ? project.state
+      : pane.kind === "shell"
+        ? running
+          ? "running"
+          : "idle"
+        : statusOf(pane.commandName ?? pane.title)
+
   // A failed attach is recoverable, and this is the moment it recovers: whatever
   // this pane watches is now up, so the session it could not find exists again.
   //
@@ -113,7 +133,6 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
   // keeps showing "session not found" beside a running project and receives no
   // output at all, because the engine bridges output only to a connection that
   // attached. `retryAttach` no-ops unless there is an error to clear.
-  const attachedTo = pane.kind === "run" ? project.state : statusOf(pane.commandName ?? pane.title)
   useEffect(() => {
     if (sessionId === null || !owns) return
     if (attachedTo !== "running") return
@@ -177,26 +196,32 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
   // log_line events, and that is what this pane shows.
   const isLogPane = pane.kind === "run" && project.kind !== "process"
 
-  // A RUN pane's liveness is the project's, never its session handle. The
-  // handle deliberately outlives the process — that is what keeps the output
-  // readable, and clearable, after a stop — so a non-null session id stopped
-  // being evidence that anything is running. A command pane has no supervised
-  // state to consult, so there the session IS the answer.
-  const running =
-    pane.kind === "run" ? project.state === "running" : pane.sessionId !== null && !pane.exited
-
   // Kill means the same thing everywhere — end it now, no drain — but reaches a
   // different owner per pane kind. A run pane's process belongs to the
-  // supervisor; a command's belongs to its pty, and closing that session IS the
-  // kill, since nothing else holds a handle on it.
+  // supervisor; a command's and a shell's belong to their pty, and closing that
+  // session IS the kill, since nothing else holds a handle on it.
   const killable = pane.kind === "run" ? running || busy : running
   const killTitle =
-    pane.kind === "run" ? "Force kill the project — no drain, no waiting" : "Kill this command"
+    pane.kind === "run"
+      ? "Force kill the project — no drain, no waiting"
+      : pane.kind === "shell"
+        ? "Kill this shell"
+        : "Kill this command"
   const commandStatus = statusOf(pane.commandName ?? pane.title)
   const commandState = stateOf(pane.commandName ?? pane.title)
   const onKill = (): void => {
     if (pane.kind === "run") {
       void kill(project.id)
+      return
+    }
+    if (pane.kind === "shell") {
+      // Marked exited here rather than waited for: `pty.close` emits no
+      // `pty.exit` — there is nothing left to emit one — and a pane that still
+      // believed it was running could never be closed.
+      if (sessionId !== null) {
+        closeSession(sessionId)
+        markExited(sessionId, null)
+      }
       return
     }
     killCommand(pane.commandName ?? pane.title)
@@ -261,9 +286,13 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
           {/* A command pane asks the runner, exactly as its pill on the board
               does — one answer, so the two views of the same session cannot
               report different things. A run pane has no command to ask about;
-              its liveness is the session's. */}
+              its liveness is the session's. Nor has a shell — and a shell that
+              ended badly is not a failure worth a crash colour, since `exit 1`
+              from a shell usually means the last thing you typed returned 1. */}
           <StatusFigure
-            state={pane.kind === "run" ? (running ? "running" : "idle") : commandState}
+            state={
+              pane.kind === "command" ? commandState : running ? "running" : "idle"
+            }
             size={13}
             dotSize={6}
           />
@@ -280,9 +309,12 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
             the pane is FOR, so it is driven from here rather than only from the
             card upstairs. */}
         <KillButton enabled={killable} onKill={onKill} title={killTitle} size={14} />
+        {/* A shell gets neither: there is nothing to re-run it FROM. Its command
+            is whatever the user is typing, and the way to end it is `exit` —
+            or the kill beside this, when it has stopped listening. */}
         {pane.kind === "run" ? (
           <LifecycleButton project={project} />
-        ) : (
+        ) : pane.kind === "shell" ? null : (
           <>
             <CommandRestartButton
               enabled={commandStatus === "running"}

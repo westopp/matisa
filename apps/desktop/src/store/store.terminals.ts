@@ -26,8 +26,10 @@ export type LayoutNode =
 export interface Pane {
   readonly paneId: string
   readonly projectId: ProjectId
-  /** `run` mirrors the supervised process; `command` is an on-demand task. */
-  readonly kind: "run" | "command"
+  /** `run` mirrors the supervised process; `command` is an on-demand task;
+   *  `shell` is an ad-hoc $SHELL in the project's directory and resolved
+   *  environment — the same spawn, with nothing saved in the catalog. */
+  readonly kind: "run" | "command" | "shell"
   readonly title: string
   /** Subtitle — the command line being run. */
   readonly subtitle: string
@@ -120,6 +122,12 @@ interface TerminalState {
 
 export const runPaneId = (projectId: ProjectId): string => `run:${projectId}`
 export const commandPaneId = (projectId: ProjectId, name: string): string => `cmd:${projectId}:${name}`
+/** A shell pane is named after the session it was opened for, and only that.
+ *  The other two ids are derived from something stable — the project, or the
+ *  command's name — so re-running rebinds the pane that was already there. A
+ *  shell has no such name: each one is its own terminal, several can be open at
+ *  once, and none of them is a re-run of an earlier one. */
+export const shellPaneId = (sessionId: SessionId): string => sessionId
 
 export const useTerminals = create<TerminalState>()((set, get) => ({
   panes: {},
