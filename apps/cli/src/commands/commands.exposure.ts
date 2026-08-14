@@ -1,9 +1,9 @@
 import { Args, Command } from "@effect/cli"
 import { Effect, Option } from "effect"
-import { ProjectId } from "@matisa/core"
 import { call } from "../transport/transport.index.js"
 import { Renderer } from "../render/render.index.js"
 import { applyGlobals } from "../cli.globals.js"
+import { resolveOptional, resolveProject } from "../cli.resolve.js"
 
 // exposure list|share|unshare — the reverse-proxy surface. Stable URLs are
 // derived engine-side the moment a project declares a port (no command needed
@@ -22,12 +22,12 @@ const list = Command.make(
     Effect.gen(function* () {
       yield* applyGlobals
       const render = yield* Renderer
+      const target = yield* resolveOptional(id)
       const snap = yield* call("exposure.snapshot", undefined)
-      if (Option.isNone(id)) {
+      if (target === undefined) {
         yield* render.exposureSnapshot(snap)
         return
       }
-      const target = id.value
       const found = snap.projects.find((p) => p.projectId === target)
       yield* render.exposureEntries(target, found?.entries ?? [])
     })
@@ -44,11 +44,9 @@ const setLan = (name: "share" | "unshare", enabled: boolean) =>
     Effect.gen(function* () {
       yield* applyGlobals
       const render = yield* Renderer
-      const { entries } = yield* call("exposure.lan.set", {
-        id: ProjectId.make(id),
-        enabled
-      })
-      yield* render.exposureEntries(id, entries)
+      const projectId = yield* resolveProject(id)
+      const { entries } = yield* call("exposure.lan.set", { id: projectId, enabled })
+      yield* render.exposureEntries(projectId, entries)
     })
   )
 

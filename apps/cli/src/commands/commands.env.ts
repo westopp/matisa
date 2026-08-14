@@ -4,6 +4,7 @@ import { ContextId, ProjectId, type EnvContext } from "@matisa/core"
 import { call } from "../transport/transport.index.js"
 import { Renderer } from "../render/render.index.js"
 import { applyGlobals } from "../cli.globals.js"
+import { resolveProject } from "../cli.resolve.js"
 
 // env set|unset|list|reveal|use|create|rename|rm. --secret routes the value to
 // the engine's keychain provider (only a secret_ref is persisted); `use` selects
@@ -113,7 +114,7 @@ const use = Command.make(
       yield* applyGlobals
       const render = yield* Renderer
       const updated = yield* call("env.use", {
-        projectId: ProjectId.make(project),
+        projectId: yield* resolveProject(project),
         contextId: ContextId.make(context)
       })
       yield* render.projectState(updated)

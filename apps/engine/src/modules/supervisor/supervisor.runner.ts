@@ -10,7 +10,7 @@ import { runSessionId } from "../pty/pty.session.js"
 import { START_TIMEOUT_MS } from "../../config/config.constants.js"
 import { Event, runtimeStateOf, State, transition } from "./supervisor.machine.js"
 import { awaitPortBound } from "./supervisor.probe.js"
-import { spawnChild } from "./supervisor.spawn.js"
+import { spawnChild, type Child } from "./supervisor.spawn.js"
 import { runCompose, runDocker } from "./supervisor.run-docker.js"
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -158,6 +158,39 @@ const runProcess = (project: Project, deps: RunnerDeps): Effect.Effect<void> =>
             Effect.catchAll(() => Effect.succeed({} as Record<string, string>))
           )
 
+          // A session that is over must SAY so, however it ended. The line near
+          // the bottom of this block reports the exit code when the child is
+          // reaped normally, but `lifecycle.stop` and `restart` interrupt this
+          // fiber — so that line never runs, and every attached reader (the
+          // desktop pane, `logs -f`) was left holding a bridge to a dead pty
+          // with nothing to tell it. The next start re-registers the SAME
+          // session id, which shuts the old hub down silently, so the stale
+          // attach never recovered on its own. A finalizer runs on every path;
+          // `sessionExited` is idempotent, so the normal exit still reports its
+          // real code and this becomes a no-op.
+          //
+          // BEFORE the spawn, because scope finalizers run LIFO and
+          // `spawnChild` is an acquireRelease whose release is the graceful
+          // stop — SIGTERM, the child's own drain, then the SIGKILL backstop.
+          // Registered after it, this would publish the exit FIRST: the bridge
+          // pump returns on an exit frame, so every byte the app printed while
+          // shutting down ("draining…", a flush, a goodbye) would be dropped on
+          // the floor, and the pane would go quiet at the exact moment a slow
+          // stop is worth watching. Registered here it runs LAST, after the
+          // child is genuinely reaped.
+          //
+          // Safe on the spawn-failure path below: `sessionExited` no-ops for a
+          // session id that was never registered, which is why `handle` can
+          // still be undefined here.
+          //
+          // The handle is passed so the manager can tell WHICH lifetime this
+          // reports on. `run:<id>` is reused by every start of the project, so a
+          // teardown that overlaps the next start would otherwise mark the fresh
+          // session dead — the same "terminal says it exited while the app runs"
+          // bug from the other direction.
+          let handle: Child["pty"] | undefined
+          yield* Effect.addFinalizer(() => deps.pty.sessionExited(sessionId, null, handle))
+
           const spawned = yield* spawnChild(project, env).pipe(Effect.either)
           if (Either.isLeft(spawned)) {
             yield* driver.apply(Event.Fault({ reason: spawned.left.errorMessage }))
@@ -173,6 +206,7 @@ const runProcess = (project: Project, deps: RunnerDeps): Effect.Effect<void> =>
             return
           }
           const child = spawned.right
+          handle = child.pty
           const spawnedAt = Date.now()
 
           yield* deps.runtimeRepo
@@ -204,7 +238,7 @@ const runProcess = (project: Project, deps: RunnerDeps): Effect.Effect<void> =>
           // stdout (docker/compose still emit; they have no PTY).
 
           const exit = yield* child.awaitExit
-          yield* deps.pty.sessionExited(sessionId, exit.code)
+          yield* deps.pty.sessionExited(sessionId, exit.code, child.pty)
           // Leader gone — sweep the group so grandchildren die with it.
           yield* Effect.sync(() => {
             try {

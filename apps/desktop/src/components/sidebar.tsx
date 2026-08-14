@@ -15,7 +15,14 @@ import { Icons } from "./icons"
 import { ConfirmDialog } from "./forms/confirm"
 import { GroupDialog } from "./forms/lazy"
 import { ProjectCard } from "./project.card"
-import { COLLAPSE_DURATION, formatUptime, Spinner, StatusFigure } from "./primitives"
+import {
+  COLLAPSE_DURATION,
+  ForeignMark,
+  formatUptime,
+  isOurs,
+  Spinner,
+  StatusFigure
+} from "./primitives"
 
 // ────────────────────────────────────────────────────────────────────────────
 // Two-level tree, as designed: kind buckets at the top, groups beneath.
@@ -40,6 +47,39 @@ const tallyOf = (projects: ReadonlyArray<ProjectWithState>) => ({
   failed: projects.filter((p) => p.state === "crashed" || p.state === "errored").length,
   total: projects.length
 })
+
+/** The amber ⚠ on a group's own head, so a claim against a member survives the
+ *  group being folded away. Without it the badge is only reachable by opening
+ *  the very group you collapsed to stop looking at, which is the case it is
+ *  most needed in. Hover names each one; the detail stays on the row. */
+const GroupClaimMark = ({ projects }: { projects: ReadonlyArray<ProjectWithState> }) => {
+  const claims = useEngine((s) => s.discovery?.claims)
+  // Same rule as the row's own mark: a claim against a project the engine is
+  // running is a leftover from the last sweep, not a condition.
+  const ids = new Set(
+    projects
+      .filter((p) => p.state !== "running" && p.state !== "starting" && p.state !== "stopping")
+      .map((p) => p.id as string)
+  )
+  const mine = (claims ?? []).filter((c) => ids.has(c.projectId as string))
+  if (mine.length === 0) return null
+
+  const lines = mine.map((c) =>
+    isOurs(c)
+      ? `${c.projectName} — running outside Matisa`
+      : `${c.projectName} — port ${c.port ?? "?"} held by ${c.holder}`
+  )
+  return (
+    <ForeignMark
+      size={11}
+      detail={{
+        headline: mine.length === 1 ? "1 project needs attention" : `${mine.length} projects need attention`,
+        body: lines.join("\n"),
+        reason: lines.join(" · ")
+      }}
+    />
+  )
+}
 
 const Tally = ({ projects }: { projects: ReadonlyArray<ProjectWithState> }) => {
   const { running, failed, total } = tallyOf(projects)
@@ -870,6 +910,7 @@ export const Sidebar = ({
                       </span>
                       <span className="section-title">{section.title}</span>
                       <Tally projects={section.projects} />
+                      <GroupClaimMark projects={section.projects} />
                       {/* No collapse control here: the group's own head IS its
                           toggle, and the band above folds every group at once.
                           A third button saying a version of the same thing was

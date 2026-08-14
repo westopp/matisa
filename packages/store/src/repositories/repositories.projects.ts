@@ -70,6 +70,14 @@ const buildProject = (row: ProjectRowRaw, ports: ReadonlyArray<PortRowRaw>): Pro
 // up-front and surfaced as a typed PortConflict rather than a raw SQLite throw.
 // ────────────────────────────────────────────────────────────────────────────
 
+/** The project holding a port, named as well as identified — a conflict the
+ *  user has to resolve is one they first have to recognise, and a uuid is not
+ *  recognisable. */
+export interface PortHolder {
+  readonly id: ProjectId
+  readonly name: string
+}
+
 export interface ProjectsRepoShape {
   readonly create: (input: NewProject) => Effect.Effect<Project, PortConflict | StoreQueryError>
   readonly list: () => Effect.Effect<ReadonlyArray<Project>, StoreQueryError>
@@ -80,7 +88,7 @@ export interface ProjectsRepoShape {
   ) => Effect.Effect<Project, NotFound | PortConflict | StoreQueryError>
   readonly remove: (id: ProjectId) => Effect.Effect<void, StoreQueryError>
   /** Which project (if any) currently holds this host port. */
-  readonly isTaken: (port: number) => Effect.Effect<Option.Option<ProjectId>, StoreQueryError>
+  readonly isTaken: (port: number) => Effect.Effect<Option.Option<PortHolder>, StoreQueryError>
 }
 
 export class ProjectsRepo extends Context.Tag("ProjectsRepo")<ProjectsRepo, ProjectsRepoShape>() {}
@@ -96,7 +104,11 @@ export const ProjectsRepoLive = Layer.effect(
     // The hot-path statements, compiled once at layer construction. `prepare`
     // inside the handlers compiled fresh SQL on every call — ~5 statements per
     // project per list at the catalog-refresh rate.
-    const stmtPortHolder = sqlite.prepare("SELECT project_id FROM ports WHERE number = ?")
+    // Joined, not a second lookup: the holder's name is wanted every time the
+    // holder is, and only ever on the conflict path.
+    const stmtPortHolder = sqlite.prepare(
+      "SELECT ports.project_id AS project_id, projects.name AS name FROM ports JOIN projects ON projects.id = ports.project_id WHERE ports.number = ?"
+    )
     const stmtProjectById = sqlite.prepare("SELECT * FROM projects WHERE id = ?")
     const stmtProjectsAll = sqlite.prepare("SELECT * FROM projects ORDER BY created_at")
     const stmtPortsByProject = sqlite.prepare(
@@ -111,8 +123,10 @@ export const ProjectsRepoLive = Layer.effect(
 
     const isTaken: ProjectsRepoShape["isTaken"] = (port) =>
       q(() => {
-        const r = stmtPortHolder.get(port) as { project_id: string } | undefined
-        return r ? Option.some(ProjectId.make(r.project_id)) : Option.none<ProjectId>()
+        const r = stmtPortHolder.get(port) as { project_id: string; name: string } | undefined
+        return r
+          ? Option.some<PortHolder>({ id: ProjectId.make(r.project_id), name: r.name })
+          : Option.none<PortHolder>()
       })
 
     const get: ProjectsRepoShape["get"] = (id) =>
@@ -142,7 +156,13 @@ export const ProjectsRepoLive = Layer.effect(
         for (const p of input.ports) {
           const holder = yield* isTaken(p.number)
           if (Option.isSome(holder)) {
-            return yield* Effect.fail(new PortConflict({ port: p.number, heldBy: holder.value }))
+            return yield* Effect.fail(
+              new PortConflict({
+                port: p.number,
+                heldBy: holder.value.id,
+                heldByName: holder.value.name
+              })
+            )
           }
         }
         const id = randomUUID()
@@ -192,8 +212,14 @@ export const ProjectsRepoLive = Layer.effect(
         if (patch.ports) {
           for (const p of patch.ports) {
             const holder = yield* isTaken(p.number)
-            if (Option.isSome(holder) && holder.value !== id) {
-              return yield* Effect.fail(new PortConflict({ port: p.number, heldBy: holder.value }))
+            if (Option.isSome(holder) && holder.value.id !== id) {
+              return yield* Effect.fail(
+                new PortConflict({
+                  port: p.number,
+                  heldBy: holder.value.id,
+                  heldByName: holder.value.name
+                })
+              )
             }
           }
         }

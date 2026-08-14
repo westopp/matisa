@@ -1,10 +1,11 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Effect, Option, ParseResult, Schema } from "effect"
-import { ProjectId, type CommandVar, type NamedCommand } from "@matisa/core"
+import { type CommandVar, type NamedCommand } from "@matisa/core"
 import { call } from "../transport/transport.index.js"
 import { runCommand } from "../transport/transport.pty.js"
 import { Renderer } from "../render/render.index.js"
 import { applyGlobals } from "../cli.globals.js"
+import { resolveProject } from "../cli.resolve.js"
 
 // Named commands: ad-hoc per-project tasks with their own env overrides.
 //   matisa commands set <project> <name> --cmd "jest --watch" --var KEY=VAL
@@ -47,7 +48,7 @@ const set = Command.make(
       yield* applyGlobals
       const render = yield* Renderer
       const saved = yield* call("commands.set", {
-        projectId: ProjectId.make(project),
+        projectId: yield* resolveProject(project),
         name,
         command: cmd,
         vars: vars as ReadonlyArray<CommandVar>
@@ -60,7 +61,7 @@ const list = Command.make("list", { project: Args.text({ name: "project" }) }, (
   Effect.gen(function* () {
     yield* applyGlobals
     const render = yield* Renderer
-    const rows = yield* call("commands.list", { id: ProjectId.make(project) })
+    const rows = yield* call("commands.list", { id: yield* resolveProject(project) })
     yield* render.raw(rows, rows.length === 0 ? "no commands" : rows.map(fmtCommand).join("\n"))
   })
 )
@@ -72,7 +73,7 @@ const rm = Command.make(
     Effect.gen(function* () {
       yield* applyGlobals
       const render = yield* Renderer
-      yield* call("commands.remove", { projectId: ProjectId.make(project), name })
+      yield* call("commands.remove", { projectId: yield* resolveProject(project), name })
       yield* render.raw({ removed: name }, `removed  ${name}`)
     })
 )
@@ -91,8 +92,9 @@ export const run = Command.make(
   ({ name, project }) =>
     Effect.gen(function* () {
       yield* applyGlobals
+      const projectId = yield* resolveProject(project)
       yield* runCommand(
-        project,
+        projectId,
         name,
         process.stdout.columns ?? 80,
         process.stdout.rows ?? 24

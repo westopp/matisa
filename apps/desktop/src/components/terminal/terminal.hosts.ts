@@ -156,17 +156,23 @@ export const acquireHost = (paneId: string, sessionId: SessionId): TerminalHost 
   return entry
 }
 
-/** Re-attach a pane whose last attach failed.
+/** Re-attach a pane that is no longer receiving what it is watching.
  *
- *  Called when the thing the pane is watching starts running. A failed attach
- *  otherwise sticks forever on a RUN pane, because its session id never changes
- *  between starts — so the pane reuses this host, and neither of the two normal
- *  re-attach triggers (a new session id, a socket reconnect) ever fires. The
- *  guard on `attachError` keeps this to the recovery path: a pane that is
- *  streaming happily is left alone rather than being made to replay. */
+ *  Called when the thing the pane watches starts running. A RUN pane's session
+ *  id never changes between starts — so the pane reuses this host, and neither
+ *  of the two normal re-attach triggers (a new session id, a socket reconnect)
+ *  ever fires. Two ways to end up here, and only one of them errors:
+ *
+ *    · the last attach FAILED, because the session did not exist yet;
+ *    · the last attach SUCCEEDED and then died silently, because the project
+ *      restarted and the engine replaced the session behind the same id.
+ *
+ *  So this asks unconditionally and lets `reattachSession` decide — it no-ops
+ *  for an entry still attached on the current connection, which is the guard
+ *  that keeps a happily-streaming pane from being made to replay. */
 export const retryAttach = (paneId: string): void => {
   const host = hosts.get(paneId)
-  if (host === undefined || host.attachError === null) return
+  if (host === undefined) return
   reattachSession(host.sessionId)
 }
 

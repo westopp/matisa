@@ -19,9 +19,13 @@ import {
   formatMB,
   KillButton,
   LifecycleButton,
+  foreignDetail,
+  ForeignMark,
+  isOurs,
   primaryPort,
   ProjectAvatar,
   StatusFigure,
+  useClaim,
   type FailureDetail
 } from "./primitives"
 
@@ -133,11 +137,15 @@ const CommandPill = ({
   project,
   pane,
   runner,
+  onPick,
   onOpen
 }: {
   project: ProjectWithState
   pane: Pane
   runner: CommandRunner
+  /** A click on the pill's body does what a click on the card does — the pill
+   *  belongs to that project, and pointing at it is pointing at the project. */
+  onPick: () => void
   /** Where the output is. A failed command's reason lives in its terminal, so
    *  the tip's second button goes there rather than to the project drawer,
    *  which knows nothing about commands. */
@@ -171,10 +179,16 @@ const CommandPill = ({
   }
 
   return (
-    <span className="cmd-pill" title={pane.subtitle}>
+    // No role or tab stop: the pill is not a control of its own, it is a
+    // shortcut to the card above it, and every pill claiming a tab stop for a
+    // gesture the keyboard already has (the card itself) would put one in front
+    // of each of its real buttons.
+    <span className="cmd-pill" title={pane.subtitle} onClick={onPick}>
       <StatusFigure state={state} size={14} dotSize={6} failure={failure} />
       <span className="cmd-pill-name">{name}</span>
-      <span className="svc-controls">
+      {/* The card's rule, verbatim: a control acts on the command and nothing
+          else — a click on kill or stop must not also move the selection. */}
+      <span className="svc-controls" onClick={(e) => e.stopPropagation()}>
         <KillButton
           enabled={running}
           onKill={() => runner.kill(name)}
@@ -199,7 +213,10 @@ const CommandPill = ({
         title={running ? "Stop or kill the command before closing" : "Close this command and its terminal"}
         aria-label="Close this command and its terminal"
         disabled={running}
-        onClick={dismiss}
+        onClick={(e) => {
+          e.stopPropagation()
+          dismiss()
+        }}
       >
         <Icons.X size={11} sw={2.4} />
       </button>
@@ -212,7 +229,15 @@ const CommandPill = ({
  *  from anything else (the layout tree, a filter on liveness) would be a second
  *  answer to that question, and a second answer is exactly how a pill outlives
  *  the terminal it summarises. */
-const CommandPills = ({ project, onOpen }: { project: ProjectWithState; onOpen: () => void }) => {
+const CommandPills = ({
+  project,
+  onPick,
+  onOpen
+}: {
+  project: ProjectWithState
+  onPick: () => void
+  onOpen: () => void
+}) => {
   const panes = useTerminals((s) => s.panes)
   const runner = useCommandRunner(project.id)
 
@@ -226,7 +251,14 @@ const CommandPills = ({ project, onOpen }: { project: ProjectWithState; onOpen: 
   return (
     <div className="cmd-pills">
       {open.map((pane) => (
-        <CommandPill key={pane.paneId} project={project} pane={pane} runner={runner} onOpen={onOpen} />
+        <CommandPill
+          key={pane.paneId}
+          project={project}
+          pane={pane}
+          runner={runner}
+          onPick={onPick}
+          onOpen={onOpen}
+        />
       ))}
     </div>
   )
@@ -254,6 +286,7 @@ export const ProjectCard = ({
   onToggleOpen: () => void
 }) => {
   const sample = useEngine((s) => s.resources[project.id])
+  const claim = useClaim(project.id, project.state)
   const kill = useEngine((s) => s.kill)
   const takeover = useEngine((s) => s.takeover)
   const removeProject = useEngine((s) => s.removeProject)
@@ -263,6 +296,11 @@ export const ProjectCard = ({
   const [editing, setEditing] = useState(false)
   const [removing, setRemoving] = useState(false)
   const [forcing, setForcing] = useState(false)
+
+  // What a click on this project means here — declared once, because the card
+  // and the pills beneath it are one cell and must not drift into meaning two
+  // different things by the same gesture.
+  const pick = openOnSelect ? onOpen : onSelect
 
   const port = primaryPort(project)
   // Alive or mid-transition. Both are states a kill is FOR: the second one more
@@ -352,7 +390,7 @@ export const ProjectCard = ({
         pure ceremony. */}
     <div
       className={`svc-row st-${project.state} ${active ? "active" : ""} ${busy ? "busy" : ""}`}
-      onClick={openOnSelect ? onOpen : onSelect}
+      onClick={pick}
       // The chevron is still the deliberate way in, but a double click is what
       // a list of things has always meant by "open this one" — and on the board,
       // where a single click only selects, it saves crossing the card to reach
@@ -396,7 +434,23 @@ export const ProjectCard = ({
       <span className="svc-foot">
         <span className="svc-meta">
           <StatusFigure state={project.state} projectId={project.id} />
-          {port !== undefined && <span className="svc-chip">:{port}</span>}
+          {/* Standing, not on-demand: before this, the only way to learn that
+              your port was taken — or that the project was already up outside
+              matisa — was to press Start and read the refusal. The sweep knows
+              it continuously, so the row says it continuously. */}
+          {claim !== undefined && (
+            <ForeignMark
+              detail={foreignDetail(
+                claim,
+                isOurs(claim)
+                  ? { label: "Reclaim", onClick: () => void takeover(project.id) }
+                  : undefined
+              )}
+            />
+          )}
+          {port !== undefined && (
+            <span className={`svc-chip ${claim?.evidence === "port" ? "busy" : ""}`}>:{port}</span>
+          )}
           {/* Only while it runs. A stopped project reporting `0.0% • 0MB` is a
               measurement of nothing dressed up as a reading. */}
           {running && sample !== undefined && (
@@ -475,8 +529,9 @@ export const ProjectCard = ({
       </span>
     </div>
 
-    {/* Under the card, not in it. */}
-    <CommandPills project={project} onOpen={onOpen} />
+    {/* Under the card, not in it — but of it: a click on a pill picks the same
+        project the card would. */}
+    <CommandPills project={project} onPick={pick} onOpen={onOpen} />
     </div>
   )
 }

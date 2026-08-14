@@ -1,10 +1,11 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Effect, Option, ParseResult, Schema } from "effect"
-import { GroupSlug, ProjectId, tokenize } from "@matisa/core"
+import { GroupSlug, tokenize } from "@matisa/core"
 import type { Command as CoreCommand, NewProject, Port, ProjectPatch } from "@matisa/core"
 import { call } from "../transport/transport.index.js"
 import { Renderer } from "../render/render.index.js"
 import { applyGlobals } from "../cli.globals.js"
+import { resolveProject } from "../cli.resolve.js"
 
 // project add|list|update|rm — args map to catalog.* control calls. The
 // strict-port guard and all validation live in the engine; these handlers only
@@ -71,9 +72,10 @@ const add = Command.make(
     image: Options.optional(Options.text("image")),
     compose: Options.optional(Options.text("compose")),
     group: Options.optional(Options.text("group")),
+    icon: Options.optional(Options.text("icon")),
     port: portOption("port")
   },
-  ({ cmd, compose, dir, group, image, name, port }) =>
+  ({ cmd, compose, dir, group, icon, image, name, port }) =>
     Effect.gen(function* () {
       yield* applyGlobals
       const render = yield* Renderer
@@ -86,6 +88,7 @@ const add = Command.make(
         ...(Option.isSome(image) ? { image: image.value } : {}),
         ...(Option.isSome(compose) ? { composeFile: compose.value } : {}),
         ...(Option.isSome(group) ? { groupSlug: GroupSlug.make(group.value) } : {}),
+        ...(Option.isSome(icon) ? { pathToIcon: icon.value } : {}),
         ports: toPorts(port)
       } as NewProject
       const created = yield* call("catalog.add", input)
@@ -112,9 +115,11 @@ const update = Command.make(
     image: Options.optional(Options.text("image")),
     compose: Options.optional(Options.text("compose")),
     group: Options.optional(Options.text("group")),
-    port: portOption("port")
+    icon: Options.optional(Options.text("icon")),
+    port: portOption("port"),
+    noPorts: Options.boolean("no-ports").pipe(Options.withDefault(false))
   },
-  ({ cmd, compose, dir, group, id, image, name, port }) =>
+  ({ cmd, compose, dir, group, icon, id, image, name, noPorts, port }) =>
     Effect.gen(function* () {
       yield* applyGlobals
       const render = yield* Renderer
@@ -130,10 +135,18 @@ const update = Command.make(
         ...(Option.isSome(group)
           ? { groupSlug: group.value === "" ? null : GroupSlug.make(group.value) }
           : {}),
-        ...(port.length > 0 ? { ports: toPorts(port) } : {})
+        // An empty --icon is how you take one away; omitting the flag leaves it
+        // alone. The patch field is nullable for exactly this reason.
+        ...(Option.isSome(icon) ? { pathToIcon: icon.value === "" ? null : icon.value } : {}),
+        // Ports were unclearable: `--port` with nothing to give it is
+        // indistinguishable from not passing it at all, so a project that had
+        // moved off a port kept claiming it — and the claim is global, so it
+        // also kept every OTHER project off it. `--no-ports` is the empty list
+        // said out loud.
+        ...(noPorts ? { ports: [] } : port.length > 0 ? { ports: toPorts(port) } : {})
       }
       const updated = yield* call("catalog.update", {
-        id: ProjectId.make(id),
+        id: yield* resolveProject(id),
         patch
       })
       yield* render.project(updated)
@@ -144,7 +157,7 @@ const rm = Command.make("rm", { id: Args.text({ name: "id" }) }, ({ id }) =>
   Effect.gen(function* () {
     yield* applyGlobals
     const render = yield* Renderer
-    yield* call("catalog.remove", { id: ProjectId.make(id) })
+    yield* call("catalog.remove", { id: yield* resolveProject(id) })
     yield* render.removed(id)
   })
 )

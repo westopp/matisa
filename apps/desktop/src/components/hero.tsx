@@ -9,12 +9,14 @@ import { CollapsibleCard } from "./panels"
 import {
   formatMB,
   formatUptime,
+  isOurs,
   KillButton,
   KindIcon,
   LifecycleButton,
   primaryPort,
   ProjectAvatar,
-  StatusFigure
+  StatusFigure,
+  useClaim
 } from "./primitives"
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -183,6 +185,41 @@ const UrlChip = ({
   )
 }
 
+/** The old app's unmanaged banner, and its blocked twin.
+ *
+ *  The row badge is a glance; this is the paragraph. It sits above the hero
+ *  rather than inside it because it explains why the hero reads the way it does
+ *  — a project that says `idle` while its port is busy, or one that says
+ *  `unmanaged` with no logs behind it — and an explanation below the thing it
+ *  explains is read second. */
+const ForeignBanner = ({ project }: { project: ProjectWithState }) => {
+  const claim = useClaim(project.id, project.state)
+  const takeover = useEngine((s) => s.takeover)
+  if (claim === undefined) return null
+
+  const ours = isOurs(claim)
+  return (
+    <div className="foreign-banner">
+      <Icons.Alert size={15} sw={2.2} />
+      <div className="foreign-banner-text">
+        <span className="foreign-banner-head">
+          {ours ? "Running outside Matisa" : `Port ${claim.port ?? "?"} is in use`}
+        </span>
+        <span className="foreign-banner-body">
+          {ours
+            ? "Logs aren't captured and the controls are inert. Reclaim it to manage it here."
+            : claim.message}
+        </span>
+      </div>
+      {ours && (
+        <button className="btn sm" onClick={() => void takeover(project.id)}>
+          Reclaim
+        </button>
+      )}
+    </div>
+  )
+}
+
 export const ProjectHero = ({ project, onEdit }: { project: ProjectWithState; onEdit: () => void }) => {
   const restart = useEngine((s) => s.restart)
   const kill = useEngine((s) => s.kill)
@@ -211,6 +248,7 @@ export const ProjectHero = ({ project, onEdit }: { project: ProjectWithState; on
 
   return (
     <>
+    <ForeignBanner project={project} />
     <div className="hero">
       <div className="hero-top">
         <div className="hero-id">

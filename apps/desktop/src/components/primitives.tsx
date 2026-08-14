@@ -1,5 +1,12 @@
 import { useLayoutEffect, useRef, useState } from "react"
-import type { CrashRecord, ProjectId, ProjectKind, ProjectWithState, RuntimeState } from "@matisa/core"
+import type {
+  CrashRecord,
+  ForeignClaim,
+  ProjectId,
+  ProjectKind,
+  ProjectWithState,
+  RuntimeState
+} from "@matisa/core"
 import type { CommandStatus } from "~/hooks/use-command-run"
 import { intentLabel, useLifecycleState } from "~/hooks/use-lifecycle-state"
 import { useEngine } from "~/store/store.engine"
@@ -259,19 +266,21 @@ export interface FailureDetail {
   readonly details?: { readonly label: string; readonly onClick: () => void }
 }
 
-/** The failure triangle and its reason tip. Hover reads the reason, and the two
- *  things you can do about it — look, and reset — sit in the tip, because the
- *  place a reason is read is the place those belong. */
-export const FailureMark = ({ detail, size = 13 }: { detail: FailureDetail; size?: number }) => {
+/** The placement half of a hover tip, shared by every mark that draws one.
+ *
+ *  Split out rather than copied: the geometry here is fiddly and was tuned
+ *  against real edges (a glyph at the bottom of the sidebar, a tip wider than
+ *  the rail), so a second mark with its own copy would drift from it the first
+ *  time either is touched. What differs between marks is what the tip SAYS. */
+const useTipAnchor = () => {
   const [anchor, setAnchor] = useState<TipAnchor | null>(null)
   const tipRef = useRef<HTMLSpanElement>(null)
-  const { headline, body, reason, exit } = detail
 
   // One corrective pass once the tip has real dimensions. The first placement
   // centres on the glyph, which runs off the window whenever the glyph sits
   // within half a tip of an edge — and in the sidebar it always does. Measuring
   // beats guessing at the width: the tip is `max-content` up to a cap, so how
-  // wide it actually is depends on the failure text.
+  // wide it actually is depends on the text.
   useLayoutEffect(() => {
     const el = tipRef.current
     if (anchor === null || el === null || anchor.settled) return
@@ -287,12 +296,6 @@ export const FailureMark = ({ detail, size = 13 }: { detail: FailureDetail; size
     setAnchor({ ...anchor, x: anchor.x + dx, above, settled: true })
   }, [anchor])
 
-  const glyph = (
-    <span className="failure-glyph" style={{ width: size, height: size }}>
-      <Icons.Alert size={size} sw={2.2} />
-    </span>
-  )
-
   // Measured at the moment of hover, not on mount: rows scroll, and a position
   // captured earlier would put the tip somewhere the glyph no longer is.
   const place = (e: { currentTarget: HTMLElement }): void => {
@@ -306,8 +309,24 @@ export const FailureMark = ({ detail, size = 13 }: { detail: FailureDetail; size
     })
   }
 
+  return { anchor, tipRef, place, clear: () => setAnchor(null) }
+}
+
+/** The failure triangle and its reason tip. Hover reads the reason, and the two
+ *  things you can do about it — look, and reset — sit in the tip, because the
+ *  place a reason is read is the place those belong. */
+export const FailureMark = ({ detail, size = 13 }: { detail: FailureDetail; size?: number }) => {
+  const { anchor, tipRef, place, clear } = useTipAnchor()
+  const { headline, body, reason, exit } = detail
+
+  const glyph = (
+    <span className="failure-glyph" style={{ width: size, height: size }}>
+      <Icons.Alert size={size} sw={2.2} />
+    </span>
+  )
+
   const reset = (): void => {
-    setAnchor(null)
+    clear()
     detail.onReset()
   }
 
@@ -319,8 +338,8 @@ export const FailureMark = ({ detail, size = 13 }: { detail: FailureDetail; size
       className="failure-mark"
       onMouseEnter={place}
       onFocus={place}
-      onMouseLeave={() => setAnchor(null)}
-      onBlur={() => setAnchor(null)}
+      onMouseLeave={clear}
+      onBlur={clear}
     >
       <button
         className="failure-glyph-btn"
@@ -368,6 +387,125 @@ export const FailureMark = ({ detail, size = 13 }: { detail: FailureDetail; size
               <Icons.Reset size={11} sw={2.2} /> Reset
             </button>
           </span>
+        </span>
+      )}
+    </span>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// The foreign mark — amber, and deliberately not red.
+//
+// Two different facts wear this triangle, and telling them apart is the whole
+// point of it:
+//
+//   • YOURS, OUTSIDE MATISA (evidence root/container) — the project is up, we
+//     just did not start it. Nothing is wrong; the engine simply has no handle
+//     on it, so there are no logs and no stop button. Reclaim is the way in.
+//   • BLOCKED (evidence port) — something that is NOT this project holds its
+//     port. The project is not running at all, and Reclaim is not offered
+//     because the process is not ours to take.
+//
+// Amber for both because neither is a failure: the first is a working app, the
+// second a working machine with your port already spoken for. Red is reserved
+// for things that broke.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** The claim held against a project right now, from the last sweep.
+ *
+ *  Two things it deliberately does NOT do. It does not survive the engine
+ *  running the project: claims are only minted for projects the engine is not
+ *  running, so a claim sitting beside a `running` state is a leftover from the
+ *  last sweep — up to 30s stale — and rendering it would offer to reclaim
+ *  something already ours. And it does not memoise: `claims` is a fresh array
+ *  every sweep, so each entry is a new object even when nothing changed. The
+ *  cost is one re-render per card per sweep, which is cheap; pretending
+ *  otherwise in a comment would be worse than the churn. */
+export const useClaim = (
+  projectId: ProjectId | undefined,
+  state?: RuntimeState
+): ForeignClaim | undefined =>
+  useEngine((s) =>
+    projectId === undefined || state === "running" || state === "starting" || state === "stopping"
+      ? undefined
+      : s.discovery?.claims.find((c) => c.projectId === projectId)
+  )
+
+/** True when the holder IS this project, running outside the engine — as
+ *  opposed to a stranger sitting on its port. */
+export const isOurs = (claim: ForeignClaim): boolean => claim.evidence !== "port"
+
+export interface ForeignDetail {
+  readonly headline: string
+  readonly body: string
+  /** The glyph's own tooltip: headline and body in one line. */
+  readonly reason: string
+  /** The one thing to do about it, when there is one. */
+  readonly action?: { readonly label: string; readonly onClick: () => void }
+}
+
+/** What a claim says, in the two registers the tip needs. Derived in one place
+ *  so the row badge, the group badge and the hero banner cannot word it
+ *  differently — the engine's own `message` is the long form, and it already
+ *  names the holder, its pid and the directory it runs from. */
+export const foreignDetail = (
+  claim: ForeignClaim,
+  action?: { readonly label: string; readonly onClick: () => void }
+): ForeignDetail => {
+  const headline = isOurs(claim)
+    ? "Running outside Matisa"
+    : `Port ${claim.port ?? "?"} is in use`
+  return {
+    headline,
+    body: claim.message,
+    reason: `${headline} — ${claim.message}`,
+    ...(action === undefined ? {} : { action })
+  }
+}
+
+/** The amber triangle and its tip. Same placement machinery as the failure
+ *  mark, same tip shape — a different colour and a different sentence. */
+export const ForeignMark = ({ detail, size = 13 }: { detail: ForeignDetail; size?: number }) => {
+  const { anchor, tipRef, place, clear } = useTipAnchor()
+
+  const act = (): void => {
+    clear()
+    detail.action?.onClick()
+  }
+
+  return (
+    <span
+      className="failure-mark foreign"
+      onMouseEnter={place}
+      onFocus={place}
+      onMouseLeave={clear}
+      onBlur={clear}
+    >
+      {/* Focusable, because the tip is the only place this reason is written and
+          the wrapper's focus handlers are what open it — on a plain span they
+          could never fire, putting the whole explanation out of reach of the
+          keyboard. Not a button: it performs nothing on click. */}
+      <span className="failure-glyph-btn" aria-label={detail.reason} role="img" tabIndex={0}>
+        <span className="failure-glyph" style={{ width: size, height: size }}>
+          <Icons.Alert size={size} sw={2.2} />
+        </span>
+      </span>
+      {anchor !== null && (
+        <span
+          ref={tipRef}
+          className={`failure-tip foreign ${anchor.above ? "above" : "below"} ${anchor.settled ? "settled" : ""}`}
+          role="tooltip"
+          style={{ left: anchor.x, top: anchor.above ? anchor.top : anchor.bottom }}
+        >
+          <span className="failure-tip-head">{detail.headline}</span>
+          <span className="failure-tip-body">{detail.body}</span>
+          {detail.action !== undefined && (
+            <span className="failure-tip-acts" onClick={(e) => e.stopPropagation()}>
+              <button className="failure-tip-btn primary" onClick={act}>
+                <Icons.Restart size={11} sw={2.2} /> {detail.action.label}
+              </button>
+            </span>
+          )}
         </span>
       )}
     </span>

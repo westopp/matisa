@@ -1,9 +1,9 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Effect } from "effect"
-import { ProjectId } from "@matisa/core"
 import { call } from "../transport/transport.index.js"
 import { Renderer } from "../render/render.index.js"
 import { applyGlobals } from "../cli.globals.js"
+import { resolveProject } from "../cli.resolve.js"
 
 // ────────────────────────────────────────────────────────────────────────────
 // discovery — what is running on this machine that matisa did not start.
@@ -80,7 +80,8 @@ export const takeover = Command.make(
     Effect.gen(function* () {
       yield* applyGlobals
       const render = yield* Renderer
-      const acc = yield* call("lifecycle.takeover", { id: ProjectId.make(id), force })
+      const projectId = yield* resolveProject(id)
+      const acc = yield* call("lifecycle.takeover", { id: projectId, force })
       yield* render.accepted(acc)
     })
 )

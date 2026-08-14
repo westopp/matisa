@@ -69,7 +69,12 @@ describe("ProjectsRepo — strict ports", () => {
       })
     )
     assert.equal(result.clash._tag, "Left")
-    if (result.clash._tag === "Left") assert.equal(result.clash.left._tag, "PortConflict")
+    if (result.clash._tag === "Left") {
+      assert.equal(result.clash.left._tag, "PortConflict")
+      if (result.clash.left._tag === "PortConflict") {
+        assert.equal(result.clash.left.heldByName, "porter", "the holder is named, not just identified")
+      }
+    }
     assert.equal(result.persisted, false, "conflicting project must not be written")
   })
 
@@ -86,7 +91,10 @@ describe("ProjectsRepo — strict ports", () => {
       })
     )
     assert.equal(clash._tag, "Left")
-    if (clash._tag === "Left") assert.equal(clash.left._tag, "PortConflict")
+    if (clash._tag === "Left") {
+      assert.equal(clash.left._tag, "PortConflict")
+      if (clash.left._tag === "PortConflict") assert.equal(clash.left.heldByName, "victim")
+    }
   })
 
   it("get of a missing id is NotFound, not a throw", async () => {

@@ -1,8 +1,9 @@
 import { Command, Options } from "@effect/cli"
-import { Effect, Option, Stream } from "effect"
+import { Effect, Stream } from "effect"
 import { Events } from "../transport/transport.index.js"
 import { Renderer } from "../render/render.index.js"
 import { applyGlobals } from "../cli.globals.js"
+import { resolveOptional } from "../cli.resolve.js"
 
 // watch — the push path. Holds the connection, consumes the live event stream,
 // and renders each state_changed / crash / exposure line as it happens.
@@ -14,7 +15,7 @@ export const watch = Command.make(
     Effect.gen(function* () {
       yield* applyGlobals
       const render = yield* Renderer
-      yield* Events.subscribe(Option.getOrUndefined(project)).pipe(
+      yield* Events.subscribe(yield* resolveOptional(project)).pipe(
         Stream.runForEach((e) => render.event(e))
       )
     })

@@ -1,12 +1,13 @@
 import { Args, Command, Options } from "@effect/cli"
-import { Effect, Option } from "effect"
-import { ProjectId, SessionId, type CrashRecord, type ResourcesSnapshot } from "@matisa/core"
+import { Effect } from "effect"
+import { SessionId, type CrashRecord, type ResourcesSnapshot } from "@matisa/core"
 import { spawnEngineAndWait } from "../cli.engine-spawn.js"
 import { ClientConfig } from "../config/config.client-config.js"
 import { call } from "../transport/transport.index.js"
 import { attach } from "../transport/transport.pty.js"
 import { Renderer } from "../render/render.index.js"
 import { applyGlobals } from "../cli.globals.js"
+import { resolveOptional, resolveProject } from "../cli.resolve.js"
 
 // engine.* self-management, docker daemon control, logs, failures, resources —
 // the old CLI's operational surface, restored.
@@ -81,13 +82,16 @@ export const logs = Command.make(
   ({ follow, id, lines }) =>
     Effect.gen(function* () {
       yield* applyGlobals
+      const projectId = yield* resolveProject(id)
       if (follow) {
-        // Live: attach to the run session (scrollback replays first).
-        yield* attach(SessionId.make(`run:${id}`))
+        // Live: attach to the run session (scrollback replays first). The
+        // session id is derived from the RESOLVED id — `run:web` is not a
+        // session, and attaching to it would fail with a name that looked right.
+        yield* attach(SessionId.make(`run:${projectId}`))
         return
       }
       const render = yield* Renderer
-      const r = yield* call("logs.tail", { projectId: ProjectId.make(id), lines })
+      const r = yield* call("logs.tail", { projectId, lines })
       yield* render.raw(r, r.lines.join(""))
     })
 )
@@ -99,20 +103,34 @@ const fmtCrash = (c: CrashRecord): string =>
     c.signal === undefined ? `exit=${c.exitCode ?? "?"}` : `signal=${c.signal}`
   }${c.summary === undefined ? "" : `\n  ${c.summary}`}`
 
+// Read by default; `--clear` forgets instead of listing. One command because
+// they name the same thing and take the same optional scope — with no project
+// the scope is the whole catalog, which for `--clear` is the "start the day
+// clean" case the desktop's drawer button already had and the CLI could only
+// reach by hand-writing JSON-RPC at the socket.
 export const failures = Command.make(
   "failures",
   {
     project: Args.text({ name: "project" }).pipe(Args.optional),
-    limit: Options.integer("limit").pipe(Options.withDefault(20))
+    limit: Options.integer("limit").pipe(Options.withDefault(20)),
+    clear: Options.boolean("clear").pipe(Options.withDefault(false))
   },
-  ({ limit, project }) =>
+  ({ clear, limit, project }) =>
     Effect.gen(function* () {
       yield* applyGlobals
       const render = yield* Renderer
-      const rows = yield* call("lifecycle.failures", {
-        projectId: Option.map(project, ProjectId.make).pipe(Option.getOrUndefined),
-        limit
-      })
+      const projectId = yield* resolveOptional(project)
+      if (clear) {
+        const { cleared } = yield* call("lifecycle.clearFailures", { projectId })
+        yield* render.raw(
+          { cleared },
+          `cleared ${cleared} ${cleared === 1 ? "failure" : "failures"}${
+            projectId === undefined ? "" : ` for ${projectId}`
+          }`
+        )
+        return
+      }
+      const rows = yield* call("lifecycle.failures", { projectId, limit })
       yield* render.raw(rows, rows.length === 0 ? "no recorded failures" : rows.map(fmtCrash).join("\n"))
     })
 )

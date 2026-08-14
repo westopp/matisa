@@ -62,6 +62,8 @@ const ProjectDialog = ({
   onClose: () => void
 }) => {
   const groups = useEngine((s) => s.groups)
+  const projects = useEngine((s) => s.projects)
+  const unmanaged = useEngine((s) => s.discovery?.unmanaged)
   const addProject = useEngine((s) => s.addProject)
   const updateProject = useEngine((s) => s.updateProject)
   const removeProject = useEngine((s) => s.removeProject)
@@ -182,6 +184,28 @@ const ProjectDialog = ({
         if (tokens === null) return { field: "command", message: "Unterminated quote", code: "BAD_QUOTE" }
         if (tokens.length === 0) return { field: "command", message: "No program given", code: "EMPTY" }
         return null
+      },
+      // Ports are globally unique in the catalog — the engine enforces it with
+      // a UNIQUE column and rejects the save. Saying so here, against the field,
+      // is the difference between "fix this number" and a toast after the fact
+      // that leaves the user re-reading a form they thought was finished.
+      portFree: (api) => {
+        const kind = (existing?.kind ?? api.getValue("kind")) as ProjectKind
+        const raw =
+          kind === "process"
+            ? [Number(api.getValue("port"))]
+            : ((api.getValue("ports") as Array<number> | undefined) ?? [])
+        const field = kind === "process" ? "port" : "ports"
+        for (const n of raw) {
+          if (!Number.isInteger(n) || n <= 0) continue
+          const owner = projects.find(
+            (p) => p.id !== existing?.id && p.ports.some((x) => x.number === n)
+          )
+          if (owner !== undefined) {
+            return { field, message: `Port ${n} belongs to ${owner.name}`, code: "PORT_TAKEN" }
+          }
+        }
+        return null
       }
     },
     onSubmit: (values) => {
@@ -195,6 +219,16 @@ const ProjectDialog = ({
   // survive a kind switch, living in the pgform store); a wrapper class keyed
   // on the live kind hides the one that doesn't apply, purely in CSS.
   const kindValue = ((form.use("values.kind") as ProjectKind | "") || initialKind) as ProjectKind
+
+  // Live, because it is watching a form value: the note appears as the number is
+  // typed. Only foreign listeners are consulted — a port held by another PROJECT
+  // is the hard error above, and reporting it twice in two tones would read as
+  // two different problems.
+  const typedPort = Number(form.use("values.port"))
+  const occupied =
+    kindValue === "process" && Number.isInteger(typedPort) && typedPort > 0
+      ? unmanaged?.find((u) => u.port === typedPort && u.running)
+      : undefined
 
   const submit = async (values: Record<string, unknown>): Promise<void> => {
     const root = String(values["root"] ?? "").trim()
@@ -298,6 +332,23 @@ const ProjectDialog = ({
       <div className={`pf-kind-${kindValue}`}>
         <GeneratePgForm generateFormProps={form.generateFormProps} components={baseComponents} />
       </div>
+
+      {/* Amber, below the fields, and never a blocker. A port that something is
+          listening on RIGHT NOW is not invalid — it is a fact about the machine
+          this minute, and it may well be the very app this project describes,
+          started in a terminal. Refusing the save over it would be wrong; not
+          mentioning it means finding out at the first Start. */}
+      {occupied !== undefined && (
+        <div className="pf-note">
+          <Icons.Alert size={13} sw={2.2} />
+          <span>
+            Something is already listening on <b>:{occupied.port}</b> — {occupied.displayName}
+            {occupied.pid === undefined ? "" : ` (pid ${occupied.pid})`}
+            {occupied.cwd === undefined ? "" : ` in ${occupied.cwd}`}. Saving is fine; starting will not be
+            until that port is free.
+          </span>
+        </div>
+      )}
 
       {confirmingDelete && existing !== undefined && (
         <ConfirmDialog

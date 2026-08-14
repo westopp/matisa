@@ -9,6 +9,7 @@ import {
   type CrashRecord,
   type DaemonStatusResult,
   type DiscoverySnapshot,
+  type ForeignClaim,
   type EngineStatus,
   type EnvContext,
   type EnvSetParams,
@@ -451,8 +452,13 @@ export const useEngine = create<EngineState>()((set, get) => ({
       // re-read after it: without that the pane could name a project as held
       // while its own card still showed `idle`.
       const snapshot = await rpc.call("discovery.snapshot", { refresh: force })
+      const before = get().discovery
       set({ discovery: snapshot })
-      if (snapshot.claims.length > 0) await get().refreshCatalog()
+      // Only when the claim SET moved. `claims.length > 0` re-read the whole
+      // catalog on every sweep for as long as one claim stood — which, now that
+      // this is polled rather than pressed, is every 30s forever behind a
+      // blocked port. A claim that has not changed cannot have changed a state.
+      if (claimKey(before?.claims) !== claimKey(snapshot.claims)) await get().refreshCatalog()
     } catch {
       // Version skew with an engine that predates the module: no listing is
       // degraded, not a failure worth a toast on every poll.
@@ -1045,8 +1051,23 @@ rpc.onOpen(() => {
 // engine short-circuits this to a cached answer while a start it initiated is
 // still in flight, so polling cannot disturb the starting spinner.
 // ────────────────────────────────────────────────────────────────────────────
+/** Identity of a claim set, for deciding whether a sweep changed anything. The
+ *  evidence is in the key because it is what decides the reconciled state: the
+ *  same holder on the same port, re-read as `root` rather than `port`, is a
+ *  different answer. */
+const claimKey = (claims: ReadonlyArray<ForeignClaim> | undefined): string =>
+  (claims ?? [])
+    .map((c) => `${c.projectId}|${c.evidence}|${c.pid ?? ""}|${c.port ?? ""}`)
+    .sort()
+    .join(",")
+
 const RESOURCE_POLL_MS = 3_000
 const DAEMON_POLL_MS = 10_000
+// Slower than the rest, because a sweep shells out several times (lsof, ps,
+// docker) and nothing about it is cheap. It only has to be fast enough that a
+// port freed — or taken — in another terminal shows up before the user reaches
+// for Start; the engine's own 5s TTL absorbs anything more eager than this.
+const DISCOVERY_POLL_MS = 30_000
 
 setInterval(() => {
   if (useEngine.getState().status === "open") void useEngine.getState().refreshResources().catch(() => {})
@@ -1055,3 +1076,7 @@ setInterval(() => {
 setInterval(() => {
   if (useEngine.getState().status === "open") void useEngine.getState().refreshDaemon()
 }, DAEMON_POLL_MS)
+
+setInterval(() => {
+  if (useEngine.getState().status === "open") void useEngine.getState().refreshDiscovery()
+}, DISCOVERY_POLL_MS)

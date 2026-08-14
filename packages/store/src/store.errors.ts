@@ -27,10 +27,13 @@ export class NotFound extends Data.TaggedError("NotFound")<{
   readonly id: string
 }> {}
 
-/** A host port is already claimed (strict global port uniqueness). */
+/** A host port is already claimed (strict global port uniqueness). The holder's
+ *  name rides along with its id: the id is what a client links to, the name is
+ *  the only half of it a human can act on. */
 export class PortConflict extends Data.TaggedError("PortConflict")<{
   readonly port: number
   readonly heldBy?: string
+  readonly heldByName?: string
 }> {}
 
 /** Union of every fault a repository method may fail with. */

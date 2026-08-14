@@ -67,22 +67,35 @@ const attach = (sessionId: SessionId, entry: Entry): void => {
     })
 }
 
-/** Attach again to a session whose previous attach failed.
+/** Attach again to a session this connection is no longer receiving.
  *
  *  A run session's id is stable — `run:<projectId>`, the same string for every
- *  start of that project — so a session that DIED (its engine restarted, or the
- *  project was not running when the pane last tried) comes back under the id
- *  that already failed. Nothing in the normal flow re-attaches it: the pane
- *  reuses its host because the id is unchanged, and the socket never reconnects
- *  because the engine is the same one. Without this the pane keeps showing the
- *  old "session not found" and, worse, receives nothing at all — the engine only
- *  bridges output to a connection that attached.
+ *  start of that project — so nothing in the normal flow re-attaches it: the
+ *  pane reuses its host because the id is unchanged, and the socket never
+ *  reconnects because the engine is the same one. Two ways to end up needing it,
+ *  and only the first announces itself:
  *
- *  A no-op unless the session is currently detached, so calling it on every
- *  transition to `running` costs nothing when the pane is already streaming. */
+ *    · the attach FAILED — the session did not exist when the pane last tried
+ *      (its engine had restarted, or the project was not running);
+ *    · the attach SUCCEEDED and then died — the project restarted, and the
+ *      engine registered a new session under the same id, shutting the old hub
+ *      down. The bridge treats that as end-of-stream and says nothing.
+ *
+ *  Either way the pane receives nothing at all, because the engine only bridges
+ *  output to a connection that attached.
+ *
+ *  A no-op while the session is attached on the current connection, so calling
+ *  it on every transition to `running` costs nothing when already streaming. */
 export const reattachSession = (sessionId: SessionId): void => {
   const entry = entries.get(sessionId)
   if (entry === undefined || entry.attachedOn === generation) return
+  // Whatever this entry remembers belongs to the session that just ended: an
+  // exit code that would be replayed at the next subscriber as though the live
+  // process were already dead, and bytes buffered from before. The id is the
+  // same string; the session behind it is not.
+  entry.exited = false
+  entry.exitCode = null
+  entry.pending = []
   for (const l of entry.listeners) l.onReset()
   attach(sessionId, entry)
 }
@@ -158,6 +171,13 @@ rpc.onNotify((n) => {
   } else if (n.method === "pty.exit") {
     entry.exited = true
     entry.exitCode = params.exitCode ?? null
+    // The attach died with the session. Nothing else says so: a run session's
+    // id is reused for the next start, so the engine registers a NEW session
+    // under the same string and shuts the old hub down — the bridge treats that
+    // as end-of-stream and returns quietly, and the socket never drops. Without
+    // this the entry still looks attached on the current generation, every
+    // re-attach path no-ops, and the pane sits deaf beside a running project.
+    entry.attachedOn = -1
     for (const l of entry.listeners) l.onExit(entry.exitCode)
   }
 })

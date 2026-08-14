@@ -98,8 +98,18 @@ export interface PtyManagerShape {
   readonly openSession: (input: OpenSessionInput) => Effect.Effect<PtySession, EngineError>
   /** Register a session and wire its output into scrollback + hub. */
   readonly register: (input: RegisterInput) => Effect.Effect<void>
-  /** Publish the exit frame and mark the session exited (scrollback kept). */
-  readonly sessionExited: (sessionId: SessionId, exitCode: number | null) => Effect.Effect<void>
+  /** Publish the exit frame and mark the session exited (scrollback kept).
+   *
+   *  `pty` guards against id reuse: a `run:` id is the same string for every
+   *  start of a project, so a caller holding one from a lifetime that is ending
+   *  can arrive after the NEXT lifetime registered under it. Pass the handle the
+   *  caller believes it is reporting on and a mismatch is ignored, rather than
+   *  marking a freshly started session dead. */
+  readonly sessionExited: (
+    sessionId: SessionId,
+    exitCode: number | null,
+    pty?: pty.IPty
+  ) => Effect.Effect<void>
   /** Scrollback snapshot + a live subscription, scoped to the caller. */
   readonly attach: (sessionId: SessionId) => Effect.Effect<AttachSnapshot, EngineError, Scope.Scope>
   readonly input: (params: PtyInputParams) => Effect.Effect<void, EngineError>
@@ -172,11 +182,17 @@ const make = Effect.gen(function* () {
       )
     })
 
-  const sessionExited: PtyManagerShape["sessionExited"] = (sessionId, exitCode) =>
+  const sessionExited: PtyManagerShape["sessionExited"] = (sessionId, exitCode, pty) =>
     Effect.gen(function* () {
       const map = yield* SynchronizedRef.get(sessions)
       const entry = HashMap.get(map, sessionId as string)
       if (Option.isNone(entry)) return
+      // Not the session the caller meant — the id was reused by a later start.
+      if (pty !== undefined && entry.value.pty !== pty) return
+      // Idempotent: the runner publishes the real exit code when the child is
+      // reaped AND unconditionally from its scope finalizer, so an ordinary
+      // exit passes through here twice. One session, one exit frame.
+      if (entry.value.exited) return
       entry.value.exited = true
       entry.value.exitCode = exitCode
       yield* PubSub.publish(entry.value.hub, {

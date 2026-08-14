@@ -244,7 +244,21 @@ const make = Effect.gen(function* () {
       // Nothing foreign is holding it, so there is nothing to take over and
       // `start` is the whole job. Not an error: it is the state the caller
       // wanted, reached without us having to kill anything.
-      if (claim === undefined) return yield* start(id)
+      //
+      // Unless the engine is ALREADY running it, in which case the caller is
+      // acting on a claim that has since evaporated — a card still showing
+      // Reclaim from the last sweep, clicked after the holder quit and the
+      // project was started normally. Falling through to `start` there would
+      // interrupt the live runner and respawn it: a working dev server bounced,
+      // without warning, by the one control whose whole purpose is to avoid
+      // killing things blindly. Report the state instead.
+      if (claim === undefined) {
+        const settled = yield* runtimeRepo.getState(id).pipe(Effect.mapError(toEngineError))
+        const state = Option.isSome(settled) ? settled.value.state : "idle"
+        return state === "running" || state === "starting"
+          ? { id, state }
+          : yield* start(id)
+      }
 
       if (claim.evidence === "port" && !force) {
         return yield* Effect.fail(

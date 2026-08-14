@@ -1,6 +1,7 @@
 import { Cause, Console, Effect, Match, Option } from "effect"
 import type { TransportError } from "./transport/transport.index.js"
 import type { ConfigError } from "./config/config.errors.js"
+import type { AmbiguousProject } from "./cli.resolve.js"
 
 // ────────────────────────────────────────────────────────────────────────────
 // cli.exit — the scripting contract.
@@ -14,7 +15,7 @@ import type { ConfigError } from "./config/config.errors.js"
 //   4   usage/config  5  not found           130 interrupt (Ctrl-C)
 // ────────────────────────────────────────────────────────────────────────────
 
-export type AppError = TransportError | ConfigError
+export type AppError = TransportError | ConfigError | AmbiguousProject
 
 const renderError = (err: AppError): string =>
   Match.value(err).pipe(
@@ -33,6 +34,16 @@ const renderError = (err: AppError): string =>
       "InvalidClientConfig",
       (e) => `invalid config ${e.field}=${e.value}: ${e.message}`
     ),
+    // Both candidates, with their ids: the fix is to retype with one of them,
+    // and a message that only said "ambiguous" would leave the user running
+    // `project list` to find out what it was ambiguous with.
+    Match.tag(
+      "AmbiguousProject",
+      (e) =>
+        `"${e.token}" matches ${e.matches.length} projects — use an id:\n${e.matches
+          .map((m) => `  ${m.id}  ${m.name}`)
+          .join("\n")}`
+    ),
     Match.exhaustive
   )
 
@@ -43,6 +54,7 @@ const codeFor = (err: AppError): number =>
     Match.tag("RequestTimeout", () => 3),
     Match.tag("InvalidClientConfig", () => 4),
     Match.tag("ProtocolError", () => 4),
+    Match.tag("AmbiguousProject", () => 4),
     Match.tag("NotFound", () => 5),
     Match.exhaustive
   )

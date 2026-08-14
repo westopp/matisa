@@ -1,8 +1,9 @@
 import { Command, Options } from "@effect/cli"
-import { Effect, Option } from "effect"
+import { Effect } from "effect"
 import { Events } from "../transport/transport.index.js"
 import { Renderer } from "../render/render.index.js"
 import { applyGlobals } from "../cli.globals.js"
+import { resolveOptional } from "../cli.resolve.js"
 
 // events --since <cursor> — the pull path. Drains the durable queue from a
 // cursor, prints each event and the next cursor for the caller to persist. The
@@ -19,7 +20,7 @@ export const events = Command.make(
     Effect.gen(function* () {
       yield* applyGlobals
       const render = yield* Renderer
-      const batch = yield* Events.pull(since, limit, Option.getOrUndefined(project))
+      const batch = yield* Events.pull(since, limit, yield* resolveOptional(project))
       yield* Effect.forEach(batch.events, (e) => render.event(e))
       yield* render.cursor(batch.next)
     })

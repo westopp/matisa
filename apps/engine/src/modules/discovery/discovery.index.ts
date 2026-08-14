@@ -195,7 +195,36 @@ const make = Effect.gen(function* () {
     states: ReadonlyArray<{ readonly projectId: ProjectId; readonly state: RuntimeState }>
   ): Effect.Effect<void> =>
     Effect.gen(function* () {
-      const claimed = new Map(snapshot.claims.map((c) => [c.projectId as string, c]))
+      // Three verdicts, not two, because the probe that separates them is
+      // allowed to come back empty.
+      //
+      //   STRONG  — the holder runs from this project's directory, or is its
+      //             container. "This project is running, we just did not start
+      //             it": what `unmanaged` asserts and what Reclaim acts on.
+      //   WEAK    — cwd was READ and is not this project's. The project is not
+      //             running at all; it is BLOCKED by a stranger. Published and
+      //             rendered on the card, but it must not move the state.
+      //   UNKNOWN — cwd could not be read (`lsof -d cwd` is best-effort: a 5s
+      //             timeout, unreadable pids simply omitted, and the probe
+      //             resolves with whatever it got). This looks EXACTLY like WEAK
+      //             on the wire — `sameRoot` is false either way — but it is not
+      //             evidence of anything. Treating it as weak made a degraded
+      //             sweep release a genuinely unmanaged project to `idle` with
+      //             "the foreign process holding it is gone", which was untrue,
+      //             and the next healthy sweep put it straight back: a flap
+      //             driven by nothing but a slow lsof.
+      const strong = (c: ForeignClaim): boolean => c.evidence !== "port"
+      const conclusive = (c: ForeignClaim): boolean => strong(c) || c.cwd !== undefined
+
+      const claimed = new Map(
+        snapshot.claims.filter(strong).map((c) => [c.projectId as string, c])
+      )
+      // What the release loop consults. A project with an inconclusive claim
+      // appears here but not above, so it is neither promoted nor released —
+      // the state it already had is the best answer available.
+      const spoken = new Set(
+        snapshot.claims.filter((c) => !conclusive(c)).map((c) => c.projectId as string)
+      )
       const current = new Map(states.map((s) => [s.projectId as string, s.state]))
 
       for (const [id, claim] of claimed) {
@@ -211,7 +240,7 @@ const make = Effect.gen(function* () {
       }
 
       for (const [id, state] of current) {
-        if (state !== "unmanaged" || claimed.has(id)) continue
+        if (state !== "unmanaged" || claimed.has(id) || spoken.has(id)) continue
         const next = transition(State.Unmanaged({ pid: 0 }), Event.Released())
         if (Option.isNone(next)) continue
         const to = runtimeStateOf(next.value)

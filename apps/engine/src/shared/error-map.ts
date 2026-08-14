@@ -39,11 +39,15 @@ export const toEngineError = (e: unknown): EngineError => {
       })
     }
     case "PortConflict": {
-      const x = e as { port: number; heldBy?: string }
+      const x = e as { port: number; heldBy?: string; heldByName?: string }
+      // The sentence names the holder; the id stays on the error for clients
+      // that want to navigate to it. A uuid in the message told the user only
+      // that the conflict was with something.
+      const holder = x.heldByName ?? x.heldBy
       return new PortConflict({
         port: x.port,
         heldBy: x.heldBy != null ? ProjectId.make(x.heldBy) : undefined,
-        message: `port ${x.port} is already claimed${x.heldBy != null ? ` by ${x.heldBy}` : ""}`
+        message: `port ${x.port} is already claimed${holder != null ? ` by "${holder}"` : ""}`
       })
     }
     default:
