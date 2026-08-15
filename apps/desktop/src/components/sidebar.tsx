@@ -689,6 +689,21 @@ const SystemsGroup = ({
   )
 }
 
+/** The fleet's total resident memory, as its own leaf.
+ *
+ *  It has to be, because it is the ONE thing in this tree that reads the 3s
+ *  resource poll. Read from `Sidebar` — even reduced to a scalar, as it was —
+ *  it re-rendered the whole sidebar every three seconds: the guard assumed the
+ *  total would sit still while nothing happened, and a running process's RSS
+ *  never does. It moved by a few megabytes on every sample, which is invisible
+ *  at one decimal place and a full re-render of every band, group and card
+ *  underneath. Subscribing here scopes that to the one span whose text the
+ *  number actually changes. */
+const FootMem = () => {
+  const totalRss = useEngine((s) => Object.values(s.resources).reduce((a, r) => a + r.rssBytes, 0))
+  return <span className="foot-mem">{(totalRss / (1024 * 1024 * 1024)).toFixed(1)} GB</span>
+}
+
 interface Props {
   /** The highlighted card — where you are on the board. */
   readonly selectedId: ProjectId | null
@@ -724,10 +739,8 @@ export const Sidebar = ({
 }: Props) => {
   const projects = useEngine((s) => s.projects)
   const groups = useEngine((s) => s.groups)
-  // The scalar, not the map: zustand skips notification when the selected value
-  // is Object.is-equal, so the 3s resource poll only re-renders this tree when
-  // the total actually moves — a fresh map identity alone no longer does.
-  const totalRss = useEngine((s) => Object.values(s.resources).reduce((a, r) => a + r.rssBytes, 0))
+  // Nothing here reads `resources`. The total lives in `FootMem`, for the
+  // reason written there.
   const status = useEngine((s) => s.status)
 
   const removeGroup = useEngine((s) => s.removeGroup)
@@ -1028,7 +1041,7 @@ export const Sidebar = ({
           {running} running · {projects.length - running} stopped
         </span>
         <span className="foot-spacer" />
-        <span className="foot-mem">{(totalRss / (1024 * 1024 * 1024)).toFixed(1)} GB</span>
+        <FootMem />
       </div>
 
       {editingGroup !== null && (

@@ -9,9 +9,27 @@ import { EditProjectDialog } from "~/components/forms/lazy"
 
 // The terminal emulator is the heaviest dependency in the app and is reachable
 // only from a project route — it must not sit on the first paint (CPERF-200).
-const TerminalArea = lazy(() =>
-  import("~/components/terminal/terminal.area").then((m) => ({ default: m.TerminalArea }))
-)
+const loadTerminalArea = () => import("~/components/terminal/terminal.area")
+const TerminalArea = lazy(() => loadTerminalArea().then((m) => ({ default: m.TerminalArea })))
+
+// Off the first paint is not the same as "on the first click". Splitting it
+// bought the boot its budget and then charged the whole cost to whoever opened
+// the first project: the router wraps that navigation in a view transition, so
+// the browser holds the OLD frame — the board, frozen — until the update lands,
+// and the update was waiting on xterm to arrive. A second of a dead window on
+// the first open, and every open after it instant, which reads as the app
+// having stumbled rather than as a download.
+//
+// So: fetch it once the browser has nothing better to do. Idle is after first
+// paint by definition, which is the whole of what the budget asks; the timeout
+// is there for the case that never comes — a window that boots busy and stays
+// that way would otherwise reach the first click still cold.
+const warmTerminalArea = (): void => void loadTerminalArea().catch(() => {})
+// Typed as always present, and absent in Safari — the browser build is not the
+// shell, so the fallback stays.
+if (typeof window.requestIdleCallback === "function")
+  window.requestIdleCallback(warmTerminalArea, { timeout: 3_000 })
+else window.setTimeout(warmTerminalArea, 1_000)
 
 // The project detail pane. Everything below the hero is engine-reported.
 

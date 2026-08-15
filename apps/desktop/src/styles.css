@@ -609,6 +609,50 @@ button {
 ::view-transition-new(fleet) {
   animation-duration: 0.3s;
 }
+
+/* ── The sidebar's chrome, held above its own cards ─────────────────────────
+   Every card carries a name, so for the length of a transition every card is a
+   snapshot in the ::view-transition TOP LAYER. Two things stop being true up
+   there: `.side-list`'s overflow no longer clips its contents, and the header's
+   place in the DOM no longer outranks anything. A card scrolled up under the
+   search field is therefore captured whole and painted straight over it — which
+   reads exactly like the header losing a z-index fight, and is why raising one
+   on `.side-top` does nothing. Paint order inside that layer is settled between
+   the GROUPS, and only a z-index on those groups settles it.
+
+   Naming the two chrome rows is what gives them groups to raise. It also takes
+   them out of `fleet`'s snapshot, so they need the surface they were borrowing
+   from it: the window's own colour at board width, the sheet the rail draws.
+   Both are what already shows through, so nothing moves at rest.
+
+   Scoped to the sidebar's children. `.side-top` is also a terminal drop zone's
+   modifier (`.drop-hl.side-top`), and two elements answering to one name aborts
+   the entire transition. */
+.sidebar > .side-top {
+  view-transition-name: fleet-head;
+}
+.sidebar > .side-foot {
+  view-transition-name: fleet-foot;
+}
+.sidebar > .side-top,
+.sidebar > .side-foot {
+  background: var(--window-bg);
+}
+::view-transition-group(fleet-head),
+::view-transition-group(fleet-foot) {
+  z-index: 10;
+}
+/* Same reason as the panes: a row about to be a third of its width squashes if
+   its snapshot is stretched to fit. Pinned, it slides under the pane's edge. */
+::view-transition-old(fleet-head),
+::view-transition-new(fleet-head),
+::view-transition-old(fleet-foot),
+::view-transition-new(fleet-foot) {
+  height: 100%;
+  width: 100%;
+  object-fit: none;
+  object-position: top left;
+}
 /* Cut to the destination rather than skipping the transition outright: the flip
    still happens in one frame, and nothing else has to know it was asked for. */
 @media (prefers-reduced-motion: reduce) {
@@ -2486,6 +2530,12 @@ button {
     background: var(--sheet);
     border-right: 1px solid var(--line);
   }
+  /* The chrome rows paint their own surface rather than inheriting the rail's —
+     see the view-transition block for why they have to have one at all. */
+  .sidebar > .side-top,
+  .sidebar > .side-foot {
+    background: var(--sheet);
+  }
   .side-top {
     padding: 10px 12px 6px;
     gap: 6px;
@@ -3661,13 +3711,21 @@ button {
     opacity: 1;
   }
 }
+/* A dialog is an ELEVATED surface, so it takes the elevated tone — `--raise`,
+   the same step a card sits at — and not `--sheet`, which is one shallow step
+   off `--canvas` and reads as the window's own ground once the scrim has
+   darkened everything behind it. The ramp is deliberately shallow (see the v3
+   surfaces block), which is exactly why the 1px edge has to be here: with no
+   border, the only lines on the panel were the head and foot rules, so the
+   modal had no left, right, top or bottom edge at all and its shape came
+   entirely from the shadow. */
 .dialog {
   width: min(620px, 100%);
   max-height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--sheet);
-  border: 0;
+  background: var(--raise);
+  border: 1px solid var(--line);
   border-radius: 18px;
   box-shadow: var(--shadow-pop);
   overflow: hidden;
