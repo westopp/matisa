@@ -6,6 +6,7 @@ import { openExternal } from "~/lib/native"
 import { Icons } from "./icons"
 import { useLifecycleState } from "~/hooks/use-lifecycle-state"
 import { CollapsibleCard } from "./panels"
+import { GitBar } from "./git.bar"
 import {
   formatMB,
   formatUptime,
@@ -276,6 +277,9 @@ export const ProjectHero = ({ project, onEdit }: { project: ProjectWithState; on
                 <KindIcon kind={project.kind} size={11} />
                 {project.kind}
               </span>
+              {/* Beside the name because that is what it qualifies: which
+                  version of this project you are looking at. */}
+              <GitBar projectId={project.id} />
             </h1>
           </div>
         </div>

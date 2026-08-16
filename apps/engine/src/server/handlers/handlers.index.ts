@@ -1,10 +1,11 @@
 import { Effect } from "effect"
-import { EventsRepo, RuntimeRepo } from "@matisa/store"
+import { EventsRepo, RuntimeRepo, SettingsRepo } from "@matisa/store"
 import { AppConfig } from "../../config/config.app-config.js"
 import { Catalog } from "../../modules/catalog/catalog.services.js"
 import { Discovery } from "../../modules/discovery/discovery.index.js"
 import { DockerDaemon } from "../../modules/docker/docker.daemon.js"
 import { Exposure } from "../../modules/exposure/exposure.index.js"
+import { Git } from "../../modules/git/git.services.js"
 import { PtyManager } from "../../modules/pty/pty.services.js"
 import { Resources } from "../../modules/resources/resources.services.js"
 import { Supervisor } from "../../modules/supervisor/supervisor.services.js"
@@ -16,8 +17,10 @@ import { engineHandlers } from "./handlers.engine.js"
 import { eventsHandlers } from "./handlers.events.js"
 import { exposureHandlers } from "./handlers.exposure.js"
 import { fsHandlers } from "./handlers.fs.js"
+import { gitHandlers } from "./handlers.git.js"
 import { lifecycleHandlers } from "./handlers.lifecycle.js"
 import { ptyHandlers } from "./handlers.pty.js"
+import { settingsHandlers } from "./handlers.settings.js"
 
 // The handler registry. Assembling the namespace maps into a single
 // Record<Method, Handler> makes the compiler enforce that every method in the
@@ -31,6 +34,7 @@ export const makeHandlers: Effect.Effect<
   | Supervisor
   | Discovery
   | Exposure
+  | Git
   | EventsHub
   | PtyManager
   | DockerDaemon
@@ -38,11 +42,13 @@ export const makeHandlers: Effect.Effect<
   | AppConfig
   | EventsRepo
   | RuntimeRepo
+  | SettingsRepo
 > = Effect.gen(function* () {
   const catalog = yield* Catalog
   const supervisor = yield* Supervisor
   const discovery = yield* Discovery
   const exposure = yield* Exposure
+  const git = yield* Git
   const hub = yield* EventsHub
   const pty = yield* PtyManager
   const daemon = yield* DockerDaemon
@@ -50,6 +56,7 @@ export const makeHandlers: Effect.Effect<
   const config = yield* AppConfig
   const eventsRepo = yield* EventsRepo
   const runtime = yield* RuntimeRepo
+  const settings = yield* SettingsRepo
   const startedAt = Date.now()
 
   const handlers: Handlers = {
@@ -60,7 +67,9 @@ export const makeHandlers: Effect.Effect<
     ...ptyHandlers(pty),
     ...engineHandlers(config, startedAt, daemon, resources, catalog, supervisor, pty),
     ...exposureHandlers(exposure),
-    ...fsHandlers()
+    ...fsHandlers(),
+    ...settingsHandlers(settings, hub),
+    ...gitHandlers(git)
   }
   return handlers
 })

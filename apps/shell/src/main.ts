@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from "electron"
 import { join } from "node:path"
 import { engineLogPath, ensureEngine } from "./engine.js"
 
@@ -71,6 +71,35 @@ ipcMain.handle("matisa:open-external", (_e, url: unknown) => {
 // it returns immediately if the bridge accepts — so a user leaning on the button
 // spawns nothing extra.
 ipcMain.handle("matisa:start-engine", () => ensureEngine())
+
+// A system notification, for events the renderer decided are worth interrupting
+// over while the window does not have focus. The renderer owns that decision —
+// it is the side that knows the user's preferences and whether it is focused —
+// and this side owns the capability, because a renderer cannot post one.
+//
+// Clicking it brings the window forward. That is the entire point of raising it:
+// a notification about a project you cannot then look at is a dead end. The body
+// is passed through as text and never interpreted, so nothing an engine event
+// carries can become markup or a link.
+ipcMain.handle("matisa:notify", (_e, payload: unknown) => {
+  if (!Notification.isSupported()) return false
+  if (typeof payload !== "object" || payload === null) return false
+  const { title, body } = payload as { title?: unknown; body?: unknown }
+  if (typeof title !== "string" || title === "") return false
+
+  const notification = new Notification({
+    title,
+    ...(typeof body === "string" ? { body } : {})
+  })
+  notification.on("click", () => {
+    if (win === null) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  })
+  notification.show()
+  return true
+})
 
 app.on("second-instance", () => {
   if (win !== null) {

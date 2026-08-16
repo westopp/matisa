@@ -2788,6 +2788,16 @@ body.rail-dragging {
   flex-shrink: 0;
   opacity: 0.9;
 }
+/* Inside a button the ring takes the button's own ink. Amber is the colour of a
+   lifecycle in transition — a project neither stopped nor started — and a
+   control reporting on the click you just gave it is not that. It also had to
+   change: on a filled `.btn.primary` the amber sat on the accent and read as a
+   smudge rather than a spinner. */
+.btn .spinner {
+  color: currentColor;
+  opacity: 1;
+  border-width: 1.5px;
+}
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -4979,4 +4989,149 @@ body.rail-dragging {
 .confirm-sub {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+/* ── Settings ───────────────────────────────────────────────────────────────
+   Sections rather than a flat list of fields: what is global divides into
+   things that are unrelated to each other — what an agent is told, what
+   interrupts you, what you have put away — and a run of unlabelled inputs
+   makes the reader work out that division for themselves. */
+.set-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.set-section:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.set-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+}
+.set-blurb {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.set-blurb code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+}
+/* The whole row is the label, so the hint is a click target too — a 13px
+   checkbox on its own is a small thing to ask someone to hit. */
+.set-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 5px 0;
+  cursor: pointer;
+}
+.set-toggle.off {
+  opacity: 0.45;
+  cursor: default;
+}
+.set-toggle input {
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+.set-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.set-toggle-label {
+  font-size: 12.5px;
+  color: var(--text);
+}
+.set-hidden {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.set-hidden-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: var(--sunken);
+  color: var(--text-muted);
+}
+.set-hidden-name {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Git context ────────────────────────────────────────────────────────────
+   Quiet by design. This is a qualifier on the project's name, not a fact
+   competing with the port and the resource readings beside it — so it reads
+   like the chips around it and only picks up an outline on hover, when it
+   turns out to be a button. */
+.git-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.git-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 190px;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--sunken);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.git-branch:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.git-branch:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.git-branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Behind/ahead of the upstream. Coloured only when there is something to say —
+   a zero is not drawn at all, so any colour here means a real divergence. */
+.git-counts {
+  color: var(--accent);
+  font-size: 10px;
+  letter-spacing: -0.02em;
+}
+/* What git said, verbatim and one line of it. The title carries the rest. */
+.git-said {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.git-bar.compact .git-branch {
+  max-width: 130px;
+  background: transparent;
+  padding: 1px 4px;
 }

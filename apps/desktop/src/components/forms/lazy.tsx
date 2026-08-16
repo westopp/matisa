@@ -14,6 +14,7 @@ const EditProject = lazy(() =>
 const SetEnvVar = lazy(() => import("./env.form").then((m) => ({ default: m.SetEnvVarDialog })))
 const SetCommand = lazy(() => import("./command.form").then((m) => ({ default: m.SetCommandDialog })))
 const Group = lazy(() => import("./group.form").then((m) => ({ default: m.GroupDialog })))
+const Settings = lazy(() => import("./settings.form").then((m) => ({ default: m.SettingsDialog })))
 
 export const AddProjectDialog = (props: ComponentProps<typeof AddProject>) => (
   <Suspense fallback={null}>
@@ -42,6 +43,12 @@ export const SetCommandDialog = (props: ComponentProps<typeof SetCommand>) => (
 export const GroupDialog = (props: ComponentProps<typeof Group>) => (
   <Suspense fallback={null}>
     <Group {...props} />
+  </Suspense>
+)
+
+export const SettingsDialog = (props: ComponentProps<typeof Settings>) => (
+  <Suspense fallback={null}>
+    <Settings {...props} />
   </Suspense>
 )
 

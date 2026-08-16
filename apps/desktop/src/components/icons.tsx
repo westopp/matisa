@@ -186,6 +186,34 @@ export const Icons = {
   Activity: (p: IconProps) => <Icon {...p} d="M3 12h4l3-8 4 16 3-8h4" />,
   More: (p: IconProps) => <Icon {...p} d="M5 12h.01M12 12h.01M19 12h.01" sw={2.4} />,
   Refresh: (p: IconProps) => <Icon {...p} d="M21 12a9 9 0 1 1-2.7-6.4M21 4v5h-5" />,
+  // A branch: a trunk, a fork off it, and a node at each end.
+  Git: (p: IconProps) => (
+    <Icon
+      {...p}
+      d={
+        <>
+          <path d="M6 8v8M6 12h6a3 3 0 0 0 3-3V8" />
+          <circle cx="6" cy="5.5" r="2.2" />
+          <circle cx="6" cy="18.5" r="2.2" />
+          <circle cx="15" cy="5.5" r="2.2" />
+        </>
+      }
+    />
+  ),
+  // Sliders rather than a cog: at 14px a cog's teeth collapse into a blob,
+  // and settings here are a handful of switches, which is what this draws.
+  Sliders: (p: IconProps) => (
+    <Icon
+      {...p}
+      d={
+        <>
+          <path d="M4 8h7m4 0h5M4 16h3m4 0h9" />
+          <circle cx="13" cy="8" r="2.2" />
+          <circle cx="9" cy="16" r="2.2" />
+        </>
+      }
+    />
+  ),
   CollapseAll: (p: IconProps) => <Icon {...p} d="M8 4l4 4 4-4M8 20l4-4 4 4M4 12h16" />,
   ExpandAll: (p: IconProps) => <Icon {...p} d="M8 9l4-4 4 4M8 15l4 4 4-4M4 12h16" />,
   Maximize: (p: IconProps) => <Icon {...p} d="M4 9V5a1 1 0 0 1 1-1h4M20 15v4a1 1 0 0 1-1 1h-4M15 4h4a1 1 0 0 1 1 1v4M9 20H5a1 1 0 0 1-1-1v-4" />,

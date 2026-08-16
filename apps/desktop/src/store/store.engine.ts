@@ -15,6 +15,7 @@ import {
   type EnvSetParams,
   type ExposureEntry,
   type ExposureSnapshot,
+  type GitContext,
   type Group,
   type GroupSetParams,
   type GroupSlug,
@@ -27,9 +28,13 @@ import {
   type PtySession,
   type ResourceSample,
   type RuntimeState,
-  type SessionId
+  type SessionId,
+  type NotificationPrefs,
+  type Settings,
+  type SettingsPatch
 } from "@matisa/core"
 import { engineUrl, rpc, RpcError } from "~/rpc/rpc.client"
+import { raise, type Notifiable } from "~/lib/notify"
 import { useLogs } from "~/store/store.logs"
 import { isSystemId, SYSTEM_IDS } from "~/store/store.systems"
 
@@ -150,6 +155,63 @@ const describeEvent = (event: EngineEvent): ActivityEntry | null => {
   }
 }
 
+// ── which events are worth interrupting for ─────────────────────────────────
+//
+// The judgement lives here rather than in lib/notify because it needs both the
+// event and the user's answer about that kind of event; the notifier only
+// decides which channel carries what it is handed, and refuses to repeat
+// itself.
+//
+// `log_line` and the catalog/config events are never raised: the first is a
+// stream, and the rest are things a client did, which the client already knows.
+const notifyFor = (
+  event: EngineEvent,
+  prefs: NotificationPrefs | undefined,
+  nameOf: (id: ProjectId) => string
+): void => {
+  if (prefs === undefined || !prefs.enabled) return
+
+  const item = ((): Notifiable | null => {
+    switch (event.type) {
+      case "crashed": {
+        if (!prefs.crashed) return null
+        const name = nameOf(event.projectId)
+        return {
+          subject: `crashed:${event.projectId}`,
+          title: `${name} crashed`,
+          projectId: event.projectId,
+          ...(event.payload.summary === undefined ? {} : { body: event.payload.summary })
+        }
+      }
+      case "state_changed": {
+        if (!prefs.stateChanged) return null
+        const name = nameOf(event.projectId)
+        return {
+          // Keyed on the destination, so a project flapping between two states
+          // is throttled per state rather than announcing each leg.
+          subject: `state:${event.projectId}:${event.payload.to}`,
+          title: `${name} is ${event.payload.to}`,
+          projectId: event.projectId,
+          ...(event.payload.reason === undefined ? {} : { body: event.payload.reason })
+        }
+      }
+      case "health_changed": {
+        if (!prefs.healthChanged) return null
+        const name = nameOf(event.projectId)
+        return {
+          subject: `health:${event.projectId}:${event.payload.health}`,
+          title: `${name} is ${event.payload.health}`,
+          projectId: event.projectId
+        }
+      }
+      default:
+        return null
+    }
+  })()
+
+  if (item !== null) raise(item, prefs.osWhenUnfocused)
+}
+
 /** Engine errors carry a stable code and a message written for a human. Show it
  *  verbatim — paraphrasing loses the detail that makes it actionable. */
 const describe = (cause: unknown): { title: string; detail?: string } => {
@@ -250,6 +312,15 @@ interface EngineState {
    *  since an lsof over a busy machine is visibly not instant. */
   discovery: DiscoverySnapshot | null
   discoverySweeping: boolean
+  /** Per-project git context, for the projects a pane has actually opened.
+   *  Read on demand and on window focus rather than watched: it is a detail of
+   *  the project you are looking at, and polling 40 checkouts to keep a fact
+   *  nothing is displaying up to date would be work for no reader. */
+  git: Record<string, GitContext>
+  /** The global preferences document. Null until the first read lands — the
+   *  engine owns it, so there is no local default to render before then, and a
+   *  component that would rather not wait reads a field with `??`. */
+  settings: Settings | null
   runSessions: Record<string, RunSession>
   /** Projects with a lifecycle request in flight, by the intent that started it. */
   pending: Record<string, Intent>
@@ -266,6 +337,25 @@ interface EngineState {
   refreshCatalog: () => Promise<void>
   refreshContexts: () => Promise<void>
   refreshGroups: () => Promise<void>
+  refreshSettings: () => Promise<void>
+  /** Read where a project's checkout is standing. Safe to call on any project:
+   *  one that is not in a repository answers with an empty context. */
+  loadGit: (projectId: ProjectId, dirty?: boolean) => Promise<void>
+  /** fetch / pull / checkout. Returns git's own message so the caller can show
+   *  it — including when it refused, which is the ordinary case and not an
+   *  error worth a toast of its own. */
+  runGit: (
+    action: "fetch" | "pull" | "checkout",
+    projectId: ProjectId,
+    branch?: string
+  ) => Promise<{ ok: boolean; message: string }>
+  /** Patch and keep what comes back. The engine returns the whole document
+   *  after the write, so the store never has to guess what it now holds. */
+  saveSettings: (patch: SettingsPatch) => Promise<void>
+  /** Off the fleet, not out of the catalog. Both directions are idempotent, so
+   *  a double-click on Hide is not a way to get two copies of an id. */
+  setProjectHidden: (projectId: ProjectId, hidden: boolean) => Promise<void>
+  setGroupHidden: (slug: string, hidden: boolean) => Promise<void>
   refreshResources: () => Promise<void>
   refreshExposures: () => Promise<void>
   /** Sweep for unmanaged processes/containers. `force` skips the engine's TTL
@@ -369,6 +459,8 @@ export const useEngine = create<EngineState>()((set, get) => ({
   caddy: null,
   discovery: null,
   discoverySweeping: false,
+  settings: null,
+  git: {},
   runSessions: {},
   pending: {},
 
@@ -419,6 +511,7 @@ export const useEngine = create<EngineState>()((set, get) => ({
       get().refreshContexts(),
       get().refreshResources(),
       get().refreshGroups(),
+      get().refreshSettings(),
       rpc.call("engine.status", undefined).then((engine) => set({ engine })),
       rpc.call("docker.daemon.status", undefined).then((daemon) => set({ daemon })),
       rpc.call("lifecycle.failures", { limit: 20 }).then((failures) => set({ failures })),
@@ -453,6 +546,63 @@ export const useEngine = create<EngineState>()((set, get) => ({
   refreshContexts: async () => set({ contexts: await rpc.call("env.list", undefined) }),
 
   refreshGroups: async () => set({ groups: await rpc.call("groups.list", undefined) }),
+
+  // Tolerated the same way exposures are: an engine that predates settings
+  // leaves the document null, and every reader falls back to its own default.
+  // Losing preferences is degraded; failing the handshake over them is not.
+  refreshSettings: async () => {
+    try {
+      set({ settings: await rpc.call("settings.get", undefined) })
+    } catch {
+      set({ settings: null })
+    }
+  },
+
+  saveSettings: async (patch) => set({ settings: await rpc.call("settings.set", patch) }),
+
+  // A project outside a repository, an engine that predates git.*, a checkout
+  // on a volume that has gone away — all the same shape of nothing, and none of
+  // them worth interrupting anyone over. The bar renders only what it has.
+  loadGit: async (projectId, dirty = false) => {
+    try {
+      const context = await rpc.call("git.context", { id: projectId, dirty })
+      set((s) => ({ git: { ...s.git, [projectId]: context } }))
+    } catch {
+      set((s) => ({ git: { ...s.git, [projectId]: { projectId } } }))
+    }
+  },
+
+  runGit: async (action, projectId, branch) => {
+    try {
+      const result =
+        action === "checkout"
+          ? await rpc.call("git.checkout", { id: projectId, branch: branch ?? "" })
+          : await rpc.call(action === "fetch" ? "git.fetch" : "git.pull", { id: projectId })
+      set((s) => ({ git: { ...s.git, [projectId]: result.context } }))
+      return { ok: result.ok, message: result.message }
+    } catch (cause) {
+      // The call itself failed — no engine, or a method it does not have. That
+      // IS worth reporting: nothing happened, and the user is owed the reason.
+      reportError(cause, `git ${action} failed`)
+      return { ok: false, message: "the engine could not run git" }
+    }
+  },
+
+  setProjectHidden: async (projectId, hidden) => {
+    const current = get().settings?.hiddenProjects ?? []
+    if (current.includes(projectId) === hidden) return
+    await get().saveSettings({
+      hiddenProjects: hidden ? [...current, projectId] : current.filter((id) => id !== projectId)
+    })
+  },
+
+  setGroupHidden: async (slug, hidden) => {
+    const current = get().settings?.hiddenGroups ?? []
+    if (current.includes(slug) === hidden) return
+    await get().saveSettings({
+      hiddenGroups: hidden ? [...current, slug] : current.filter((s) => s !== slug)
+    })
+  },
 
   refreshExposures: async () => {
     // Tolerate an engine that predates the exposure module (version skew during
@@ -942,6 +1092,10 @@ export const useEngine = create<EngineState>()((set, get) => ({
     const entry = describeEvent(event)
     if (entry !== null) set((s) => ({ activity: [entry, ...s.activity].slice(0, MAX_ACTIVITY) }))
 
+    notifyFor(event, get().settings?.notifications, (id) =>
+      get().projects.find((p) => p.id === id)?.name ?? id
+    )
+
     const patch = (projectId: ProjectId, f: (p: ProjectWithState) => ProjectWithState): void =>
       set((s) => ({ projects: s.projects.map((p) => (p.id === projectId ? f(p) : p)) }))
 
@@ -1032,6 +1186,12 @@ export const useEngine = create<EngineState>()((set, get) => ({
                   ? s.failures.filter((f) => isSystemId(f.projectId))
                   : s.failures.filter((f) => f.projectId !== id)
             }))
+            break
+          case "settings":
+            // Small enough to re-read whole. The document has no per-key event
+            // because there is nothing a client could do with one that it does
+            // not do with this.
+            void get().refreshSettings().catch(() => {})
             break
         }
         break

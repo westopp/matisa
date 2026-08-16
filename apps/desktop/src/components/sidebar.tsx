@@ -781,6 +781,7 @@ export const Sidebar = ({
   const status = useEngine((s) => s.status)
 
   const removeGroup = useEngine((s) => s.removeGroup)
+  const setGroupHidden = useEngine((s) => s.setGroupHidden)
 
   const [query, setQuery] = useState("")
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -788,10 +789,36 @@ export const Sidebar = ({
   const [editingGroup, setEditingGroup] = useState<Group | "new" | null>(null)
   const [deletingGroup, setDeletingGroup] = useState<Group | null>(null)
 
-  const matching = useMemo(
-    () => projects.filter((p) => query === "" || p.name.toLowerCase().includes(query.toLowerCase())),
-    [projects, query]
-  )
+  // ──────────────────────────────────────────────────────────────────────────
+  // Hidden is a property of the VIEW, applied here and nowhere deeper. The
+  // catalog, the counts in the foot, and every listing the CLI prints are all
+  // still the whole fleet — hiding tidies a screen, it does not narrow matisa.
+  //
+  // Two things override it, both for the same reason: a hidden card must never
+  // be the reason you did not find out.
+  //   • A failure. A project that broke comes back on screen whatever you
+  //     decided about it while it was healthy.
+  //   • A search. Naming something is asking for it; answering "no matches"
+  //     for a project that exists would be a lie the user cannot debug.
+  // ──────────────────────────────────────────────────────────────────────────
+  const hiddenProjects = useEngine((s) => s.settings?.hiddenProjects)
+  const hiddenGroups = useEngine((s) => s.settings?.hiddenGroups)
+
+  const matching = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const named = projects.filter((p) => q === "" || p.name.toLowerCase().includes(q))
+    if (q !== "") return named
+
+    const byId = new Set(hiddenProjects ?? [])
+    const bySlug = new Set(hiddenGroups ?? [])
+    if (byId.size === 0 && bySlug.size === 0) return named
+    return named.filter(
+      (p) =>
+        p.state === "crashed" ||
+        p.state === "errored" ||
+        !(byId.has(p.id) || (p.groupSlug !== undefined && bySlug.has(p.groupSlug)))
+    )
+  }, [projects, query, hiddenProjects, hiddenGroups])
 
   const buckets = BUCKETS.map((b) => ({
     ...b,
@@ -984,6 +1011,16 @@ export const Sidebar = ({
                               onClick={() => setEditingGroup(section.group ?? null)}
                             >
                               <Icons.Edit size={12} />
+                            </button>
+                            {/* Hides the band, not its projects: they keep
+                                running and keep counting, and any of them that
+                                breaks comes back on its own. */}
+                            <button
+                              className="ico"
+                              title={`Hide ${section.title} — manage it in Settings`}
+                              onClick={() => void setGroupHidden(section.group?.slug ?? "", true)}
+                            >
+                              <Icons.EyeOff size={12} />
                             </button>
                             <button
                               className="ico danger-hover"

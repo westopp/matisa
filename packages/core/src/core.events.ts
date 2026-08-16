@@ -101,7 +101,7 @@ export type CatalogChangedEvent = typeof CatalogChangedEvent.Type
  * by projectId and means "that project's row is stale", so widening it would
  * have made every consumer re-read a project to learn a group was renamed. */
 export const ConfigChangedEvent = unscoped("config_changed", {
-  scope: Schema.Literal("group", "context", "commands", "failures"),
+  scope: Schema.Literal("group", "context", "commands", "failures", "settings"),
   action: Schema.Literal("added", "updated", "removed"),
   id: Schema.optional(Schema.String)
 })

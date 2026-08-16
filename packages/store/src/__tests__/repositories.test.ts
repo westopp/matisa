@@ -12,6 +12,8 @@ import { GroupsRepo } from "../repositories/repositories.groups.js"
 import { ProjectsRepo } from "../repositories/repositories.projects.js"
 import { EnvRepo } from "../repositories/repositories.env.js"
 import { RuntimeRepo } from "../repositories/repositories.runtime.js"
+import { SettingsRepo } from "../repositories/repositories.settings.js"
+import { Store } from "../store.client.js"
 
 // Integration tests against a real temp SQLite file — these pin the semantics
 // the engine leans on: the durable event cursor, strict-port uniqueness, the
@@ -487,5 +489,64 @@ describe("EnvRepo — environments belong to exactly one project", () => {
       0,
       "no context outlives its project"
     )
+  })
+})
+
+describe("SettingsRepo — the global key→JSON bag", () => {
+  it("returns undefined for a key nobody has written", async () => {
+    const v = await runtime(Effect.gen(function* () {
+      return yield* (yield* SettingsRepo).get("operationsInstructions")
+    }))
+    assert.equal(v, undefined)
+  })
+
+  it("round-trips a value and overwrites it in place", async () => {
+    const read = await runtime(Effect.gen(function* () {
+      const repo = yield* SettingsRepo
+      yield* repo.set("operationsInstructions", "ports 5700-5800")
+      yield* repo.set("operationsInstructions", "ports 5900-6000")
+      return yield* repo.get("operationsInstructions")
+    }))
+    assert.equal(read, "ports 5900-6000")
+  })
+
+  it("keeps structure, not just strings — the notification prefs are an object", async () => {
+    const read = await runtime(Effect.gen(function* () {
+      const repo = yield* SettingsRepo
+      yield* repo.set("notifications", { enabled: true, crashed: false })
+      return yield* repo.get("notifications")
+    }))
+    assert.deepEqual(read, { enabled: true, crashed: false })
+  })
+
+  it("hands the whole bag over at once, which is what a settings read is", async () => {
+    const bag = await runtime(Effect.gen(function* () {
+      const repo = yield* SettingsRepo
+      yield* repo.set("hiddenProjects", ["a", "b"])
+      return yield* repo.all()
+    }))
+    assert.deepEqual(bag["hiddenProjects"], ["a", "b"])
+    assert.equal(bag["operationsInstructions"], "ports 5900-6000")
+  })
+
+  // A half-written row must not be able to take the document down with it: the
+  // engine defaults the key instead, and everything else still reads.
+  it("treats an unparseable row as absent rather than throwing", async () => {
+    const bag = await runtime(Effect.gen(function* () {
+      const { sqlite } = yield* Store
+      sqlite.prepare("INSERT OR REPLACE INTO settings (key, value_json) VALUES (?,?)").run("broken", "{not json")
+      return yield* (yield* SettingsRepo).all()
+    }))
+    assert.equal(bag["broken"], undefined)
+    assert.equal(bag["operationsInstructions"], "ports 5900-6000")
+  })
+
+  it("removes a key", async () => {
+    const v = await runtime(Effect.gen(function* () {
+      const repo = yield* SettingsRepo
+      yield* repo.remove("hiddenProjects")
+      return yield* repo.get("hiddenProjects")
+    }))
+    assert.equal(v, undefined)
   })
 })

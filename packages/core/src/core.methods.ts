@@ -427,6 +427,113 @@ export const PtyResizeParams = Schema.Struct({
 })
 export type PtyResizeParams = typeof PtyResizeParams.Type
 
+// —— git ——
+//
+// Matisa is not a git client and this is not a step towards being one. It reads
+// where a project's checkout is standing and offers the three moves you would
+// otherwise leave the app to make — fetch, pull, switch branch. Anything else,
+// including everything that can conflict, belongs in a terminal.
+
+/** Where a project's working copy is standing. Absent `repoRoot` means the
+ *  project's root is not inside a git repository at all, which is a normal
+ *  answer and not an error. */
+export const GitContext = Schema.Struct({
+  projectId: ProjectId,
+  /** The repository this project sits in. Several projects in a monorepo share
+   *  one, and they therefore share a branch — a client that draws this per card
+   *  must not imply otherwise. */
+  repoRoot: Schema.optional(Schema.String),
+  /** Absent on a detached HEAD, where `head` carries the short sha instead. */
+  branch: Schema.optional(Schema.String),
+  head: Schema.optional(Schema.String),
+  /** Commits this branch has that its upstream does not, and the reverse. Both
+   *  absent when the branch is not tracking anything. */
+  ahead: Schema.optional(Schema.Int),
+  behind: Schema.optional(Schema.Int),
+  /** Uncommitted changes in the working tree. Read on demand only — it costs a
+   *  full `git status`, unlike everything else here. */
+  dirty: Schema.optional(Schema.Boolean)
+})
+export type GitContext = typeof GitContext.Type
+
+export const GitStatusParams = Schema.Struct({
+  id: ProjectId,
+  /** Include the working-tree flag. Off by default: it is the only field here
+   *  that costs a scan of the checkout. */
+  dirty: Schema.optionalWith(Schema.Boolean, { default: () => false })
+})
+export type GitStatusParams = typeof GitStatusParams.Type
+
+export const GitBranches = Schema.Struct({
+  current: Schema.optional(Schema.String),
+  local: Schema.Array(Schema.String)
+})
+export type GitBranches = typeof GitBranches.Type
+
+export const GitCheckoutParams = Schema.Struct({
+  id: ProjectId,
+  branch: Schema.String
+})
+export type GitCheckoutParams = typeof GitCheckoutParams.Type
+
+/** What a fetch, pull or checkout did. `ok: false` is a REPORT, not a thrown
+ *  error: git refusing to switch a dirty tree is the ordinary case, the user
+ *  knows what to do about it, and matisa's job is to say what git said and get
+ *  out of the way. `context` is the state afterwards, so a client never has to
+ *  follow an action with a read. */
+export const GitActionResult = Schema.Struct({
+  ok: Schema.Boolean,
+  /** git's own output, trimmed — never paraphrased. */
+  message: Schema.String,
+  context: GitContext
+})
+export type GitActionResult = typeof GitActionResult.Type
+
+// —— settings ——
+
+/** Which events are allowed to interrupt, and how far the interruption reaches.
+ *  Per-type rather than one switch: the events differ by how much they deserve
+ *  a person's attention. A crash is worth a notification; a project you started
+ *  reaching `running` is a thing you already know. */
+export const NotificationPrefs = Schema.Struct({
+  /** The master switch. Off means silent, whatever the per-type flags say. */
+  enabled: Schema.Boolean,
+  crashed: Schema.Boolean,
+  stateChanged: Schema.Boolean,
+  healthChanged: Schema.Boolean,
+  /** Escalate to an OS notification when the window does not have focus. Off
+   *  keeps everything in-app, where an unfocused window means you miss it. */
+  osWhenUnfocused: Schema.Boolean
+})
+export type NotificationPrefs = typeof NotificationPrefs.Type
+
+/** Everything global, in one document.
+ *
+ *  Stored as one settings row per top-level key (see SettingsRepo), assembled
+ *  and defaulted by the engine so that no client has to know which keys have
+ *  been written yet. Clients read the whole thing and PATCH a field — there is
+ *  no partial read, because the document is small and a half-read document is
+ *  how two clients end up disagreeing about what the settings are. */
+export const Settings = Schema.Struct({
+  /** Free text, handed to agents verbatim by `matisa operations-instructions`.
+   *  Matisa does not parse it, enforce it, or know what is in it — the rules
+   *  are between the user and their agent. */
+  operationsInstructions: Schema.String,
+  notifications: NotificationPrefs,
+  /** Out of the fleet, not out of the catalog. Hidden projects still run, still
+   *  count, and are still listed by the CLI — an agent must never inherit a
+   *  human's decision to tidy something off their own screen. */
+  hiddenProjects: Schema.Array(ProjectId),
+  hiddenGroups: Schema.Array(Schema.String)
+})
+export type Settings = typeof Settings.Type
+
+/** A patch: every field optional, absent fields left alone. Sending the whole
+ *  document back would make every save a last-writer-wins overwrite of fields
+ *  the sender never looked at. */
+export const SettingsPatch = Schema.partial(Settings)
+export type SettingsPatch = typeof SettingsPatch.Type
+
 // ────────────────────────────────────────────────────────────────────────────
 // The method registry — the single source of truth for the RPC surface.
 //
@@ -526,7 +633,21 @@ export const methods = {
   "discovery.start": { params: ByRef, result: DiscoveryActionResult },
 
   "exposure.snapshot": { params: Schema.Void, result: ExposureSnapshot },
-  "exposure.lan.set": { params: ExposureLanSetParams, result: ExposureEntries }
+  "exposure.lan.set": { params: ExposureLanSetParams, result: ExposureEntries },
+
+  /** Read-only, and cheap: two plumbing commands, no working-tree scan. Pass
+   *  `dirty: true` to pay for a status as well. */
+  "git.context": { params: GitStatusParams, result: GitContext },
+  "git.branches": { params: ById, result: GitBranches },
+  "git.fetch": { params: ById, result: GitActionResult },
+  "git.pull": { params: ById, result: GitActionResult },
+  "git.checkout": { params: GitCheckoutParams, result: GitActionResult },
+
+  "settings.get": { params: Schema.Void, result: Settings },
+  /** Patch and read back. The result is the whole document after the write, so
+   *  a client never has to follow a save with a fetch to know what it saved
+   *  into. */
+  "settings.set": { params: SettingsPatch, result: Settings }
 } as const satisfies Record<string, { params: Schema.Schema.Any; result: Schema.Schema.Any }>
 
 export type Methods = typeof methods

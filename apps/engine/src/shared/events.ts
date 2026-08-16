@@ -84,7 +84,7 @@ export const catalogChanged = (
  * within the scope (group slug / context id / project id) and is omitted when
  * the change is whole-slice. */
 export const configChanged = (
-  scope: "group" | "context" | "commands" | "failures",
+  scope: "group" | "context" | "commands" | "failures" | "settings",
   action: "added" | "updated" | "removed",
   id?: string
 ): NewEvent => ({

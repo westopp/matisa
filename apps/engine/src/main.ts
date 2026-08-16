@@ -7,6 +7,7 @@ import { DiscoveryLive } from "./modules/discovery/discovery.index.js"
 import { DockerDaemonLive } from "./modules/docker/docker.index.js"
 import { ResourcesLive } from "./modules/resources/resources.services.js"
 import { ExposureLive } from "./modules/exposure/exposure.index.js"
+import { GitLive } from "./modules/git/git.services.js"
 import { PtyLive } from "./modules/pty/pty.index.js"
 import { SupervisorLive } from "./modules/supervisor/supervisor.index.js"
 import { EventsHubLive, ServerLive } from "./server/server.index.js"
@@ -37,6 +38,7 @@ import { TracingLive } from "./telemetry/tracing.js"
 
 const MainLive = ServerLive.pipe(
   Layer.provide(ExposureLive),
+  Layer.provide(GitLive),
   Layer.provide(SupervisorLive),
   Layer.provide(CatalogLive),
   Layer.provide(DiscoveryLive),

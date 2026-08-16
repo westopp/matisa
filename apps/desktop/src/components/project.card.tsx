@@ -11,6 +11,7 @@ import { useTerminals, type Pane } from "~/store/store.terminals"
 import { Icons } from "./icons"
 import { Menu, type MenuItem } from "./menu"
 import { QuickMenu } from "./quick.commands"
+import { GitBar } from "./git.bar"
 import { ConfirmDialog } from "./forms/confirm"
 import { EditProjectDialog } from "./forms/lazy"
 import {
@@ -294,6 +295,8 @@ export const ProjectCard = ({
   const kill = useEngine((s) => s.kill)
   const takeover = useEngine((s) => s.takeover)
   const removeProject = useEngine((s) => s.removeProject)
+  const setProjectHidden = useEngine((s) => s.setProjectHidden)
+  const hidden = useEngine((s) => (s.settings?.hiddenProjects ?? []).includes(project.id))
   const { busy, running, warmingUp } = useLifecycleState(project)
 
   const [menu, setMenu] = useState<HTMLElement | null>(null)
@@ -361,6 +364,15 @@ export const ProjectCard = ({
           }
         ]
       : []),
+    // Hiding is a view preference, not a lifecycle action: the project keeps
+    // running, keeps counting, and stays in the CLI's listings. It comes back
+    // from Settings — or on its own, the moment it crashes.
+    {
+      key: "hide",
+      label: hidden ? "Reveal" : "Hide from the fleet",
+      icon: hidden ? <Icons.Eye size={13} /> : <Icons.EyeOff size={13} />,
+      onSelect: () => void setProjectHidden(project.id, !hidden)
+    },
     {
       key: "remove",
       label: "Remove project…",
@@ -463,6 +475,11 @@ export const ProjectCard = ({
               {formatMB(sample.rssBytes)}MB
             </span>
           )}
+          {/* Only on the card you have picked. Branch is a fact about the copy
+              on disk, not about whether the project is up — putting it on all
+              forty at once would add a line of noise to every card to answer a
+              question you are only ever asking about one. */}
+          {active && <GitBar projectId={project.id} compact />}
           <EnvChip project={project} locked={running || busy || project.state === "stopping"} />
           <QuickChip project={project} />
           {/* The figure says running; only the port not answering needs words. */}

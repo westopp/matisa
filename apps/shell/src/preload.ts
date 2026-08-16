@@ -14,5 +14,9 @@ contextBridge.exposeInMainWorld("matisa", {
    *  renderer's only to ask for. Without this the window could see that the
    *  engine was gone and do nothing about it. */
   startEngine: (): Promise<boolean> => ipcRenderer.invoke("matisa:start-engine") as Promise<boolean>,
+  /** Post a system notification. Resolves false where the OS will not show one
+   *  — the caller falls back to its in-app toast rather than assuming. */
+  notify: (title: string, body?: string): Promise<boolean> =>
+    ipcRenderer.invoke("matisa:notify", { title, body }) as Promise<boolean>,
   platform: process.platform
 })

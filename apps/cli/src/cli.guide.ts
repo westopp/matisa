@@ -29,6 +29,24 @@ drive it from a script. Reading it needs no running engine.
 Save it for your own context:  matisa guide > llms.txt
 
 
+0. BEFORE YOU DO ANYTHING
+─────────────────────────
+
+Run this first, every session, before you start, stop, add or change anything:
+
+    matisa operations-instructions
+
+It prints the rules the person who owns this machine has written for agents
+working in it — a port range to allocate inside, projects you must not touch,
+whether you may add to the catalog on your own, anything else they decided
+matters. It is free text. matisa does not parse or enforce a word of it, which
+means nothing else will stop you from breaking a rule you did not read.
+
+Re-read it rather than remembering it: the user edits it while you work, and
+this guide is static while those instructions are not. Empty output is a normal
+answer — it means no rules have been set, not that the command failed.
+
+
 1. WHAT IT IS
 ─────────────
 

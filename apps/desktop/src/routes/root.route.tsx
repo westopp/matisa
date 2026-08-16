@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react"
 import { Outlet, useNavigate, useParams } from "@tanstack/react-router"
 import { Toaster } from "sonner"
 import type { ProjectId } from "@matisa/core"
@@ -10,7 +10,7 @@ import { Icons } from "~/components/icons"
 import { Banner } from "~/components/banner"
 import { Sidebar } from "~/components/sidebar"
 import { RightDrawer } from "~/components/drawer"
-import { AddProjectDialog } from "~/components/forms/lazy"
+import { AddProjectDialog, SettingsDialog } from "~/components/forms/lazy"
 
 // ────────────────────────────────────────────────────────────────────────────
 // The window chrome and the three panes it frames: the fleet on the left, the
@@ -32,12 +32,14 @@ import { AddProjectDialog } from "~/components/forms/lazy"
 const Titlebar = ({
   hasSelection,
   canReopen,
-  onToggleDetail
+  onToggleDetail,
+  onOpenSettings
 }: {
   hasSelection: boolean
   /** There is a project to put back in the centre pane when it is expanded. */
   canReopen: boolean
   onToggleDetail: () => void
+  onOpenSettings: () => void
 }) => {
   const refreshCatalog = useEngine((s) => s.refreshCatalog)
   const failureCount = useEngine((s) => s.failures.length)
@@ -74,6 +76,10 @@ const Titlebar = ({
         </button>
         <button className="ico-btn" title="Refresh" onClick={() => void refreshCatalog()}>
           <Icons.Refresh size={14} />
+        </button>
+        {/* Global, so it belongs to the window rather than to any pane. */}
+        <button className="ico-btn" title="Settings" onClick={onOpenSettings}>
+          <Icons.Sliders size={14} />
         </button>
 
         {/* The three panes, in the order they sit on screen. */}
@@ -124,12 +130,84 @@ const Titlebar = ({
   )
 }
 
+/** The handle's own width, and the step an arrow key moves it. The step is
+ *  coarse on purpose: a keyboard user is choosing a proportion, not pixel-fitting
+ *  a card. */
+const GRIP = 5
+const GRIP_STEP = 16
+
+/** The seam between the fleet and the detail pane, draggable.
+ *
+ *  The pointer is CAPTURED for the drag, so the move events keep arriving while
+ *  the cursor is over the terminals, the drawer, or off the window entirely —
+ *  without it, a fast drag drops the moment the pointer outruns the 5px strip.
+ *
+ *  It writes the width straight to the store on every move. That is deliberate
+ *  rather than deferred to pointerup: the panes must track the pointer, and the
+ *  only thing a frame of this costs is a flex-basis recalculation. */
+const RailGrip = () => {
+  const railWidth = useUi((s) => s.railWidth)
+  const setRailWidth = useUi((s) => s.setRailWidth)
+  const resetRailWidth = useUi((s) => s.resetRailWidth)
+  const [dragging, setDragging] = useState(false)
+  // The body's left edge, read once at pointerdown — it cannot move mid-drag,
+  // and measuring it per event would be a layout read inside the drag loop.
+  const originRef = useRef(0)
+
+  const end = useCallback((): void => {
+    setDragging(false)
+    document.body.classList.remove("rail-dragging")
+  }, [])
+
+  useEffect(() => end, [end])
+
+  const onKey = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (e.key === "ArrowLeft") setRailWidth(railWidth - GRIP_STEP)
+    else if (e.key === "ArrowRight") setRailWidth(railWidth + GRIP_STEP)
+    else if (e.key === "Home" || e.key === "Enter") resetRailWidth()
+    else return
+    e.preventDefault()
+  }
+
+  return (
+    <div
+      className={`rail-grip ${dragging ? "dragging" : ""}`}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize the fleet — double-click to reset"
+      aria-valuenow={railWidth}
+      tabIndex={0}
+      onKeyDown={onKey}
+      onDoubleClick={resetRailWidth}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return
+        const body = e.currentTarget.parentElement
+        if (body === null) return
+        originRef.current = body.getBoundingClientRect().left
+        e.currentTarget.setPointerCapture(e.pointerId)
+        setDragging(true)
+        document.body.classList.add("rail-dragging")
+      }}
+      onPointerMove={(e) => {
+        if (!dragging) return
+        // The grip sits at the fleet's right edge, so the width that puts its
+        // CENTRE under the pointer is half a grip past the pointer's offset.
+        setRailWidth(e.clientX - originRef.current + GRIP / 2)
+      }}
+      onPointerUp={end}
+      onLostPointerCapture={end}
+    />
+  )
+}
+
 export const RootLayout = () => {
   const [addingProject, setAddingProject] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const theme = useUi((s) => s.theme)
   const toggleTheme = useUi((s) => s.toggleTheme)
   const fleetCollapsed = useUi((s) => s.fleetCollapsed)
   const collapseFleet = useUi((s) => s.collapseFleet)
+  const railWidth = useUi((s) => s.railWidth)
 
   const navigate = useNavigate()
   const params = useParams({ strict: false }) as { projectId?: string; systemId?: string }
@@ -209,12 +287,17 @@ export const RootLayout = () => {
   return (
     <div className="desktop">
       <div className="window">
-        <Titlebar hasSelection={focused} canReopen={highlighted !== null} onToggleDetail={toggleDetail} />
+        <Titlebar
+          hasSelection={focused}
+          canReopen={highlighted !== null}
+          onToggleDetail={toggleDetail}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
         {/* Above the panes, not inside one: the conditions it reports (no
             engine, no Docker) disable every pane at once, so it cannot belong
             to any of them. It occupies no height when there is nothing to say. */}
         <Banner />
-        <div className="window-body">
+        <div className="window-body" style={{ "--rail-w": `${railWidth}px` } as CSSProperties}>
           {/* `inert`, not `visibility: hidden`: both take the rail's controls
               out of the tab order, but an invisible element is not captured for
               a view transition, so the pane would vanish rather than slide
@@ -234,6 +317,8 @@ export const RootLayout = () => {
               onExpand={expand}
             />
           </div>
+          {/* Only with both panes on screen is there a seam to drag. */}
+          {focused && !fleetCollapsed && <RailGrip />}
           {/* The centre pane's width is what drives the whole layout: the fleet
               takes the remainder, so one basis moves both. */}
           <div
@@ -247,6 +332,7 @@ export const RootLayout = () => {
           <RightDrawer selectedId={selectedId} />
         </div>
         {addingProject && <AddProjectDialog onClose={() => setAddingProject(false)} />}
+        {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
 
         {/* Every engine failure surfaces here — the user is never left guessing
             why a project did not start (old-app parity). */}

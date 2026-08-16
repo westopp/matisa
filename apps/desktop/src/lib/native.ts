@@ -5,6 +5,7 @@
 interface MatisaBridge {
   readonly openExternal: (url: string) => void
   readonly startEngine: () => Promise<boolean>
+  readonly notify: (title: string, body?: string) => Promise<boolean>
   readonly platform: string
 }
 
@@ -28,3 +29,22 @@ export const openExternal = (url: string): void => {
  *  nothing. */
 export const startEngine = (): Promise<boolean> | null =>
   window.matisa === undefined ? null : window.matisa.startEngine()
+
+/** A system notification through the shell, or the browser's own where the page
+ *  has been granted permission. Resolves false when neither is available, which
+ *  is the caller's cue to keep the news in-app instead of dropping it.
+ *
+ *  The browser path is best-effort on purpose: it exists so the dev build in a
+ *  tab behaves like the packaged app, and it never PROMPTS — a permission
+ *  dialog raised by a background crash is not something the user asked for. */
+export const notify = async (title: string, body?: string): Promise<boolean> => {
+  if (window.matisa !== undefined) return window.matisa.notify(title, body)
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return false
+  try {
+    // eslint-disable-next-line no-new
+    new Notification(title, body === undefined ? {} : { body })
+    return true
+  } catch {
+    return false
+  }
+}

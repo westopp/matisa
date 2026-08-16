@@ -9,6 +9,7 @@ import * as C from "./commands/commands.index.js"
 export const cli = globals.pipe(
   Command.withSubcommands([
     C.guide, // the agent-facing description of the whole application
+    C.operations, // the user's own rules, which the guide says to read first
     C.project, // add | list | update | rm (process | docker | compose kinds)
     C.env, // set | list | use (per-project base + context layering)
     C.importConfig, // import — re-derive environments from the pre-engine config
