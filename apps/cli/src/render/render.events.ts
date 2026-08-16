@@ -25,8 +25,14 @@ export const formatEvent = (e: EngineEvent): string => {
         : ev.payload.entries.map((x) => `${x.url} ${x.enabled ? x.state : "off"}`).join(", ")
     ),
     Match.when({ type: "catalog_changed" }, (ev) => ev.payload.action),
+    Match.when({ type: "config_changed" }, (ev) =>
+      `${ev.payload.scope} ${ev.payload.action}${ev.payload.id === undefined ? "" : ` ${ev.payload.id}`}`
+    ),
     Match.exhaustive
   )
   const ts = new Date(e.ts).toISOString()
-  return `#${e.seq} ${ts} ${e.projectId} ${e.type} ${summary}`
+  // config_changed names no project. The column is held with a dash rather than
+  // dropped so the line stays fixed-arity for anything cutting it by field.
+  const subject = e.type === "config_changed" ? "-" : e.projectId
+  return `#${e.seq} ${ts} ${subject} ${e.type} ${summary}`
 }

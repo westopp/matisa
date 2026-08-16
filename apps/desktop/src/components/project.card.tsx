@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { BASE_CONTEXT_ID, ContextId, type ProjectWithState } from "@matisa/core"
+import { ContextId, type ProjectWithState } from "@matisa/core"
 import { closeSession } from "~/rpc/rpc.pty"
 import { useEngine } from "~/store/store.engine"
 import { revealPath } from "~/store/store.picker"
@@ -53,8 +53,12 @@ const EnvChip = ({ project, locked }: { project: ProjectWithState; locked: boole
   const activateContext = useEngine((s) => s.activateContext)
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
 
-  const activeId = project.activeContextId ?? BASE_CONTEXT_ID
-  const active = contexts.find((c) => c.id === activeId)
+  // This project's environments only — the menu used to offer every context in
+  // the installation, which is how a project could end up running on another
+  // project's variables.
+  const mine = contexts.filter((c) => c.projectId === project.id)
+  const activeId = project.activeContextId ?? mine.find((c) => c.isBase)?.id
+  const active = mine.find((c) => c.id === activeId)
   const label = active?.name ?? "base"
 
   if (locked) {
@@ -65,7 +69,7 @@ const EnvChip = ({ project, locked }: { project: ProjectWithState; locked: boole
     )
   }
 
-  const items: ReadonlyArray<MenuItem> = contexts.map((c) => ({
+  const items: ReadonlyArray<MenuItem> = mine.map((c) => ({
     key: c.id,
     label: c.name,
     note: `${c.vars.length}`,

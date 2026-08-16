@@ -38,6 +38,23 @@ export const toEngineError = (e: unknown): EngineError => {
         message: `${x.entity === "env_context" ? "An environment" : x.entity} called "${x.name}" already exists`
       })
     }
+    case "BaseContextImmutable": {
+      const x = e as { action: "rename" | "remove" }
+      return new ValidationError({
+        field: x.action === "rename" ? "name" : "contextId",
+        message: `A project's base environment cannot be ${x.action === "rename" ? "renamed" : "deleted"} — it is created and removed with the project itself`
+      })
+    }
+    // Names the owner rather than just refusing: a client that picked a context
+    // from a stale list needs to know the environment exists and belongs
+    // elsewhere, which is a different fix from the id being wrong.
+    case "ContextNotInProject": {
+      const x = e as { contextId: string; ownerId: string }
+      return new ValidationError({
+        field: "contextId",
+        message: `Environment '${x.contextId}' belongs to a different project (${x.ownerId}) — a project can only use its own environments`
+      })
+    }
     case "PortConflict": {
       const x = e as { port: number; heldBy?: string; heldByName?: string }
       // The sentence names the holder; the id stays on the error for clients

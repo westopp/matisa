@@ -2,6 +2,7 @@ import { Cause, Console, Effect, Match, Option } from "effect"
 import type { TransportError } from "./transport/transport.index.js"
 import type { ConfigError } from "./config/config.errors.js"
 import type { AmbiguousProject } from "./cli.resolve.js"
+import type { ConfigUnreadable } from "./cli.legacy-config.js"
 
 // ────────────────────────────────────────────────────────────────────────────
 // cli.exit — the scripting contract.
@@ -15,7 +16,7 @@ import type { AmbiguousProject } from "./cli.resolve.js"
 //   4   usage/config  5  not found           130 interrupt (Ctrl-C)
 // ────────────────────────────────────────────────────────────────────────────
 
-export type AppError = TransportError | ConfigError | AmbiguousProject
+export type AppError = TransportError | ConfigError | AmbiguousProject | ConfigUnreadable
 
 const renderError = (err: AppError): string =>
   Match.value(err).pipe(
@@ -44,6 +45,7 @@ const renderError = (err: AppError): string =>
           .map((m) => `  ${m.id}  ${m.name}`)
           .join("\n")}`
     ),
+    Match.tag("ConfigUnreadable", (e) => `could not read ${e.path}: ${e.reason}`),
     Match.exhaustive
   )
 
@@ -55,6 +57,7 @@ const codeFor = (err: AppError): number =>
     Match.tag("InvalidClientConfig", () => 4),
     Match.tag("ProtocolError", () => 4),
     Match.tag("AmbiguousProject", () => 4),
+    Match.tag("ConfigUnreadable", () => 4),
     Match.tag("NotFound", () => 5),
     Match.exhaustive
   )

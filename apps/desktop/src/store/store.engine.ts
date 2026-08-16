@@ -64,13 +64,15 @@ export interface RunSession {
 // high-frequency event, it has its own store, and a chatty container would
 // otherwise evict every transition worth reading.
 
-export type ActivityKind = "state" | "health" | "crash" | "exposure" | "catalog"
+export type ActivityKind = "state" | "health" | "crash" | "exposure" | "catalog" | "config"
 
 export interface ActivityEntry {
   /** The engine's cursor — monotonic and gap-free, so it doubles as the key. */
   readonly seq: number
   readonly ts: number
-  readonly projectId: ProjectId
+  /** Absent for config_changed: a group or an env context belongs to no single
+   *  project, so the entry shows in the unfiltered view and nowhere else. */
+  readonly projectId?: ProjectId
   readonly kind: ActivityKind
   readonly label: string
   readonly detail?: string
@@ -96,7 +98,10 @@ let localSeq = 0
 const nextLocalSeq = (): number => --localSeq
 
 const describeEvent = (event: EngineEvent): ActivityEntry | null => {
-  const base = { seq: event.seq, ts: event.ts, projectId: event.projectId }
+  const base =
+    event.type === "config_changed"
+      ? { seq: event.seq, ts: event.ts }
+      : { seq: event.seq, ts: event.ts, projectId: event.projectId }
   switch (event.type) {
     case "state_changed":
       return {
@@ -133,6 +138,13 @@ const describeEvent = (event: EngineEvent): ActivityEntry | null => {
     }
     case "catalog_changed":
       return { ...base, kind: "catalog", label: `catalog ${event.payload.action}` }
+    case "config_changed":
+      return {
+        ...base,
+        kind: "config",
+        label: `${event.payload.scope} ${event.payload.action}`,
+        ...(event.payload.id !== undefined ? { detail: event.payload.id } : {})
+      }
     case "log_line":
       return null
   }
@@ -253,6 +265,7 @@ interface EngineState {
   bootstrap: () => Promise<void>
   refreshCatalog: () => Promise<void>
   refreshContexts: () => Promise<void>
+  refreshGroups: () => Promise<void>
   refreshResources: () => Promise<void>
   refreshExposures: () => Promise<void>
   /** Sweep for unmanaged processes/containers. `force` skips the engine's TTL
@@ -323,7 +336,8 @@ interface EngineState {
     removals: ReadonlyArray<string>
   ) => Promise<boolean>
   activateContext: (projectId: ProjectId, contextId: ContextId) => Promise<void>
-  createContext: (name: string) => Promise<EnvContext | null>
+  /** Environments are created on a project — there is no unowned one to make. */
+  createContext: (projectId: ProjectId, name: string) => Promise<EnvContext | null>
   renameContext: (contextId: ContextId, name: string) => Promise<boolean>
   removeContext: (contextId: ContextId) => Promise<boolean>
   setCommand: (params: CommandSetParams) => Promise<boolean>
@@ -404,7 +418,7 @@ export const useEngine = create<EngineState>()((set, get) => ({
       get().refreshCatalog(),
       get().refreshContexts(),
       get().refreshResources(),
-      rpc.call("groups.list", undefined).then((groups) => set({ groups })),
+      get().refreshGroups(),
       rpc.call("engine.status", undefined).then((engine) => set({ engine })),
       rpc.call("docker.daemon.status", undefined).then((daemon) => set({ daemon })),
       rpc.call("lifecycle.failures", { limit: 20 }).then((failures) => set({ failures })),
@@ -437,6 +451,8 @@ export const useEngine = create<EngineState>()((set, get) => ({
   refreshCatalog: async () => set({ projects: await rpc.call("catalog.list", undefined) }),
 
   refreshContexts: async () => set({ contexts: await rpc.call("env.list", undefined) }),
+
+  refreshGroups: async () => set({ groups: await rpc.call("groups.list", undefined) }),
 
   refreshExposures: async () => {
     // Tolerate an engine that predates the exposure module (version skew during
@@ -749,7 +765,7 @@ export const useEngine = create<EngineState>()((set, get) => ({
   setGroup: async (params) => {
     try {
       await rpc.call("groups.set", params)
-      set({ groups: await rpc.call("groups.list", undefined) })
+      await get().refreshGroups()
       return true
     } catch (cause) {
       reportError(cause, "could not save group")
@@ -768,10 +784,7 @@ export const useEngine = create<EngineState>()((set, get) => ({
         await rpc.call("catalog.update", { id: p.id, patch: { groupSlug: null } })
       }
       await rpc.call("groups.remove", { slug })
-      await Promise.all([
-        rpc.call("groups.list", undefined).then((groups) => set({ groups })),
-        get().refreshCatalog()
-      ])
+      await Promise.all([get().refreshGroups(), get().refreshCatalog()])
       return true
     } catch (cause) {
       reportError(cause, "could not remove group")
@@ -835,9 +848,9 @@ export const useEngine = create<EngineState>()((set, get) => ({
     }
   },
 
-  createContext: async (name) => {
+  createContext: async (projectId, name) => {
     try {
-      const created = await rpc.call("env.create", { name })
+      const created = await rpc.call("env.create", { projectId, name })
       await get().refreshContexts()
       return created
     } catch (cause) {
@@ -985,6 +998,42 @@ export const useEngine = create<EngineState>()((set, get) => ({
       }
       case "catalog_changed": {
         scheduleCatalogRefresh()
+        break
+      }
+      // The other client edited something that is not a project row. Each scope
+      // re-reads exactly its own slice — routing all of these through the
+      // catalog refresh is what left a renamed group showing its old title
+      // while every project under it updated correctly.
+      case "config_changed": {
+        const { scope, id } = event.payload
+        switch (scope) {
+          case "group":
+            void get().refreshGroups().catch(() => {})
+            break
+          case "context":
+            void get().refreshContexts().catch(() => {})
+            break
+          case "commands":
+            // Only lists this window has already read. Fetching commands for a
+            // project whose drawer was never opened caches something nothing
+            // displays, and the drawer loads on open anyway.
+            if (id !== undefined && get().commands[id] !== undefined) {
+              void get().loadCommands(id as ProjectId).catch(() => {})
+            }
+            break
+          case "failures":
+            // Mirrored rather than refetched: failures minted HERE (a takeover
+            // refused, a daemon that would not start) exist in no engine row,
+            // so a refetch would silently drop them. The engine cleared what it
+            // owns; this drops the same set locally.
+            set((s) => ({
+              failures:
+                id === undefined
+                  ? s.failures.filter((f) => isSystemId(f.projectId))
+                  : s.failures.filter((f) => f.projectId !== id)
+            }))
+            break
+        }
         break
       }
       case "exposure_changed": {

@@ -8,8 +8,10 @@ import * as C from "./commands/commands.index.js"
 
 export const cli = globals.pipe(
   Command.withSubcommands([
+    C.guide, // the agent-facing description of the whole application
     C.project, // add | list | update | rm (process | docker | compose kinds)
-    C.env, // set | list | use (base + context layering)
+    C.env, // set | list | use (per-project base + context layering)
+    C.importConfig, // import — re-derive environments from the pre-engine config
     C.lifecycle, // start | stop | restart | status
     C.watch, // live push stream
     C.events, // cursor pull

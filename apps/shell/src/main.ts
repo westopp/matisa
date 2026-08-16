@@ -65,6 +65,13 @@ ipcMain.handle("matisa:open-external", (_e, url: unknown) => {
   }
 })
 
+// Recovering a dead engine, asked for by the window's banner. Takes no
+// arguments and can only ever start the one engine this app owns, so there is
+// nothing here for a renderer to get wrong. ensureEngine is already idempotent —
+// it returns immediately if the bridge accepts — so a user leaning on the button
+// spawns nothing extra.
+ipcMain.handle("matisa:start-engine", () => ensureEngine())
+
 app.on("second-instance", () => {
   if (win !== null) {
     if (win.isMinimized()) win.restore()

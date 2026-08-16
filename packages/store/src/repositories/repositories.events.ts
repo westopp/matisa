@@ -5,8 +5,15 @@ import { events, type EventRow } from "../db.schema/db.events.js"
 import { Store } from "../store.client.js"
 import { StoreQueryError } from "../store.errors.js"
 
-/** An event to append — the full EngineEvent minus its DB-assigned `seq`. */
-export type NewEvent = Omit<EngineEvent, "seq">
+/** An event to append — the full EngineEvent minus its DB-assigned `seq`.
+ *  Distributed over the union deliberately: a bare `Omit<EngineEvent, "seq">`
+ *  collapses to the keys every member shares, which since config_changed joined
+ *  no longer includes `projectId` — every builder would lose the field. */
+export type NewEvent = EngineEvent extends infer E
+  ? E extends EngineEvent
+    ? Omit<E, "seq">
+    : never
+  : never
 
 export interface EventPullParams {
   /** Return events with seq strictly greater than this cursor. */
@@ -43,11 +50,15 @@ export interface EventsRepoShape {
 
 export class EventsRepo extends Context.Tag("EventsRepo")<EventsRepo, EventsRepoShape>() {}
 
+// A NULL project_id is the unscoped envelope (config_changed), so the field is
+// omitted rather than emitted as undefined — the union's unscoped branch does
+// not declare it, and a present-but-undefined key would decode as a malformed
+// member of the scoped one.
 const toEvent = (r: EventRow): EngineEvent =>
   ({
     seq: r.seq,
     ts: r.ts,
-    projectId: ProjectId.make(r.projectId),
+    ...(r.projectId === null ? {} : { projectId: ProjectId.make(r.projectId) }),
     type: r.type,
     payload: JSON.parse(r.payloadJson)
   }) as EngineEvent
@@ -68,7 +79,7 @@ export const EventsRepoLive = Layer.effect(
           .insert(events)
           .values({
             ts: event.ts,
-            projectId: event.projectId,
+            projectId: "projectId" in event ? event.projectId : null,
             topic: null,
             type: event.type,
             payloadJson: JSON.stringify(event.payload)

@@ -226,12 +226,19 @@ const failureText = (state: RuntimeState, failure: CrashRecord | undefined): str
  *  on. Nothing in the chain establishes a containing block (no transforms), so
  *  fixed anchors to the viewport and escapes the clipping entirely. */
 interface TipAnchor {
-  readonly x: number
+  /** The glyph's centre — what the tip wants to point at, kept apart from where
+   *  it ends up so every re-measure clamps from the same origin. Correcting the
+   *  resolved position in place drifts: a second pass measures a tip that has
+   *  already been pushed and pushes it again. */
+  readonly cx: number
   /** The glyph's own edges, kept so the tip can flip sides after measuring. */
   readonly top: number
   readonly bottom: number
+  /** Where the tip is actually drawn: cx, clamped to the window. */
+  readonly x: number
   readonly above: boolean
-  /** Set once the measured pass has run, so the correction never re-enters. */
+  /** Set once a measured pass has run, so the tip stays hidden until it has a
+   *  real position. Later passes still re-measure — they just do not re-hide. */
   readonly settled: boolean
 }
 
@@ -276,32 +283,59 @@ const useTipAnchor = () => {
   const [anchor, setAnchor] = useState<TipAnchor | null>(null)
   const tipRef = useRef<HTMLSpanElement>(null)
 
-  // One corrective pass once the tip has real dimensions. The first placement
-  // centres on the glyph, which runs off the window whenever the glyph sits
-  // within half a tip of an edge — and in the sidebar it always does. Measuring
-  // beats guessing at the width: the tip is `max-content` up to a cap, so how
-  // wide it actually is depends on the text.
+  // Placement is measured, not guessed: the tip is `max-content` up to a cap, so
+  // how wide it actually is depends on the text, and the glyph it centres on
+  // sits within half a tip of the window edge on every surface that draws it.
+  //
+  // The measure re-runs for as long as the tip is open rather than settling
+  // once. A single pass is correct only if nothing about the tip changes after
+  // it — and things do: the body reflows when a crash summary arrives, the
+  // window resizes, and the tip is remounted by a second `place()` (focus
+  // follows hover on click). Any of those left the old one-shot correction
+  // holding a position measured against a tip that no longer exists, which is
+  // how a tip near the left edge ended up drawn off the window with its text
+  // sliced. Clamping from `cx` every time is idempotent, so re-running is free.
   useLayoutEffect(() => {
     const el = tipRef.current
-    if (anchor === null || el === null || anchor.settled) return
-    const r = el.getBoundingClientRect()
-    const dx =
-      r.left < TIP_MARGIN
-        ? TIP_MARGIN - r.left
-        : r.right > window.innerWidth - TIP_MARGIN
-          ? window.innerWidth - TIP_MARGIN - r.right
-          : 0
-    // Flip up if the guess put it below and it does not actually fit there.
-    const above = anchor.above || r.bottom > window.innerHeight - TIP_MARGIN
-    setAnchor({ ...anchor, x: anchor.x + dx, above, settled: true })
+    if (anchor === null || el === null) return
+
+    const measure = (): void => {
+      const r = el.getBoundingClientRect()
+      // The tip is translated -50%, so its edges sit half a width either side of
+      // the position we set. Clamp the centre, not the edge.
+      const half = r.width / 2
+      const min = TIP_MARGIN + half
+      const max = window.innerWidth - TIP_MARGIN - half
+      // A tip wider than the window has no position that fits: start it at the
+      // left margin and let the right run over, because the headline reads
+      // first and that is the half worth keeping.
+      const x = max < min ? min : Math.min(Math.max(anchor.cx, min), max)
+      // Above unless it does not fit there — measured against the real height
+      // rather than the constant the first frame had to assume.
+      const above = anchor.top - r.height > TIP_MARGIN
+      if (anchor.settled && x === anchor.x && above === anchor.above) return
+      setAnchor({ ...anchor, x, above, settled: true })
+    }
+
+    measure()
+    // The tip's own size, for content that lands after the first paint.
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    window.addEventListener("resize", measure)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener("resize", measure)
+    }
   }, [anchor])
 
   // Measured at the moment of hover, not on mount: rows scroll, and a position
   // captured earlier would put the tip somewhere the glyph no longer is.
   const place = (e: { currentTarget: HTMLElement }): void => {
     const r = e.currentTarget.getBoundingClientRect()
+    const cx = r.left + r.width / 2
     setAnchor({
-      x: r.left + r.width / 2,
+      cx,
+      x: cx,
       top: r.top - TIP_GAP,
       bottom: r.bottom + TIP_GAP,
       above: r.top > TIP_HEIGHT,

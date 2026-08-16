@@ -7,6 +7,7 @@ import { useUi } from "~/store/store.ui"
 import { isSystemId } from "~/store/store.systems"
 import { withTransition } from "~/lib/view-transition"
 import { Icons } from "~/components/icons"
+import { Banner } from "~/components/banner"
 import { Sidebar } from "~/components/sidebar"
 import { RightDrawer } from "~/components/drawer"
 import { AddProjectDialog } from "~/components/forms/lazy"
@@ -209,6 +210,10 @@ export const RootLayout = () => {
     <div className="desktop">
       <div className="window">
         <Titlebar hasSelection={focused} canReopen={highlighted !== null} onToggleDetail={toggleDetail} />
+        {/* Above the panes, not inside one: the conditions it reports (no
+            engine, no Docker) disable every pane at once, so it cannot belong
+            to any of them. It occupies no height when there is nothing to say. */}
+        <Banner />
         <div className="window-body">
           {/* `inert`, not `visibility: hidden`: both take the rail's controls
               out of the tab order, but an invisible element is not captured for

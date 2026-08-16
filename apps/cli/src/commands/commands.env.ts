@@ -76,12 +76,29 @@ const unset = Command.make(
     })
 )
 
-const list = Command.make("list", {}, () =>
+/** Every context names its project, so listing them means resolving those names
+ *  for the grouped output. One `catalog.list` covers both that and `--project`,
+ *  which is the common case now that a project's environments are its own. */
+const listing = (project: Option.Option<string>) =>
+  Effect.gen(function* () {
+    const projects = yield* call("catalog.list", undefined)
+    const names = new Map(projects.map((p) => [p.id as string, p.name]))
+    const only = Option.isSome(project) ? yield* resolveProject(project.value) : undefined
+    const all = yield* call("env.list", undefined)
+    return {
+      contexts: only === undefined ? all : all.filter((c) => c.projectId === only),
+      projectName: (id: string): string => names.get(id) ?? id
+    }
+  })
+
+const projectFilter = Options.optional(Options.text("project"))
+
+const list = Command.make("list", { project: projectFilter }, ({ project }) =>
   Effect.gen(function* () {
     yield* applyGlobals
     const render = yield* Renderer
-    const ctxs = yield* call("env.list", undefined)
-    yield* render.envs(ctxs.map(masked))
+    const { contexts, projectName } = yield* listing(project)
+    yield* render.envs(contexts.map(masked), projectName)
   })
 )
 
@@ -91,14 +108,22 @@ const list = Command.make("list", {}, () =>
  *  wanting one secret is not a reason to print all of them. */
 const reveal = Command.make(
   "reveal",
-  { context: Args.text({ name: "context" }).pipe(Args.optional) },
-  ({ context }) =>
+  {
+    context: Args.text({ name: "context" }).pipe(Args.optional),
+    project: projectFilter
+  },
+  ({ context, project }) =>
     Effect.gen(function* () {
       yield* applyGlobals
       const render = yield* Renderer
-      const ctxs = yield* call("env.list", undefined)
+      const { contexts, projectName } = yield* listing(project)
+      // Narrowing by name needs `--project` alongside it now: "dev" names one
+      // context per project, so a bare name would reveal every project's.
       yield* render.envs(
-        Option.isSome(context) ? ctxs.filter((c) => c.id === context.value || c.name === context.value) : ctxs
+        Option.isSome(context)
+          ? contexts.filter((c) => c.id === context.value || c.name === context.value)
+          : contexts,
+        projectName
       )
     })
 )
@@ -121,18 +146,23 @@ const use = Command.make(
     })
 )
 
-/** The engine derives the id from the name, so there is no id to invent here. */
+/** The engine derives the id from the name, so there is no id to invent here.
+ *  The project is an argument rather than an option because an environment
+ *  cannot exist without one — there is no installation-wide environment to fall
+ *  back to, and a flag would imply there was. */
 const create = Command.make(
   "create",
   {
+    project: Args.text({ name: "project" }),
     name: Args.text({ name: "name" }),
     description: Options.optional(Options.text("description"))
   },
-  ({ description, name }) =>
+  ({ description, name, project }) =>
     Effect.gen(function* () {
       yield* applyGlobals
       const render = yield* Renderer
       const ctx = yield* call("env.create", {
+        projectId: yield* resolveProject(project),
         name,
         ...(Option.isSome(description) ? { description: description.value } : {})
       })

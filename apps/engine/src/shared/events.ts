@@ -79,3 +79,16 @@ export const catalogChanged = (
   type: "catalog_changed",
   payload: { action }
 })
+
+/** The one builder with no projectId — see ConfigChangedEvent. `id` is the row
+ * within the scope (group slug / context id / project id) and is omitted when
+ * the change is whole-slice. */
+export const configChanged = (
+  scope: "group" | "context" | "commands" | "failures",
+  action: "added" | "updated" | "removed",
+  id?: string
+): NewEvent => ({
+  ts: Date.now(),
+  type: "config_changed",
+  payload: { scope, action, ...(id !== undefined ? { id } : {}) }
+})

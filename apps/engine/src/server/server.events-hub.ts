@@ -64,8 +64,13 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const q = yield* PubSub.subscribe(hub)
       yield* Queue.take(q).pipe(
+        // A project-filtered subscription drops config_changed, which names no
+        // project — matching `pull`, where the SQL equality never matches a
+        // NULL project_id. Live and replay must agree or a client resuming from
+        // its cursor would see a different stream than it was pushed.
         Effect.flatMap((event) =>
-          options.projectId === undefined || event.projectId === options.projectId
+          options.projectId === undefined ||
+          ("projectId" in event && event.projectId === options.projectId)
             ? push(event)
             : Effect.void
         ),

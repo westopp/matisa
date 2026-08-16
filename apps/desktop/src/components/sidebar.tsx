@@ -81,22 +81,61 @@ const GroupClaimMark = ({ projects }: { projects: ReadonlyArray<ProjectWithState
   )
 }
 
-const Tally = ({ projects }: { projects: ReadonlyArray<ProjectWithState> }) => {
+/** Past this many, a run of dots stops being countable at a glance and becomes a
+ *  row of dots you have to count deliberately — so it collapses to the number it
+ *  was standing in for. Same threshold both ways, so green and red never use
+ *  different rules on the same row. */
+const DOT_LIMIT = 4
+
+/** One state's contribution: a dot each while they can be taken in at a glance,
+ *  a pill carrying the number once they cannot. */
+const StateDots = ({ count, tone }: { count: number; tone: "run" | "bad" }) => {
+  if (count <= 0) return null
+  if (count >= DOT_LIMIT) return <span className={`gs-pill ${tone}`}>{count}</span>
+  return (
+    <>
+      {Array.from({ length: count }, (_, i) => (
+        <span key={i} className={`gs-dot ${tone}`} />
+      ))}
+    </>
+  )
+}
+
+/** How many there are, then what state they are in.
+ *
+ *  The total comes first and is always present — it is the fact that does not
+ *  change as things start and stop, so it is the one that can be relied on to
+ *  sit in the same place. The dots after it are the news, and there are none
+ *  when there is none: a quiet group is a bare number, which is what makes a
+ *  green or red mark worth looking at when it does appear. */
+const StatusReadout = ({
+  total,
+  running,
+  failed = 0,
+  title
+}: {
+  total: number
+  running: number
+  /** Omitted where nothing can be called failed — see the unmanaged band. */
+  failed?: number
+  title: string
+}) => (
+  <span className="group-status" title={title}>
+    <span className="gs-total">{total}</span>
+    <StateDots count={running} tone="run" />
+    <StateDots count={failed} tone="bad" />
+  </span>
+)
+
+const GroupStatus = ({ projects }: { projects: ReadonlyArray<ProjectWithState> }) => {
   const { running, failed, total } = tallyOf(projects)
   return (
-    <span
-      className="section-count"
+    <StatusReadout
+      total={total}
+      running={running}
+      failed={failed}
       title={`${running} running · ${failed} failed · ${total} total`}
-    >
-      <span className={running > 0 ? "tally-run" : ""}>{running}</span>
-      {failed > 0 && (
-        <>
-          <span className="tally-sep">•</span>
-          <span className="tally-bad">{failed}</span>
-        </>
-      )}
-      <span className="tally-of">/{total}</span>
-    </span>
+    />
   )
 }
 
@@ -501,16 +540,14 @@ const UnmanagedGroup = ({
                     )}
                   </span>
                   <span className="section-title">{section.title}</span>
-                  {/* Running, then total — the same tally a project group
-                      carries, minus the failure count: matisa did not start
-                      these, so it has no standing to call any of them failed. */}
-                  <span
-                    className="section-count"
+                  {/* The same readout a project group carries, minus the red:
+                      matisa did not start these, so it has no standing to call
+                      any of them failed. */}
+                  <StatusReadout
+                    total={section.entries.length}
+                    running={sectionRunning}
                     title={`${sectionRunning} running · ${section.entries.length} found`}
-                  >
-                    <span className={sectionRunning > 0 ? "tally-run" : ""}>{sectionRunning}</span>
-                    <span className="tally-of">/{section.entries.length}</span>
-                  </span>
+                  />
                   <span className="section-spacer" />
                   <span className="section-tools" onClick={(e) => e.stopPropagation()}>
                     <button
@@ -922,17 +959,18 @@ export const Sidebar = ({
                         {expanded ? <Icons.ChevronDown size={11} sw={2} /> : <Icons.ChevronRight size={11} sw={2} />}
                       </span>
                       <span className="section-title">{section.title}</span>
-                      <Tally projects={section.projects} />
+                      <GroupStatus projects={section.projects} />
                       <GroupClaimMark projects={section.projects} />
                       {/* No collapse control here: the group's own head IS its
                           toggle, and the band above folds every group at once.
                           A third button saying a version of the same thing was
                           the one the eye had to stop and read. */}
-                      {/* No per-project dots on a collapsed group. The tally
-                          beside the title already says how many there are and
-                          how many are up; a second, coarser rendering of the
-                          same two numbers was noise at every width, and at rail
-                          width it was noise with nowhere to sit. */}
+                      {/* The tools follow the readout instead of being pushed to
+                          the far edge. Right-aligning them was fine while the
+                          fleet was a rail, but the same rule put them most of a
+                          window away from the group they act on once the board
+                          took the full width — a control you have to travel to
+                          reads as belonging to the window, not the group. */}
                       <span className="section-spacer" />
                       <span className="section-tools" onClick={(e) => e.stopPropagation()}>
                         {/* Rename/delete belong to a real group row. "Ungrouped"

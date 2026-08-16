@@ -136,6 +136,34 @@ describe("EventsRepo — the durable cursor", () => {
     assert.equal(r.filtered.events.length, 0)
     assert.equal(r.latest, r.s2)
   })
+
+  it("round-trips an event that names no project, and keeps it out of a project filter", async () => {
+    const r = await runtime(
+      Effect.gen(function* () {
+        const projects = yield* ProjectsRepo
+        const events = yield* EventsRepo
+        const p = yield* projects.create(newProject("scoped"))
+        const before = yield* events.latestCursor()
+        yield* events.append({
+          ts: 3,
+          type: "config_changed",
+          payload: { scope: "group", action: "updated", id: "seethis" }
+        } as never)
+        yield* events.append({ ts: 4, projectId: p.id, type: "state_changed", payload: { a: 1 } } as never)
+        const all = yield* events.pull({ since: before })
+        const mine = yield* events.pull({ since: before, projectId: p.id })
+        return { all, mine }
+      })
+    )
+    assert.equal(r.all.events.length, 2)
+    const config = r.all.events.find((e) => e.type === "config_changed")
+    assert.ok(config, "the unscoped event is durable and replays")
+    // Omitted, not undefined: the union's unscoped branch does not declare it,
+    // and a present key would decode as a malformed scoped event.
+    assert.equal("projectId" in config, false)
+    assert.equal(r.mine.events.length, 1, "a project filter excludes what names no project")
+    assert.equal(r.mine.events[0]?.type, "state_changed")
+  })
 })
 
 describe("RuntimeRepo — state-is-truth persistence", () => {
@@ -312,21 +340,152 @@ describe("EventsRepo — retention", () => {
 
 describe("EnvRepo — POC: values in the DB, secret flag masks listings", () => {
   it("round-trips plain and secret vars, upserts on same key", async () => {
-    const ctxId = ContextId.make("test-ctx")
-    const list = await runtime(
+    const out = await runtime(
       Effect.gen(function* () {
+        const projects = yield* ProjectsRepo
         const env = yield* EnvRepo
-        yield* env.set({ contextId: ctxId, name: "test", var: { key: "URL", value: "http://x", secret: false } })
-        yield* env.set({ contextId: ctxId, var: { key: "TOKEN", value: "s3cr3t", secret: true } })
-        yield* env.set({ contextId: ctxId, var: { key: "URL", value: "http://y", secret: false } }) // upsert
-        return yield* env.list()
+        const p = yield* projects.create(newProject("env-roundtrip"))
+        const ctx = yield* env.createContext(p.id, "staging")
+        yield* env.set({ contextId: ctx.id, var: { key: "URL", value: "http://x", secret: false } })
+        yield* env.set({ contextId: ctx.id, var: { key: "TOKEN", value: "s3cr3t", secret: true } })
+        yield* env.set({ contextId: ctx.id, var: { key: "URL", value: "http://y", secret: false } }) // upsert
+        return { ctxId: ctx.id, list: yield* env.list() }
       })
     )
-    const ctx = list.find((c) => c.id === ctxId)
+    const ctx = out.list.find((c) => c.id === out.ctxId)
     assert.ok(ctx, "context exists")
     const url = ctx.vars.find((v) => v.key === "URL")
     const token = ctx.vars.find((v) => v.key === "TOKEN")
     assert.deepEqual(url, { key: "URL", value: "http://y", secret: false })
     assert.deepEqual(token, { key: "TOKEN", value: "s3cr3t", secret: true })
+  })
+})
+
+// ────────────────────────────────────────────────────────────────────────────
+// The scoping guarantees from migration 0006. Each of these was reachable in
+// the global model: a var could be written to a context belonging to nobody, a
+// project could be pointed at another project's environment, and the single
+// shared `base` reached every spawn in the installation.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe("EnvRepo — environments belong to exactly one project", () => {
+  it("gives every new project its own base, atomically with the project", async () => {
+    const out = await runtime(
+      Effect.gen(function* () {
+        const projects = yield* ProjectsRepo
+        const env = yield* EnvRepo
+        const p = yield* projects.create(newProject("has-base"))
+        return { id: p.id, contexts: yield* env.list() }
+      })
+    )
+    const mine = out.contexts.filter((c) => c.projectId === out.id)
+    assert.equal(mine.length, 1, "exactly one context, and it is the base")
+    assert.equal(mine[0]?.isBase, true)
+    assert.equal(mine[0]?.name, "base")
+  })
+
+  it("refuses to write a var into a context that does not exist", async () => {
+    const result = await runtime(
+      Effect.gen(function* () {
+        const env = yield* EnvRepo
+        return yield* env
+          .set({
+            contextId: ContextId.make("conjured-from-nothing"),
+            var: { key: "X", value: "y", secret: false }
+          })
+          .pipe(Effect.either)
+      })
+    )
+    assert.equal(result._tag, "Left")
+    if (result._tag === "Left") assert.equal(result.left._tag, "NotFound")
+  })
+
+  it("refuses to point a project at another project's context", async () => {
+    const out = await runtime(
+      Effect.gen(function* () {
+        const projects = yield* ProjectsRepo
+        const env = yield* EnvRepo
+        const mine = yield* projects.create(newProject("borrower"))
+        const theirs = yield* projects.create(newProject("lender"))
+        const foreign = yield* env.createContext(theirs.id, "dev")
+        const attempt = yield* env.useContext(mine.id, foreign.id).pipe(Effect.either)
+        return { attempt, project: yield* projects.get(mine.id) }
+      })
+    )
+    assert.equal(out.attempt._tag, "Left")
+    if (out.attempt._tag === "Left") {
+      assert.equal(out.attempt.left._tag, "ContextNotInProject")
+    }
+    assert.equal(out.project.activeContextId, undefined, "and nothing was written")
+  })
+
+  it("lets two projects each have a context of the same name", async () => {
+    const out = await runtime(
+      Effect.gen(function* () {
+        const projects = yield* ProjectsRepo
+        const env = yield* EnvRepo
+        const a = yield* projects.create(newProject("twin-a"))
+        const b = yield* projects.create(newProject("twin-b"))
+        return {
+          a: yield* env.createContext(a.id, "dev"),
+          b: yield* env.createContext(b.id, "dev")
+        }
+      })
+    )
+    assert.equal(out.a.name, "dev")
+    assert.equal(out.b.name, "dev")
+    assert.notEqual(out.a.id, out.b.id, "ids stay globally unique so the CLI can address them")
+  })
+
+  it("rejects a duplicate name within one project", async () => {
+    const result = await runtime(
+      Effect.gen(function* () {
+        const projects = yield* ProjectsRepo
+        const env = yield* EnvRepo
+        const p = yield* projects.create(newProject("dup-names"))
+        yield* env.createContext(p.id, "dev")
+        return yield* env.createContext(p.id, "dev").pipe(Effect.either)
+      })
+    )
+    assert.equal(result._tag, "Left")
+    if (result._tag === "Left") assert.equal(result.left._tag, "NameTaken")
+  })
+
+  it("will not rename or delete a project's base", async () => {
+    const out = await runtime(
+      Effect.gen(function* () {
+        const projects = yield* ProjectsRepo
+        const env = yield* EnvRepo
+        const p = yield* projects.create(newProject("immutable-base"))
+        const base = (yield* env.list()).find((c) => c.projectId === p.id && c.isBase)!
+        return {
+          renamed: yield* env.renameContext(base.id, "nope").pipe(Effect.either),
+          removed: yield* env.removeContext(base.id).pipe(Effect.either)
+        }
+      })
+    )
+    assert.equal(out.renamed._tag, "Left")
+    if (out.renamed._tag === "Left") assert.equal(out.renamed.left._tag, "BaseContextImmutable")
+    assert.equal(out.removed._tag, "Left")
+    if (out.removed._tag === "Left") assert.equal(out.removed.left._tag, "BaseContextImmutable")
+  })
+
+  it("takes a project's contexts with it when the project is removed", async () => {
+    const out = await runtime(
+      Effect.gen(function* () {
+        const projects = yield* ProjectsRepo
+        const env = yield* EnvRepo
+        const p = yield* projects.create(newProject("cascade-me"))
+        const ctx = yield* env.createContext(p.id, "dev")
+        yield* env.set({ contextId: ctx.id, var: { key: "K", value: "v", secret: false } })
+        yield* projects.remove(p.id)
+        return yield* env.list()
+      })
+    )
+    assert.equal(
+      out.filter((c) => c.name === "dev" && c.vars.some((v) => v.key === "K")).length,
+      0,
+      "no context outlives its project"
+    )
   })
 })

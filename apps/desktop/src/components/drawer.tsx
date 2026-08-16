@@ -290,8 +290,11 @@ const ActivityTab = ({ scopeId, nameOf }: { scopeId: ProjectId | null; nameOf: (
               {clock(e.ts)}
             </td>
             {scopeId === null && (
-              <td className="trunc" title={nameOf(e.projectId)}>
-                {nameOf(e.projectId)}
+              // Config entries (a group renamed, a context created) name no
+              // project. They only ever appear here, in the unfiltered view —
+              // the per-project filter below drops them.
+              <td className="trunc" title={e.projectId === undefined ? "engine" : nameOf(e.projectId)}>
+                {e.projectId === undefined ? "—" : nameOf(e.projectId)}
               </td>
             )}
             <td>

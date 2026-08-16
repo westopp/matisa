@@ -54,7 +54,7 @@ export const makeHandlers: Effect.Effect<
 
   const handlers: Handlers = {
     ...catalogHandlers(catalog, pty),
-    ...lifecycleHandlers(supervisor, runtime),
+    ...lifecycleHandlers(supervisor, runtime, hub),
     ...discoveryHandlers(discovery),
     ...eventsHandlers(hub),
     ...ptyHandlers(pty),

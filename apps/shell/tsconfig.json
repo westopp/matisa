@@ -9,5 +9,11 @@
     "verbatimModuleSyntax": false,
     "types": ["node"]
   },
-  "include": ["src"]
+  // This project exists to check the Electron main/preload sources, which are
+  // CommonJS (no "type": "module" — Electron loads dist/main.cjs). Tests are
+  // ESM: they use import.meta.url to locate the scripts they exercise, which
+  // NodeNext rejects outright in a CJS file. They are run by the workspace test
+  // script under tsx, which resolves them as ESM.
+  "include": ["src"],
+  "exclude": ["src/__tests__"]
 }

@@ -1,6 +1,5 @@
 import { Context, Effect, Layer, Option } from "effect"
 import {
-  BASE_CONTEXT_ID,
   SessionId,
   ValidationError,
   type CommandRunParams,
@@ -33,14 +32,17 @@ import {
   type RuntimeSnapshot
 } from "@matisa/store"
 import { toEngineError } from "../../shared/error-map.js"
-import { catalogChanged } from "../../shared/events.js"
+import { catalogChanged, configChanged } from "../../shared/events.js"
 import { EventsHub } from "../../server/server.events-hub.js"
 import { PtyManager } from "../pty/pty.services.js"
 
 // ────────────────────────────────────────────────────────────────────────────
 // Catalog — the configuration domain. Project/env CRUD delegated to the Store
-// repositories and a catalog_changed event emitted on every mutation. All
-// faults surface as @matisa/core EngineError so the dispatcher stays uniform.
+// repositories, and every mutation announced: catalog_changed when a project
+// row moved, config_changed when it was a group, a context or a command set.
+// Both matter because the CLI and the desktop are peers — an edit made in one
+// is only visible in the other if the engine says it happened.
+// All faults surface as @matisa/core EngineError so the dispatcher stays uniform.
 // POC: env values (secrets included) persist in the DB; the `secret` flag only
 // masks listings. A keychain provider re-enters post-POC.
 // ────────────────────────────────────────────────────────────────────────────
@@ -116,10 +118,18 @@ const make = Effect.gen(function* () {
         contextId: params.contextId,
         var: { key: params.key, value: params.value, secret: params.secret ?? false }
       })
-      .pipe(Effect.mapError(toEngineError))
+      .pipe(
+        Effect.mapError(toEngineError),
+        Effect.tap((c) => events.emit(configChanged("context", "updated", c.id)))
+      )
 
   const envUnset: CatalogShape["envUnset"] = (params) =>
-    env.unsetVar(params.contextId, params.key).pipe(Effect.mapError(toEngineError))
+    env
+      .unsetVar(params.contextId, params.key)
+      .pipe(
+        Effect.mapError(toEngineError),
+        Effect.tap((c) => events.emit(configChanged("context", "updated", c.id)))
+      )
 
   const envList: CatalogShape["envList"] = () => env.list().pipe(Effect.mapError(toEngineError))
 
@@ -128,39 +138,45 @@ const make = Effect.gen(function* () {
       yield* env.useContext(params.projectId, params.contextId).pipe(Effect.mapError(toEngineError))
       const project = yield* projects.get(params.projectId).pipe(Effect.mapError(toEngineError))
       const snap = yield* runtime.getState(params.projectId).pipe(Effect.mapError(toEngineError))
+      // The project ROW changed (activeContextId), so this is catalog_changed
+      // rather than a config scope — a client re-reads the project, not the
+      // context list, to see which environment it will spawn with next.
+      yield* events.emit(catalogChanged(params.projectId, "updated"))
       return withState(project, snap)
     })
 
   const envCreate: CatalogShape["envCreate"] = (params) =>
-    env.createContext(params.name, params.description).pipe(Effect.mapError(toEngineError))
+    env
+      .createContext(params.projectId, params.name, params.description)
+      .pipe(
+        Effect.mapError(toEngineError),
+        Effect.tap((c) => events.emit(configChanged("context", "added", c.id)))
+      )
 
+  // The base guards live in the repo now rather than here: it is the only place
+  // that knows which row is a base, and a check keyed off a reserved id could
+  // only ever have protected one project's.
   const envRename: CatalogShape["envRename"] = (params) =>
-    params.contextId === BASE_CONTEXT_ID
-      ? Effect.fail(
-          new ValidationError({ field: "name", message: "The base environment cannot be renamed" })
-        )
-      : env.renameContext(params.contextId, params.name).pipe(Effect.mapError(toEngineError))
+    env
+      .renameContext(params.contextId, params.name)
+      .pipe(
+        Effect.mapError(toEngineError),
+        Effect.tap((c) => events.emit(configChanged("context", "updated", c.id)))
+      )
 
-  // Removing a context re-points every project that was using it, so each of
-  // those projects is announced as changed — a client showing one of them is
-  // otherwise left displaying an environment that no longer exists.
+  // Removing a context detaches the owning project if it was the active one, so
+  // that project is announced as changed — a client showing it is otherwise left
+  // displaying an environment that no longer exists. The context list itself is
+  // a separate announcement: the project event says the row moved, and nothing
+  // in it says the context is gone, so a client that heard only that would
+  // re-read the project and still offer the deleted environment in its picker.
   const envRemove: CatalogShape["envRemove"] = (contextId) =>
-    contextId === BASE_CONTEXT_ID
-      ? Effect.fail(
-          new ValidationError({
-            field: "contextId",
-            message: "The base environment cannot be deleted"
-          })
-        )
-      : env.removeContext(contextId).pipe(
-          Effect.mapError(toEngineError),
-          Effect.tap((affected) =>
-            Effect.forEach(affected, (id) => events.emit(catalogChanged(id, "updated")), {
-              discard: true
-            })
-          ),
-          Effect.asVoid
-        )
+    env.removeContext(contextId).pipe(
+      Effect.mapError(toEngineError),
+      Effect.tap((owner) => events.emit(catalogChanged(owner, "updated"))),
+      Effect.tap(() => events.emit(configChanged("context", "removed", contextId))),
+      Effect.asVoid
+    )
 
   // —— named commands ——
 
@@ -168,7 +184,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       // Validate the project exists so orphan commands can't be created.
       yield* projects.get(params.projectId).pipe(Effect.mapError(toEngineError))
-      return yield* commands
+      const saved = yield* commands
         .set({
           projectId: params.projectId,
           name: params.name,
@@ -176,13 +192,20 @@ const make = Effect.gen(function* () {
           vars: params.vars
         })
         .pipe(Effect.mapError(toEngineError))
+      // Scoped to the project so a client refreshes the one command list it has
+      // actually read, rather than every list it has ever cached.
+      yield* events.emit(configChanged("commands", "updated", params.projectId))
+      return saved
     })
 
   const commandList: CatalogShape["commandList"] = (id) =>
     commands.list(id).pipe(Effect.mapError(toEngineError))
 
   const commandRemove: CatalogShape["commandRemove"] = (id, name) =>
-    commands.remove(id, name).pipe(Effect.mapError(toEngineError))
+    commands.remove(id, name).pipe(
+      Effect.mapError(toEngineError),
+      Effect.tap(() => events.emit(configChanged("commands", "removed", id)))
+    )
 
   const commandRun: CatalogShape["commandRun"] = (params) =>
     Effect.gen(function* () {
@@ -221,14 +244,23 @@ const make = Effect.gen(function* () {
 
   // —— groups ——
 
+  // groups.set is an upsert, so "updated" covers a create too — a client reacts
+  // by re-reading the list either way, and claiming "added" for a retitle would
+  // be the only inaccurate thing in the stream.
   const groupSet: CatalogShape["groupSet"] = (group) =>
-    groupsRepo.set(group).pipe(Effect.mapError(toEngineError))
+    groupsRepo.set(group).pipe(
+      Effect.mapError(toEngineError),
+      Effect.tap((g) => events.emit(configChanged("group", "updated", g.slug)))
+    )
 
   const groupList: CatalogShape["groupList"] = () =>
     groupsRepo.list().pipe(Effect.mapError(toEngineError))
 
   const groupRemove: CatalogShape["groupRemove"] = (slug) =>
-    groupsRepo.remove(slug).pipe(Effect.mapError(toEngineError))
+    groupsRepo.remove(slug).pipe(
+      Effect.mapError(toEngineError),
+      Effect.tap(() => events.emit(configChanged("group", "removed", slug)))
+    )
 
   return Catalog.of({
     add,

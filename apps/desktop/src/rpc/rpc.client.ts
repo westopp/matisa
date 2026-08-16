@@ -136,6 +136,35 @@ export class RpcClient {
     this.timer = setTimeout(() => this.connect(), delay)
   }
 
+  /** Try NOW instead of waiting out the backoff, and reset the curve.
+   *
+   *  The backoff climbs to the cap within a minute or so, which is the right
+   *  behaviour for an app left open next to a dead engine but the wrong one for
+   *  a user who has just started that engine and is looking at the banner: the
+   *  window sits there disconnected for up to the cap with no way to say "it is
+   *  back, look again". This is that way. */
+  reconnectNow(): void {
+    if (this.disposed || this.status === "open") return
+    if (this.timer !== null) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
+    this.attempt = 0
+    // A socket may already be mid-handshake against an engine that is not
+    // listening. Detach it before closing: its `onclose` would otherwise
+    // schedule a second reconnect that races the one starting here.
+    const stale = this.ws
+    if (stale !== null) {
+      stale.onopen = null
+      stale.onmessage = null
+      stale.onclose = null
+      stale.onerror = null
+      this.ws = null
+      stale.close()
+    }
+    this.connect()
+  }
+
   dispose(): void {
     this.disposed = true
     if (this.timer !== null) clearTimeout(this.timer)

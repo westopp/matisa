@@ -493,6 +493,67 @@ button {
   color: oklch(0.25 0.05 80);
 }
 
+/* ── Banners ────────────────────────────────────────────────────────────────
+   Full-width strips between the titlebar and the panes, for conditions that
+   disable the whole window (no engine, no Docker). Rendered only when there is
+   something to say, so the row costs no height at rest and the panes do not
+   reserve space for a message that is usually absent.
+
+   flex-shrink: 0 — the panes below take the remaining height, and a banner that
+   compressed under them would clip its own actions. */
+.banners {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.banner.danger {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.banner.warning {
+  background: var(--warning-tint);
+  color: var(--warning);
+}
+.banner-ico {
+  display: flex;
+  flex-shrink: 0;
+}
+/* The text block takes the slack so the actions stay pinned right, the way the
+   runtime row's stat pills do. */
+.banner-text {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+.banner-title {
+  font-weight: 650;
+  white-space: nowrap;
+}
+/* The detail is the first thing worth losing on a narrow window — the title and
+   the action are what make the banner useful. */
+.banner-detail {
+  color: var(--text-muted);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.banner-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .window-body {
   flex: 1;
   display: flex;
@@ -549,17 +610,65 @@ button {
      fade in at its final width. */
   view-transition-name: detail;
 }
+/* `--rail-w` is set on .window-body from the store (root.route.tsx). The default
+   lives in store.ui.ts, not here — the handle has to clamp against the same
+   numbers it writes, and two copies of a bound is one copy too many. */
 .pane-wrap.open {
-  flex-basis: calc(100% - 318px);
+  flex-basis: calc(100% - var(--rail-w, 353px));
 }
 /* Fleet collapsed: nothing to leave room for. */
 .pane-wrap.solo {
   flex-basis: 100%;
 }
+/* A narrow window caps the rail rather than replacing its width: a user who
+   dragged it narrower than this keeps what they chose. */
 @media (max-width: 1080px) {
   .pane-wrap.open {
-    flex-basis: calc(100% - 272px);
+    flex-basis: calc(100% - min(var(--rail-w, 353px), 300px));
   }
+}
+
+/* ── The rail's drag handle ─────────────────────────────────────────────────
+   A 5px strip on the seam between the two panes, drawn only as a hairline until
+   the pointer is on it. It sits in the layout rather than being absolutely
+   positioned over the seam, so neither pane's content can end up underneath it
+   and unclickable.
+
+   Only ever rendered with a project open — with the fleet on its own there is no
+   seam and nothing the width would mean. */
+.rail-grip {
+  flex: 0 0 5px;
+  position: relative;
+  cursor: col-resize;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  /* The pointer is captured on the handle for the whole drag, so the cursor
+     never flickers as it crosses onto the panes either side. */
+  touch-action: none;
+  z-index: 5;
+}
+.rail-grip::before {
+  content: "";
+  position: absolute;
+  inset: 0 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.12s;
+}
+.rail-grip:hover::before,
+.rail-grip:focus-visible::before,
+.rail-grip.dragging::before {
+  background: var(--accent, var(--border-strong));
+}
+.rail-grip:focus-visible {
+  outline: none;
+}
+/* Nothing selects while a drag is in flight — dragging across a list of project
+   names would otherwise leave half of them highlighted. */
+body.rail-dragging {
+  cursor: col-resize;
+  user-select: none;
 }
 /* The fallback, and ONLY the fallback. Where view transitions exist they own
    this motion; running both would leave the flex basis still travelling under
@@ -1182,8 +1291,11 @@ button {
   border: 0;
   border-radius: 9px;
   font-family: var(--font-sans);
-  font-weight: 600;
-  font-size: 14px;
+  /* The band is the top level of the tree — Projects, Compose Stacks, Systems,
+     Unmanaged — and now reads like it: a step above the group heads nested
+     under it rather than the near-match it was. */
+  font-weight: 700;
+  font-size: 16px;
   line-height: 1.1;
   letter-spacing: -0.01em;
   text-transform: none;
@@ -1306,43 +1418,80 @@ button {
   white-space: nowrap;
   order: 1;
 }
-/* running • failed / total. The two numerators light up only when they have
-   something to say, so a quiet group still reads as one number and a group with
-   a casualty in it does not. */
-.section-count {
+/* The group readout: a circled total, then a dot per running project and a dot
+   per failed one — or a pill carrying the number once there are too many to
+   count at a glance. The total is always there; the dots arrive only when there
+   is something to report, which is what makes them worth a look. */
+.group-status {
   display: inline-flex;
-  align-items: baseline;
-  gap: 1px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: inherit;
-  opacity: 0.7;
-  background: transparent;
-  padding: 0;
-  border-radius: 0;
-  min-width: 0;
-  text-align: left;
+  align-items: center;
+  gap: 4px;
   order: 3;
   cursor: default;
 }
-.tally-run {
-  color: var(--mint);
+/* The one element that never moves: same size whether it reads 3 or 30, so the
+   dots after it always begin in the same place. */
+.gs-total {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  /* Filled in what used to be the ring's colour, rather than outlined. It reads
+     as one solid token beside the state pills instead of a hollow shape that
+     competed with them for the same slot. */
+  background: var(--line-hi);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
-.tally-bad {
-  color: var(--coral);
+.gs-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
 }
-.tally-sep {
-  opacity: 0.5;
+.gs-dot.run {
+  background: var(--mint);
 }
-.tally-of {
-  opacity: 0.75;
+.gs-dot.bad {
+  background: var(--coral);
+}
+/* Filled rather than outlined, unlike the total: the pill replaces dots that
+   were solid colour, and an outlined one would read as a second, quieter total
+   instead of the same signal compressed. */
+.gs-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 15px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.gs-pill.run {
+  background: var(--mint-fill);
+}
+.gs-pill.bad {
+  background: var(--coral-fill);
 }
 
-/* Collapse everything that is not this group. Hover-revealed, in the header's
-   own flow so nothing shifts when it appears — it takes the slot the spacer
-   would have had. */
+/* A fixed gap, NOT flex: 1. The tools sit just past the readout so they stay
+   next to the group they belong to at every width — on the board the fleet is
+   the whole window, and a spacer that ate the slack put a group's start button
+   a thousand pixels from its title. */
 .section-spacer {
-  flex: 1;
+  flex: 0 0 6px;
   order: 6;
 }
 .section-tools {

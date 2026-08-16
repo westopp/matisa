@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { Collapsible } from "@westopp/react-collapsible"
 import {
-  BASE_CONTEXT_ID,
   ContextId,
   type CommandVar,
   type EnvContext,
@@ -175,24 +174,28 @@ const EnvPills = ({
   const [editing, setEditing] = useState<"new" | string | null>(null)
   const [confirming, setConfirming] = useState<EnvContext | null>(null)
 
-  const base = contexts.find((c) => c.id === BASE_CONTEXT_ID)
-  const others = contexts.filter((c) => c.id !== BASE_CONTEXT_ID)
+  // `contexts` is every environment in the installation; only this project's are
+  // its own to show or select. The engine refuses a foreign one anyway — this is
+  // what stops the picker offering it in the first place.
+  const mine = contexts.filter((c) => c.projectId === project.id)
+  const base = mine.find((c) => c.isBase)
+  const others = mine.filter((c) => !c.isBase)
   // No active context means the project runs on base alone, so that is what the
   // selected state has to show.
-  const activeId = project.activeContextId ?? BASE_CONTEXT_ID
+  const activeId = project.activeContextId ?? base?.id
 
-  const select = (id: string): void => {
-    if (!disabled) void activateContext(project.id, ContextId.make(id))
+  const select = (id: string | undefined): void => {
+    if (!disabled && id !== undefined) void activateContext(project.id, ContextId.make(id))
   }
 
   return (
     <>
       <div className="env-pills">
         <button
-          className={`env-pill ${activeId === BASE_CONTEXT_ID ? "active" : ""}`}
-          onClick={() => select(BASE_CONTEXT_ID)}
-          disabled={disabled}
-          title="Applies to every environment"
+          className={`env-pill ${activeId === base?.id ? "active" : ""}`}
+          onClick={() => select(base?.id)}
+          disabled={disabled || base === undefined}
+          title={`Applies to every ${project.name} environment`}
         >
           <span className="env-pill-name">base</span>
           <span className="tab-count">{base?.vars.length ?? 0}</span>
@@ -245,7 +248,7 @@ const EnvPills = ({
             onCancel={() => setEditing(null)}
             onCommit={(name) => {
               setEditing(null)
-              void createContext(name)
+              void createContext(project.id, name)
             }}
           />
         ) : (
@@ -547,9 +550,10 @@ export const EnvironmentCard = ({ project }: { project: ProjectWithState }) => {
   // would silently not apply to the run that is starting.
   const { busy } = useLifecycleState(project)
 
-  const base = contexts.find((c) => c.id === BASE_CONTEXT_ID)
-  const activeId = project.activeContextId ?? BASE_CONTEXT_ID
-  const active = activeId === BASE_CONTEXT_ID ? undefined : contexts.find((c) => c.id === activeId)
+  const mine = contexts.filter((c) => c.projectId === project.id)
+  const base = mine.find((c) => c.isBase)
+  const activeId = project.activeContextId ?? base?.id
+  const active = mine.find((c) => c.id === activeId && !c.isBase)
 
   // Switching the active environment ends any in-place edit — the edited group
   // may no longer be on screen.
@@ -638,8 +642,12 @@ export const EnvironmentCard = ({ project }: { project: ProjectWithState }) => {
         </div>
       </CollapsibleCard>
 
-      {adding && (
-        <SetEnvVarDialog contexts={contexts} initialContextId={ContextId.make(activeId)} onClose={() => setAdding(false)} />
+      {adding && base !== undefined && (
+        <SetEnvVarDialog
+          contexts={mine}
+          initialContextId={activeId ?? base.id}
+          onClose={() => setAdding(false)}
+        />
       )}
     </>
   )

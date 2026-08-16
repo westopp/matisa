@@ -27,6 +27,12 @@ interface UiState {
    *  pane onto nothing you can see. Shared across projects on purpose — collapse
    *  is a preference about the page, not about one project. */
   terminalsOpen: boolean
+  /** The rail's width in pixels, with a project open. The centre pane takes the
+   *  remainder, so this one number is the whole layout — see `.pane-wrap.open`.
+   *  Dragged by the handle between the two panes and remembered across launches,
+   *  because how much of the fleet you want beside a project is a preference,
+   *  not a per-session decision. */
+  railWidth: number
   toggleTheme: () => void
   toggleFleet: () => void
   collapseFleet: () => void
@@ -38,6 +44,10 @@ interface UiState {
   setDrawerTab: (tab: DrawerTab) => void
   setDrawerScoped: (scoped: boolean) => void
   setTerminalsOpen: (open: boolean) => void
+  setRailWidth: (px: number) => void
+  /** Back to `RAIL_DEFAULT` — what the handle's double-click does, so a drag
+   *  that went somewhere unusable is one gesture to undo. */
+  resetRailWidth: () => void
   /** Called by anything that starts a process — the terminal it opens must be
    *  on screen. Never closes: a second command starting is not a reason to hide
    *  the first one's output. */
@@ -45,6 +55,25 @@ interface UiState {
 }
 
 const stored = (): Theme => (localStorage.getItem("matisa.theme") === "light" ? "light" : "dark")
+
+/** The rail's resting width. The floor is where a card stops being able to show
+ *  a name and its chips on one line; the ceiling leaves the centre pane wide
+ *  enough to still be the thing you are working in. */
+export const RAIL_DEFAULT = 353
+export const RAIL_MIN = 268
+export const RAIL_MAX = 620
+
+export const clampRail = (px: number): number => Math.min(Math.max(Math.round(px), RAIL_MIN), RAIL_MAX)
+
+const storedRail = (): number => {
+  const raw = Number(localStorage.getItem("matisa.railWidth"))
+  return Number.isFinite(raw) && raw > 0 ? clampRail(raw) : RAIL_DEFAULT
+}
+
+const rememberRail = (px: number): number => {
+  localStorage.setItem("matisa.railWidth", String(px))
+  return px
+}
 
 const storedTab = (): DrawerTab => {
   const raw = localStorage.getItem("matisa.drawerTab")
@@ -63,6 +92,7 @@ export const useUi = create<UiState>()((set) => ({
   drawerTab: storedTab(),
   drawerScoped: true,
   terminalsOpen: true,
+  railWidth: storedRail(),
   toggleTheme: () =>
     set((s) => {
       const theme: Theme = s.theme === "dark" ? "light" : "dark"
@@ -78,6 +108,8 @@ export const useUi = create<UiState>()((set) => ({
   setDrawerTab: (tab) => set({ drawerTab: rememberTab(tab) }),
   setDrawerScoped: (drawerScoped) => set({ drawerScoped }),
   setTerminalsOpen: (terminalsOpen) => set({ terminalsOpen }),
+  setRailWidth: (px) => set({ railWidth: rememberRail(clampRail(px)) }),
+  resetRailWidth: () => set({ railWidth: rememberRail(RAIL_DEFAULT) }),
   revealTerminals: () => set({ terminalsOpen: true })
 }))
 

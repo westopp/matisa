@@ -5,13 +5,27 @@ import { ContextId, ProjectId, type EnvContext, type Project } from "@matisa/cor
 import type { EnvRepoShape } from "@matisa/store"
 import { resolveEnv } from "../modules/catalog/catalog.env-resolve.js"
 
-// Base + override semantics: `base` context vars are ALWAYS injected; the
-// project's active context layers over them (context wins on conflicts).
-// This was the old app's env model — these tests keep it from regressing again.
+// Base + override semantics: the PROJECT'S base is always injected; the
+// project's active context layers over it (context wins on conflicts). This was
+// the old app's env model — these tests keep it from regressing again.
+//
+// The last two cases pin the property migration 0006 exists for: resolution
+// draws only on contexts belonging to the project being spawned. A context from
+// another project cannot contribute a variable, whether it is a base or the one
+// a stale activeContextId happens to name.
 
-const ctx = (id: string, vars: Record<string, string>): EnvContext => ({
+const P1 = ProjectId.make("p1")
+const P2 = ProjectId.make("p2")
+
+const ctx = (
+  id: string,
+  vars: Record<string, string>,
+  opts: { projectId?: ProjectId; isBase?: boolean } = {}
+): EnvContext => ({
   id: ContextId.make(id),
+  projectId: opts.projectId ?? P1,
   name: id,
+  isBase: opts.isBase ?? false,
   vars: Object.entries(vars).map(([key, value]) => ({ key, value, secret: false }))
 })
 
@@ -27,7 +41,7 @@ const repoWith = (contexts: ReadonlyArray<EnvContext>): EnvRepoShape => ({
 
 const project = (activeContextId?: string): Project =>
   ({
-    id: ProjectId.make("p1"),
+    id: P1,
     name: "p1",
     root: "/tmp",
     command: { name: "run", program: "sleep", args: [] },
@@ -41,7 +55,11 @@ const resolve = (p: Project, contexts: ReadonlyArray<EnvContext>) =>
   Effect.runPromise(resolveEnv(p, { envRepo: repoWith(contexts) }))
 
 describe("resolveEnv — base + context layering", () => {
-  const base = ctx("base", { DATABASE_URL: "postgres://localhost/dev", LOG_LEVEL: "debug" })
+  const base = ctx(
+    "p1-base",
+    { DATABASE_URL: "postgres://localhost/dev", LOG_LEVEL: "debug" },
+    { isBase: true }
+  )
   const staging = ctx("staging", { DATABASE_URL: "postgres://staging/db", EXTRA: "yes" })
 
   it("base vars apply with NO active context", async () => {
@@ -68,5 +86,21 @@ describe("resolveEnv — base + context layering", () => {
 
   it("no base, no active context → empty env", async () => {
     assert.deepEqual(await resolve(project(), [staging]), {})
+  })
+})
+
+describe("resolveEnv — environments are per project", () => {
+  const mine = ctx("p1-base", { LOG_LEVEL: "debug" }, { isBase: true })
+  const theirs = ctx("p2-base", { AWS_SECRET_ACCESS_KEY: "leaked" }, { projectId: P2, isBase: true })
+
+  it("another project's base contributes nothing", async () => {
+    assert.deepEqual(await resolve(project(), [mine, theirs]), { LOG_LEVEL: "debug" })
+  })
+
+  it("an activeContextId naming another project's context is ignored", async () => {
+    const foreign = ctx("p2-staging", { AWS_SECRET_ACCESS_KEY: "leaked" }, { projectId: P2 })
+    assert.deepEqual(await resolve(project("p2-staging"), [mine, foreign]), {
+      LOG_LEVEL: "debug"
+    })
   })
 })

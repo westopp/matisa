@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
 import { GeneratePgForm, pgf, usePgForm } from "@westopp/pgform"
-import { BASE_CONTEXT_ID, ContextId, type EnvContext } from "@matisa/core"
+import { ContextId, type EnvContext } from "@matisa/core"
 import { useEngine } from "~/store/store.engine"
 import { baseComponents } from "./form.components"
 import { Dialog } from "./dialog"
@@ -9,10 +9,11 @@ import { Dialog } from "./dialog"
 // Environment variable editor.
 //
 // The layering the engine applies at spawn, lowest → highest:
-//   project base ("base" context) → project active context
-//   → command base → command context
-// So `base` is not a context like the others: it is the floor every environment
-// inherits. The UI says so explicitly rather than leaving it to be discovered.
+//   project base → project active context → command base → command context
+// So `base` is not a context like the others: it is the floor this PROJECT'S
+// environments inherit. The UI says so explicitly rather than leaving it to be
+// discovered — and says "this project", because a base that applied to every
+// project is exactly the thing the schema no longer allows.
 // ────────────────────────────────────────────────────────────────────────────
 
 export const SetEnvVarDialog = ({
@@ -27,15 +28,18 @@ export const SetEnvVarDialog = ({
   const setEnvVar = useEngine((s) => s.setEnvVar)
   const [submitting, setSubmitting] = useState(false)
 
-  const options = useMemo(() => {
-    const known = contexts.map((c) => ({
-      label: c.id === BASE_CONTEXT_ID ? `${c.name} (applies everywhere)` : c.name,
-      value: c.id as string
-    }))
-    return known.some((o) => o.value === BASE_CONTEXT_ID)
-      ? known
-      : [{ label: "base (applies everywhere)", value: BASE_CONTEXT_ID }, ...known]
-  }, [contexts])
+  // Only the project's own contexts are offered; the caller passes them already
+  // filtered. There is no synthesised "base" entry any more — a project's base
+  // is a real row that exists from the moment the project does, so an option
+  // pointing at a context that had yet to be created is no longer needed.
+  const options = useMemo(
+    () =>
+      contexts.map((c) => ({
+        label: c.isBase ? `${c.name} (applies to all of this project's environments)` : c.name,
+        value: c.id as string
+      })),
+    [contexts]
+  )
 
   const fields = useMemo(
     () =>
@@ -47,7 +51,7 @@ export const SetEnvVarDialog = ({
           options,
           metadata: {
             label: "Context",
-            description: "base applies to every environment; others override it."
+            description: "base applies to all of this project's environments; others override it."
           }
         },
         key: {

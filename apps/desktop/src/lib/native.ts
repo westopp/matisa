@@ -4,6 +4,7 @@
 
 interface MatisaBridge {
   readonly openExternal: (url: string) => void
+  readonly startEngine: () => Promise<boolean>
   readonly platform: string
 }
 
@@ -20,3 +21,10 @@ export const openExternal = (url: string): void => {
   if (window.matisa !== undefined) window.matisa.openExternal(url)
   else window.open(url, "_blank", "noopener")
 }
+
+/** Ask the shell to start the engine it owns. `null` outside the shell, where
+ *  there is nothing to ask — a browser tab cannot spawn a daemon, and the caller
+ *  needs to know that rather than be handed a button that silently does
+ *  nothing. */
+export const startEngine = (): Promise<boolean> | null =>
+  window.matisa === undefined ? null : window.matisa.startEngine()

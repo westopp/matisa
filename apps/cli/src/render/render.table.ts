@@ -98,15 +98,32 @@ export const removedLine = (id: string): string => `removed  ${id}`
 const varsOf = (c: EnvContext): string =>
   c.vars.length === 0 ? "(empty)" : c.vars.map((v) => `${v.key}=${v.value}`).join(" ")
 
-export const envTable = (list: ReadonlyArray<EnvContext>): string => {
+/** Grouped by project, because names are only unique within one: a flat list
+ *  would show "base" forty times over with nothing to tell them apart. The id
+ *  stays in the first column — it is what every other env subcommand takes. */
+export const envTable = (
+  list: ReadonlyArray<EnvContext>,
+  projectName: (id: string) => string
+): string => {
   if (list.length === 0) return "no env contexts"
-  return list
-    .map((c) => `${pad(c.id, 14)}  ${pad(c.name, 16)}  ${varsOf(c)}`)
-    .join("\n")
+  const byProject = new Map<string, Array<EnvContext>>()
+  for (const c of list) {
+    const bucket = byProject.get(c.projectId)
+    if (bucket === undefined) byProject.set(c.projectId, [c])
+    else bucket.push(c)
+  }
+  return [...byProject.entries()]
+    .map(([projectId, contexts]) => {
+      const rows = contexts
+        .map((c) => `  ${pad(c.id, 24)}  ${pad(c.isBase ? `${c.name} *` : c.name, 14)}  ${varsOf(c)}`)
+        .join("\n")
+      return `${projectName(projectId)}\n${rows}`
+    })
+    .join("\n\n")
 }
 
 export const envContextLine = (c: EnvContext): string =>
-  `${c.id}  ${c.name}  ${varsOf(c)}`
+  `${c.id}  ${c.name}${c.isBase ? " *" : ""}  ${varsOf(c)}`
 
 // ── exposure ────────────────────────────────────────────────────────────────
 

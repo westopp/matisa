@@ -89,20 +89,16 @@ for (const helper of globSync(join(vendor, "node_modules", "node-pty", "prebuild
 }
 
 // ── 4. CLI wrapper — symlink this into PATH (the docker/code pattern) ────────
+// The script lives in scripts/cli-wrapper.sh rather than a template literal
+// here. It is shell, so it belongs in a .sh file that a shell tool can lint and
+// a test can execute — src/__tests__/cli-wrapper.test.ts stages a fake bundle
+// and drives it through symlinks, which is the case that actually broke. Inline,
+// every backslash and backtick needed escaping for JS, and a wrong escape there
+// is not a build error: it is a broken command in the user's terminal.
 const binDir = join(shell, "resources", "bin")
 mkdirSync(binDir, { recursive: true })
 const wrapper = join(binDir, "matisa")
-writeFileSync(
-  wrapper,
-  `#!/bin/sh
-# matisa — CLI for the Matisa app. Runs the bundled CLI under the app's own
-# Electron binary in Node mode; --ensure-engine can start the same bundled
-# engine the app uses, so both always meet at one daemon.
-RES="$(cd "$(dirname "$0")/.." && pwd)"
-exec env ELECTRON_RUN_AS_NODE=1 MATISA_ENGINE_ENTRY="$RES/engine/engine.cjs" \\
-  "$RES/../MacOS/Matisa" "$RES/engine/cli.cjs" "$@"
-`
-)
+cpSync(join(shell, "scripts", "cli-wrapper.sh"), wrapper)
 chmodSync(wrapper, 0o755)
 
 // ── 5. electron-builder ──────────────────────────────────────────────────────

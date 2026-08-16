@@ -71,10 +71,6 @@ export type Port = typeof Port.Type
 // reference crosses the wire / lands in the DB — never plaintext).
 // ────────────────────────────────────────────────────────────────────────────
 
-/** Reserved context id whose vars are ALWAYS injected, in every environment.
- * The active context layers over it — context wins on key conflicts. */
-export const BASE_CONTEXT_ID = "base"
-
 // POC: values live in the DB, secrets included. `secret` is a display hint
 // (masked in listings). Keychain/secure stores replace this post-POC.
 export const EnvVar = Schema.Struct({
@@ -84,10 +80,20 @@ export const EnvVar = Schema.Struct({
 })
 export type EnvVar = typeof EnvVar.Type
 
-/** A named, reusable set of environment variables (e.g. "dev", "staging"). */
+/** A named set of environment variables belonging to ONE project (e.g. "dev",
+ *  "staging"). There is no such thing as a context without a project, and no
+ *  layer that applies to every project: a variable is always reachable by
+ *  exactly one project's spawns. `name` is unique within its project, so every
+ *  project gets its own "dev" — the id stays globally unique so that a context
+ *  is still addressable by a single argument on the CLI. */
 export const EnvContext = Schema.Struct({
   id: ContextId,
+  projectId: ProjectId,
   name: Schema.String,
+  /** The project's always-applied layer, created and destroyed with the project
+   *  itself. Exactly one per project; it cannot be renamed or deleted, and the
+   *  active context (when there is one) layers over it. */
+  isBase: Schema.optionalWith(Schema.Boolean, { default: () => false }),
   description: Schema.optional(Schema.String),
   vars: Schema.Array(EnvVar)
 })
@@ -213,7 +219,9 @@ export const Project = Schema.Struct({
   /** compose: absolute path to the docker-compose file. */
   composeFile: Schema.optional(Schema.String),
   ports: Schema.Array(Port),
-  /** Context whose vars are applied when this project is (re)spawned, if any. */
+  /** Context layered over this project's base when it is (re)spawned. Must be
+   *  one of THIS project's contexts — the engine rejects any other. Unset means
+   *  the project spawns on its base alone. */
   activeContextId: Schema.optional(ContextId),
   groupSlug: Schema.optional(GroupSlug),
   /** Absolute path to an image the client shows instead of the generic kind

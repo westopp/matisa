@@ -12,6 +12,7 @@ import {
 } from "@matisa/core"
 import { Store } from "../store.client.js"
 import { NotFound, PortConflict, StoreQueryError } from "../store.errors.js"
+import { freeContextId } from "./repositories.env.js"
 
 interface ProjectRowRaw {
   readonly id: string
@@ -188,6 +189,14 @@ export const ProjectsRepoLive = Layer.effect(
             "INSERT INTO ports (project_id, number, protocol, description) VALUES (?,?,?,?)"
           )
           for (const p of input.ports) insPort.run(id, p.number, p.protocol, p.description ?? null)
+          // Every project owns a base from the moment it exists. In the same
+          // transaction on purpose: a project that briefly had no environment
+          // would be a project whose first `env set` had nowhere to write, and
+          // creating it lazily is how the old code ended up with one shared base
+          // for the whole installation.
+          s.prepare(
+            "INSERT INTO env_contexts (id, project_id, name, is_base, description) VALUES (?,?,?,1,NULL)"
+          ).run(freeContextId(s, input.name, "base"), id, "base")
         })
         return {
           id: ProjectId.make(id),

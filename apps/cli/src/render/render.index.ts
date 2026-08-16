@@ -29,7 +29,12 @@ export interface RendererService {
   readonly project: (p: Project) => Effect.Effect<void>
   readonly projectState: (p: ProjectWithState) => Effect.Effect<void>
   readonly removed: (id: string) => Effect.Effect<void>
-  readonly envs: (list: ReadonlyArray<EnvContext>) => Effect.Effect<void>
+  /** `projectName` resolves the owning project for the grouped human output;
+   *  --json still emits the raw contexts, projectId included. */
+  readonly envs: (
+    list: ReadonlyArray<EnvContext>,
+    projectName: (id: string) => string
+  ) => Effect.Effect<void>
   readonly envContext: (c: EnvContext) => Effect.Effect<void>
   readonly accepted: (a: Accepted) => Effect.Effect<void>
   readonly status: (s: RuntimeStatus) => Effect.Effect<void>
@@ -64,7 +69,7 @@ const make = Effect.gen(function* () {
     project: (p) => emit(p, T.projectLine(p)),
     projectState: (p) => emit(p, T.projectStateLine(p)),
     removed: (id) => emit({ removed: id }, T.removedLine(id)),
-    envs: (list) => emit(list, T.envTable(list)),
+    envs: (list, projectName) => emit(list, T.envTable(list, projectName)),
     envContext: (c) => emit(c, T.envContextLine(c)),
     accepted: (a) => emit(a, T.acceptedLine(a)),
     status: (s) => emit(s, T.statusLine(s)),

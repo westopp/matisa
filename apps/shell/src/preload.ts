@@ -8,5 +8,11 @@ contextBridge.exposeInMainWorld("matisa", {
   openExternal: (url: string): void => {
     void ipcRenderer.invoke("matisa:open-external", url)
   },
+  /** Start the engine daemon if it is not already up; resolves true once its WS
+   *  bridge accepts. The shell owns the engine's lifetime — it spawns one at
+   *  launch — so recovering a dead engine is the shell's job to do and the
+   *  renderer's only to ask for. Without this the window could see that the
+   *  engine was gone and do nothing about it. */
+  startEngine: (): Promise<boolean> => ipcRenderer.invoke("matisa:start-engine") as Promise<boolean>,
   platform: process.platform
 })

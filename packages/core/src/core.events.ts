@@ -4,24 +4,39 @@ import { ExposureEntry, Health, ProjectId, RuntimeState } from "./core.schemas.j
 // ────────────────────────────────────────────────────────────────────────────
 // EngineEvent — the durable-queue payload contract.
 //
-// Each event carries the common envelope fields { seq, ts, projectId } plus a
-// discriminant `type` and a typed `payload`. `seq` is the sqlite autoincrement
-// cursor (monotonic, gap-free per the events table) — clients pull by it and
-// resume from the last seen value; live delivery is via PubSub push. `ts` is
-// epoch milliseconds.
+// Each event carries { seq, ts } plus a discriminant `type` and a typed
+// `payload`. `seq` is the sqlite autoincrement cursor (monotonic, gap-free per
+// the events table) — clients pull by it and resume from the last seen value;
+// live delivery is via PubSub push. `ts` is epoch milliseconds.
 //
-// The whole event is a discriminated union on `type`, so decoding an unknown
-// frame yields a fully-typed payload.
+// Most events also carry `projectId`, because most things that happen here
+// happen TO a project and the id is the subject of the sentence. Configuration
+// that belongs to no single project — a group, an env context — has no such
+// subject, so those events are built without the field rather than given a
+// fabricated one. `unscoped` is that second envelope, and the union being
+// discriminated on `type` means a consumer reading `projectId` must first
+// narrow to a branch that has it.
 // ────────────────────────────────────────────────────────────────────────────
+
+const common = { seq: Schema.Int, ts: Schema.Number }
 
 const envelope = <Type extends string, Fields extends Schema.Struct.Fields>(
   type: Type,
   payload: Fields
 ) =>
   Schema.Struct({
-    seq: Schema.Int,
-    ts: Schema.Number,
+    ...common,
     projectId: ProjectId,
+    type: Schema.Literal(type),
+    payload: Schema.Struct(payload)
+  })
+
+const unscoped = <Type extends string, Fields extends Schema.Struct.Fields>(
+  type: Type,
+  payload: Fields
+) =>
+  Schema.Struct({
+    ...common,
     type: Schema.Literal(type),
     payload: Schema.Struct(payload)
   })
@@ -77,13 +92,29 @@ export const CatalogChangedEvent = envelope("catalog_changed", {
 })
 export type CatalogChangedEvent = typeof CatalogChangedEvent.Type
 
+/** Configuration that is not a project row changed. `scope` names the slice a
+ * client must re-read; `id` identifies the row within it — a group slug, a
+ * context id, or the project id whose commands or failures moved. `id` is
+ * absent when the change is whole-slice, which is what a clear-all is.
+ *
+ * This exists because catalog_changed cannot express any of them: it is keyed
+ * by projectId and means "that project's row is stale", so widening it would
+ * have made every consumer re-read a project to learn a group was renamed. */
+export const ConfigChangedEvent = unscoped("config_changed", {
+  scope: Schema.Literal("group", "context", "commands", "failures"),
+  action: Schema.Literal("added", "updated", "removed"),
+  id: Schema.optional(Schema.String)
+})
+export type ConfigChangedEvent = typeof ConfigChangedEvent.Type
+
 export const EngineEvent = Schema.Union(
   StateChangedEvent,
   LogLineEvent,
   CrashedEvent,
   HealthChangedEvent,
   ExposureChangedEvent,
-  CatalogChangedEvent
+  CatalogChangedEvent,
+  ConfigChangedEvent
 )
 export type EngineEvent = typeof EngineEvent.Type
 
@@ -94,6 +125,7 @@ export const EventType = Schema.Literal(
   "crashed",
   "health_changed",
   "exposure_changed",
-  "catalog_changed"
+  "catalog_changed",
+  "config_changed"
 )
 export type EventType = typeof EventType.Type

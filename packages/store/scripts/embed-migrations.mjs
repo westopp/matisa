@@ -21,7 +21,11 @@ const LEDGER = [
   // Registered on the exposure branch: command vars stopped being context-scoped
   // in code long before the column went, and nothing has read context_id since.
   { version: "0003_command_vars_unscoped", file: "0003_command_vars_unscoped.sql" },
-  { version: "0004_crash_kind", file: "0004_crash_kind.sql" }
+  { version: "0004_crash_kind", file: "0004_crash_kind.sql" },
+  { version: "0005_events_unscoped", file: "0005_events_unscoped.sql" },
+  // Environments stop being global: every context names its project, every
+  // project owns its own `base`, and the always-injected global layer is gone.
+  { version: "0006_env_project_scoped", file: "0006_env_project_scoped.sql" }
 ]
 
 const entries = LEDGER.map(({ version, file }) => {

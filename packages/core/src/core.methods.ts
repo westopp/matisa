@@ -66,9 +66,13 @@ export const EnvUseParams = Schema.Struct({
 })
 export type EnvUseParams = typeof EnvUseParams.Type
 
-/** Create a named environment. The engine derives the id from the name — a
- *  client that invented ids could collide with `base`, which is reserved. */
+/** Create a named environment for a project. `projectId` is required and has no
+ *  "none" — an environment that belonged to no project would be one whose
+ *  variables no project could be held responsible for, which is exactly the
+ *  global layer this schema no longer has. The engine derives the id from the
+ *  name; the name only has to be unique within the project. */
 export const EnvCreateParams = Schema.Struct({
+  projectId: ProjectId,
   name: Schema.String,
   description: Schema.optional(Schema.String)
 })
