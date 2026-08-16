@@ -85,12 +85,22 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
   // Reparent, don't rebuild. A layout effect so the surface is in place before
   // paint — the same commit that moves a pane also moves its terminal, with no
   // frame of empty box in between.
+  //
+  // The slot must hold exactly ONE surface, and saying so is the whole point of
+  // `replaceChildren`. This component is not tied to a pane: the split tree is
+  // reconciled by position, so selecting another project whose layout has the
+  // same shape REUSES this instance — same slot element — and only swaps the
+  // `pane` prop. Appending then left the previous project's surface sitting in
+  // the slot underneath the new one, which is what the user saw: correct titles
+  // and exit badges (React owns the chrome) over another project's terminal.
   useLayoutEffect(() => {
     const slot = slotRef.current
     if (slot === null || sessionId === null || !owns) return
 
     const host = acquireHost(pane.paneId, sessionId)
-    if (host.surface.parentElement !== slot) slot.appendChild(host.surface)
+    if (host.surface.parentElement !== slot || slot.childElementCount > 1) {
+      slot.replaceChildren(host.surface)
+    }
     termRef.current = host.handle.term
 
     // Resume the view state the surface carried while it was off-screen.
@@ -102,6 +112,16 @@ export const TerminalPane = ({ pane, project, theme, fullscreen = false, canClos
     return () => {
       if (host.view === view) host.view = null
       termRef.current = null
+      // Hand the surface back to the registry rather than leaving it parked
+      // here. `replaceChildren` above cannot cover the runs that never reach it
+      // — a pane whose session went away, or one standing down for the
+      // fullscreen copy — and those are exactly the runs that would strand a
+      // surface in a slot that is about to show something else.
+      //
+      // Guarded on parentage because the fullscreen handover is a move between
+      // two slots: if the other copy has already claimed the surface, this
+      // cleanup is a straggler and must not rip it back out.
+      if (host.surface.parentElement === slot) host.surface.remove()
     }
   }, [pane.paneId, sessionId, owns])
 

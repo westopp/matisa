@@ -5,6 +5,7 @@ import { SYSTEM_IDS } from "~/store/store.systems"
 import { rpc } from "~/rpc/rpc.client"
 import { inShell, startEngine } from "~/lib/native"
 import { Icons } from "./icons"
+import { Spinner } from "./primitives"
 
 // ────────────────────────────────────────────────────────────────────────────
 // The banner — one full-width strip under the titlebar for conditions that
@@ -34,6 +35,11 @@ interface Action {
   readonly label: string
   readonly onClick: () => void
   readonly primary?: boolean
+  /** The action is already in flight: spinner in place of nothing, and the
+   *  button refuses further clicks. Derived from live state like everything
+   *  else here — never a flag set on click, which would have to be unset by
+   *  someone and would lie whenever nobody did. */
+  readonly busy?: boolean
 }
 
 interface Notice {
@@ -77,6 +83,7 @@ const useNotices = (): ReadonlyArray<Notice> => {
   const notices: Array<Notice> = []
 
   if (engineDown) {
+    const connecting = status === "connecting"
     const openSystem = (systemId: string): void =>
       void navigate({ to: "/system/$systemId", params: { systemId }, viewTransition: true })
 
@@ -96,13 +103,24 @@ const useNotices = (): ReadonlyArray<Notice> => {
       // honest offer is to look again — the engine is started outside the
       // window in that case, and a "Start engine" button that could not would
       // be worse than none.
+      // `connecting` is the socket actually mid-handshake — `reconnectNow` sets
+      // it synchronously and the close handler clears it — so the button says
+      // "trying" for exactly as long as a try is running, and comes back the
+      // moment the attempt fails. Both offers lead to the same handshake, so
+      // both wear it; a spinner on one while the other invited a second attempt
+      // at the same socket would be worse than none.
       actions: inShell()
         ? [
-            { label: "Start engine", onClick: () => void startEngine()?.then(() => rpc.reconnectNow()), primary: true },
+            {
+              label: "Start engine",
+              onClick: () => void startEngine()?.then(() => rpc.reconnectNow()),
+              primary: true,
+              busy: connecting
+            },
             { label: "Engine details", onClick: () => openSystem(SYSTEM_IDS.engine.slice(4)) }
           ]
         : [
-            { label: "Try again", onClick: () => rpc.reconnectNow(), primary: true },
+            { label: "Try again", onClick: () => rpc.reconnectNow(), primary: true, busy: connecting },
             { label: "Engine details", onClick: () => openSystem(SYSTEM_IDS.engine.slice(4)) }
           ]
     })
@@ -149,7 +167,14 @@ export const Banner = () => {
                 key={a.label}
                 className={`btn sm ${a.primary === true ? "primary" : ""}`}
                 onClick={a.onClick}
+                disabled={a.busy === true}
+                aria-busy={a.busy === true}
               >
+                {/* Beside the label, not instead of it. The button keeps its
+                    width and its name through the attempt, so the strip does
+                    not reflow under the pointer and the control the user just
+                    pressed is still the one they can see. */}
+                {a.busy === true && <Spinner size={12} />}
                 {a.label}
               </button>
             ))}
