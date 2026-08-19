@@ -55,6 +55,16 @@ contextBridge.exposeInMainWorld("matisa", {
     }>,
   /** This bundle's version. Compared against engine.status.version to catch a
    *  daemon left behind by a previous build. */
+  /** Whether the window is translucent. Read when the control mounts; the shell
+   *  is the side that knows what was saved, and it is saved outside the engine
+   *  so that it survives the engine being down. */
+  windowTranslucent: (): Promise<boolean> =>
+    ipcRenderer.invoke("matisa:window-translucent") as Promise<boolean>,
+  /** Fire-and-forget: the shell applies it to the window and persists it, and
+   *  there is no outcome the renderer would do anything differently about. */
+  setWindowTranslucent: (value: boolean): void => {
+    ipcRenderer.send("matisa:set-window-translucent", value)
+  },
   version: ipcRenderer.sendSync("matisa:version") as string,
   platform: process.platform
 })

@@ -4,6 +4,7 @@ import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { engineLogPath, ensureEngine, waitForEngineStop } from "./engine.js"
 import { cliLinkState, installCliLink } from "./cli-link.js"
+import { opacityFor, readWindowPrefs, saveWindowPrefs } from "./window-prefs.js"
 
 // ────────────────────────────────────────────────────────────────────────────
 // Electron main — a thin supervisor. It guarantees an engine is reachable,
@@ -38,6 +39,11 @@ const createWindow = (): void => {
       sandbox: true
     }
   })
+
+  // Before `show`, not after: applied to a visible window it is a flash of the
+  // wrong one, and this is a setting whose whole purpose is how the window looks
+  // the moment it appears.
+  win.setOpacity(opacityFor(readWindowPrefs().translucent))
 
   win.once("ready-to-show", () => win?.show())
   win.on("closed", () => {
@@ -210,6 +216,24 @@ ipcMain.handle("matisa:install-cli", () => installCliLink())
 // Revealing beats opening: the user may want to send the file, not read it.
 ipcMain.handle("matisa:reveal-engine-log", () => {
   shell.showItemInFolder(engineLogPath())
+})
+
+// ────────────────────────────────────────────────────────────────────────────
+// Translucency.
+//
+// NSWindow alpha, not CSS: the window server composites it, so nothing in the
+// renderer repaints and no surface has to be re-blurred. It fades the whole
+// window, text included, which is exactly why this is a switch and not a dial —
+// 95% reads as translucent without costing a single character of contrast, and
+// there is no second value worth offering.
+// ────────────────────────────────────────────────────────────────────────────
+
+ipcMain.handle("matisa:window-translucent", () => readWindowPrefs().translucent)
+
+ipcMain.on("matisa:set-window-translucent", (_e, value: unknown) => {
+  if (typeof value !== "boolean") return
+  win?.setOpacity(opacityFor(value))
+  saveWindowPrefs({ translucent: value })
 })
 
 app.on("second-instance", () => {

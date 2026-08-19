@@ -35,6 +35,8 @@ interface MatisaBridge {
   readonly applyUpdate: () => Promise<{ ok: boolean; reason?: string }>
   readonly cliLink: () => Promise<CliLinkState>
   readonly installCli: () => Promise<CliInstallResult>
+  readonly windowTranslucent: () => Promise<boolean>
+  readonly setWindowTranslucent: (value: boolean) => void
   readonly version: string
   readonly platform: string
 }
@@ -151,3 +153,16 @@ export const installCli = async (): Promise<CliInstallResult> =>
   window.matisa === undefined
     ? { ok: false, reason: "The command can only be installed from the desktop app." }
     : window.matisa.installCli()
+
+/** Whether the window is translucent. Always false outside the shell: a tab has
+ *  no window of its own to fade, and the control that reads this is not offered
+ *  there at all. */
+export const windowTranslucent = async (): Promise<boolean> =>
+  window.matisa === undefined ? false : window.matisa.windowTranslucent()
+
+/** Turn translucency on or off. Nothing is returned and nothing is awaited —
+ *  the shell composites the change and persists it, and the renderer paints
+ *  nothing differently for it. */
+export const setWindowTranslucent = (value: boolean): void => {
+  window.matisa?.setWindowTranslucent(value)
+}

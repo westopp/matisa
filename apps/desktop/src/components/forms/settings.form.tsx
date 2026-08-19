@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import type { NotificationPrefs, ProjectId } from "@matisa/core"
 import { useEngine } from "~/store/store.engine"
+import { inShell, setWindowTranslucent, windowTranslucent } from "~/lib/native"
 import { Icons } from "../icons"
 import { Dialog } from "./dialog"
 
@@ -46,6 +47,57 @@ const Toggle = ({
     </span>
   </label>
 )
+
+// ── Appearance ──────────────────────────────────────────────────────────────
+// The one control in this dialog that is not part of the draft. It writes
+// through on the click because it IS its own preview: a translucency you cannot
+// see until you press Save is one you have to guess at, and there is nothing to
+// review afterwards.
+//
+// A switch rather than a dial. This is NSWindow alpha, so it fades the whole
+// window including its text — which makes it defensible at one value slight
+// enough to cost nothing and indefensible as a range the user can drag until
+// the app stops being readable.
+//
+// Shell only. A browser tab has no window to fade, and a control that visibly
+// does nothing is worse than one that is absent.
+const Appearance = () => {
+  const [translucent, setTranslucent] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    let live = true
+    void windowTranslucent().then((on) => {
+      if (live) setTranslucent(on)
+    })
+    return () => {
+      live = false
+    }
+  }, [])
+
+  return (
+    <section className="set-section">
+      <h3 className="set-title">Window</h3>
+      <p className="set-blurb">
+        Off by default, and the default is the honest one: the whole window
+        fades, text included, so this is a look rather than a way to see what is
+        behind Matisa while you work.
+      </p>
+      {translucent === null ? (
+        <span className="field-hint">asking the window</span>
+      ) : (
+        <Toggle
+          label="Translucent window"
+          hint="lets the desktop through, slightly — applies now and on the next launch"
+          checked={translucent}
+          onChange={(next) => {
+            setTranslucent(next)
+            setWindowTranslucent(next)
+          }}
+        />
+      )}
+    </section>
+  )
+}
 
 export const SettingsDialog = ({ onClose }: { onClose: () => void }) => {
   const settings = useEngine((s) => s.settings)
@@ -203,6 +255,8 @@ export const SettingsDialog = ({ onClose }: { onClose: () => void }) => {
           </>
         )}
       </section>
+
+      {inShell() && <Appearance />}
 
       <section className="set-section">
         <h3 className="set-title">Hidden</h3>
