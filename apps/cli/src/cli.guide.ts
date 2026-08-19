@@ -467,6 +467,56 @@ ENGINE
     guide
         This document.
 
+GIT
+
+matisa is not a git client and these five are the whole of it. There is no
+staging, committing, merging or conflict resolution — anything that can conflict
+belongs in a terminal. Every one of them reports git's own words verbatim; a
+refusal is an ordinary answer, not a matisa error.
+
+Branch belongs to the REPOSITORY, not the project. Several projects in a
+monorepo share one checkout, so switching under one of them switches all of
+them.
+
+    git status <project> [--dirty]
+        Branch, and how far ahead/behind its upstream. --dirty also reports
+        whether the working tree has uncommitted changes, which costs a scan of
+        the checkout and is off by default.
+    git branches <project>
+        Local branches, current one marked.
+    git fetch <project>
+        Update the remote refs. Touches the working tree not at all.
+    git pull <project>
+        Fast-forward ONLY. If it will not fast-forward, git says so and nothing
+        moves — matisa will not merge on your behalf.
+    git checkout <project> <branch>
+        Switch. Fails, loudly and harmlessly, on a dirty tree.
+
+SETTINGS
+
+Global preferences, shared by every client. The desktop edits the same document
+— a change here shows up there without a reload, and the reverse.
+
+    settings get
+        The whole document. With --json, the exact shape the desktop reads.
+    settings set <key> <value>
+        One key at a time. Everything else is left alone.
+        Keys:
+          operationsInstructions        free text — see section 0
+          notifications.enabled         master switch
+          notifications.crashed         a project exited on its own
+          notifications.stateChanged    started / stopped / restarted
+          notifications.healthChanged   a running project stopped answering
+          notifications.osWhenUnfocused escalate to a system notification
+          hiddenProjects                comma-separated ids, hidden from the
+                                        desktop's fleet only — never from this
+                                        CLI, and never from what is running
+          hiddenGroups                  comma-separated group slugs
+
+    operations-instructions [--set <text>]
+        The same free text as the key above, on its own command because it is
+        the one thing you are asked to read before acting. See section 0.
+
 
 8. WHAT BLOCKS
 ──────────────

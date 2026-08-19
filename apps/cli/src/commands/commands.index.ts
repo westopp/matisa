@@ -1,6 +1,8 @@
 // Barrel of every command group, assembled by cli.command.ts.
 export { guide } from "./commands.guide.js"
 export { operations } from "./commands.operations.js"
+export { settings } from "./commands.settings.js"
+export { git } from "./commands.git.js"
 export { project } from "./commands.project.js"
 export { env } from "./commands.env.js"
 export { importConfig } from "./commands.import.js"
