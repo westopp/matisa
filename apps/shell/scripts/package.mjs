@@ -279,14 +279,17 @@ if (identity === null) {
 
 console.log("\npackaged → apps/shell/release/")
 
-// The `generic` provider is download-only: electron-builder writes
-// latest-mac.yml next to the artifacts but has no credentials and no way to
-// upload them. Releasing is therefore a deliberate second step — which is the
-// right shape, since it means building a release candidate never publishes one.
-// All three files go up together; a latest-mac.yml pointing at a zip that is not
-// there yet turns every running copy's update check into a failed download.
-if (identity !== null && feedUrl !== undefined) {
+// Built, not released. electron-builder wrote latest-mac.yml next to the
+// artifacts and was told not to upload any of it, so this is a candidate until
+// someone decides otherwise — which is the right shape, since it means building
+// a release candidate never publishes one.
+//
+// The second step uploads all of them together. A latest-mac.yml that arrived
+// before the zip it names would turn every running copy's update check into a
+// failed download for as long as the gap lasted.
+if (identity !== null) {
   console.log(
-    `\nto release: upload release/*.dmg, release/*.zip and release/latest-mac.yml to ${feedUrl}`
+    `\nto release: pnpm --filter @matisa/website publish-build` +
+      `\n            → uploads the dmg, zip, blockmaps and latest-mac.yml to ${RELEASES_OWNER}/${RELEASES_REPO}`
   )
 }

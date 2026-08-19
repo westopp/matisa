@@ -15,7 +15,7 @@
 // CommonJS because electron-builder require()s this file, and apps/shell has no
 // "type": "module" (the .mjs build scripts opt in explicitly).
 const { chmodSync, cpSync, existsSync, globSync } = require("node:fs")
-const { join } = require("node:path")
+const { join, sep } = require("node:path")
 
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== "darwin") return
@@ -29,7 +29,27 @@ exports.default = async function afterPack(context) {
 
   const appName = context.packager.appInfo.productFilename
   const resources = join(context.appOutDir, `${appName}.app`, "Contents", "Resources")
-  cpSync(vendorModules, join(resources, "engine", "node_modules"), { recursive: true })
+
+  // Two options that are not decoration — a signed build fails without either.
+  //
+  // verbatimSymlinks: cpSync's DEFAULT is to rewrite a relative symlink so it
+  // still resolves from the destination, which it does by making it absolute.
+  // Applied here that turns node_modules/.bin/semver -> ../semver/bin/semver.js
+  // into a link pointing at this machine's build directory, and `codesign
+  // --verify --deep --strict` rejects the bundle outright: "invalid destination
+  // for symbolic link in bundle". Copy the links as they are and they keep
+  // resolving inside the app, where their targets actually are.
+  //
+  // filter: and then do not copy .bin at all. Those are npm's CLI shims for
+  // build-time tools (prebuild-install, rc, semver) — nothing inside a packaged
+  // app ever executes them, they exist only because `npm install` writes them.
+  // Excluding the directory removes the whole class of problem rather than
+  // relying on the option above to keep handling it.
+  cpSync(vendorModules, join(resources, "engine", "node_modules"), {
+    recursive: true,
+    verbatimSymlinks: true,
+    filter: (src) => !src.includes(`${sep}node_modules${sep}.bin`)
+  })
 
   // Tarball extraction is known to drop the exec bit; node-pty cannot fork a
   // PTY without it, and re-applying here is cheap insurance for a failure that
