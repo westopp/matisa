@@ -35,6 +35,12 @@ export default defineConfig({
   },
   server: {
     port: 6110,
-    strictPort: true
+    strictPort: true,
+    // 127.0.0.1 explicitly, not the `localhost` default: on a machine where
+    // localhost resolves to ::1 first, Vite binds [::1] ONLY — and matisa's
+    // Caddy proxies its stable URL to 127.0.0.1, so http://matisa.localhost
+    // answers 502 while http://localhost:6110 works. Browsers and Electron try
+    // both families, so nothing else here notices the difference.
+    host: "127.0.0.1"
   }
 })

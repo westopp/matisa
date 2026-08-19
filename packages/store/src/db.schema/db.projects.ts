@@ -18,6 +18,9 @@ export const projects = sqliteTable("projects", {
   activeContextId: text("active_context_id"),
   /** Absolute path to the project's icon; the engine inlines it for clients. */
   pathToIcon: text("path_to_icon"),
+  // 0007: opt out of the Caddy hostname. 1 = exposed, which is the default and
+  // what every project written before the flag is.
+  stableUrl: integer("stable_url").notNull().default(1),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull()
 })

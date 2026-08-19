@@ -25,6 +25,7 @@ interface ProjectRowRaw {
   readonly group_slug: string | null
   readonly active_context_id: string | null
   readonly path_to_icon: string | null
+  readonly stable_url: number
   readonly created_at: number
   readonly updated_at: number
 }
@@ -61,6 +62,9 @@ const buildProject = (row: ProjectRowRaw, ports: ReadonlyArray<PortRowRaw>): Pro
   ports: ports.map(toPort),
   activeContextId: row.active_context_id ? ContextId.make(row.active_context_id) : undefined,
   pathToIcon: row.path_to_icon ?? undefined,
+  // A row written before 0007 has no column at all in an in-memory fixture;
+  // absent reads as exposed, which is what every project was before the flag.
+  stableUrl: row.stable_url === undefined ? true : row.stable_url !== 0,
   createdAt: row.created_at,
   updatedAt: row.updated_at
 })
@@ -170,7 +174,7 @@ export const ProjectsRepoLive = Layer.effect(
         const now = Date.now()
         yield* transaction((s) => {
           s.prepare(
-            "INSERT INTO projects (id, name, root, kind, command_json, image, compose_file, group_slug, active_context_id, path_to_icon, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+            "INSERT INTO projects (id, name, root, kind, command_json, image, compose_file, group_slug, active_context_id, path_to_icon, stable_url, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
           ).run(
             id,
             input.name,
@@ -182,6 +186,7 @@ export const ProjectsRepoLive = Layer.effect(
             input.groupSlug ?? null,
             null,
             input.pathToIcon ?? null,
+            (input.stableUrl ?? true) ? 1 : 0,
             now,
             now
           )
@@ -210,6 +215,7 @@ export const ProjectsRepoLive = Layer.effect(
           ports: input.ports,
           activeContextId: undefined,
           pathToIcon: input.pathToIcon,
+          stableUrl: input.stableUrl ?? true,
           createdAt: now,
           updatedAt: now
         } satisfies Project
@@ -242,10 +248,11 @@ export const ProjectsRepoLive = Layer.effect(
           patch.groupSlug === undefined ? (existing.groupSlug ?? null) : patch.groupSlug
         const pathToIcon =
           patch.pathToIcon === undefined ? (existing.pathToIcon ?? null) : patch.pathToIcon
+        const stableUrl = patch.stableUrl === undefined ? existing.stableUrl !== false : patch.stableUrl
         const now = Date.now()
         yield* transaction((s) => {
           s.prepare(
-            "UPDATE projects SET name=?, root=?, command_json=?, image=?, compose_file=?, group_slug=?, path_to_icon=?, updated_at=? WHERE id=?"
+            "UPDATE projects SET name=?, root=?, command_json=?, image=?, compose_file=?, group_slug=?, path_to_icon=?, stable_url=?, updated_at=? WHERE id=?"
           ).run(
             name,
             root,
@@ -254,6 +261,7 @@ export const ProjectsRepoLive = Layer.effect(
             composeFile ?? null,
             groupSlug,
             pathToIcon,
+            stableUrl ? 1 : 0,
             now,
             id
           )

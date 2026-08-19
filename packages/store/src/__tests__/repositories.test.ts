@@ -550,3 +550,43 @@ describe("SettingsRepo — the global key→JSON bag", () => {
     assert.equal(v, undefined)
   })
 })
+
+describe("ProjectsRepo — declining the Caddy hostname (0007)", () => {
+  it("defaults to exposed, because every project written before the flag was", async () => {
+    const p = await runtime(
+      Effect.gen(function* () {
+        return yield* (yield* ProjectsRepo).create(newProject("exposed-by-default", 5991))
+      })
+    )
+    assert.equal(p.stableUrl, true)
+  })
+
+  it("keeps the opt-out through a create and a read back", async () => {
+    const repo = await runtime(
+      Effect.gen(function* () {
+        const r = yield* ProjectsRepo
+        const created = yield* r.create({ ...newProject("private-worker", 5992), stableUrl: false })
+        const read = yield* r.get(created.id)
+        return { created, read }
+      })
+    )
+    assert.equal(repo.created.stableUrl, false)
+    assert.equal(repo.read.stableUrl, false)
+  })
+
+  // The patch is the switch both clients throw — the desktop control and
+  // `matisa exposure off` write this same field.
+  it("toggles both ways through update, and leaves it alone when the patch omits it", async () => {
+    const states = await runtime(
+      Effect.gen(function* () {
+        const r = yield* ProjectsRepo
+        const p = yield* r.create(newProject("toggles", 5993))
+        const off = yield* r.update(p.id, { stableUrl: false })
+        const untouched = yield* r.update(p.id, { name: "toggles-renamed" })
+        const on = yield* r.update(p.id, { stableUrl: true })
+        return { off: off.stableUrl, untouched: untouched.stableUrl, on: on.stableUrl }
+      })
+    )
+    assert.deepEqual(states, { off: false, untouched: false, on: true })
+  })
+})

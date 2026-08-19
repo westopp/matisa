@@ -168,10 +168,17 @@ happens to the data, not the renderer, so no flag gets around it. 'env reveal'
 is the single exception, which is the point: it is named after what it does and
 its presence in shell history is a record that the secret was asked for.
 
-EXPOSURE — a project that declares a port gets a stable URL for free: a hostname
-routed to it through Caddy on loopback, derived by the engine the moment the
-port exists. No command creates it. The one opt-in bit on top is LAN sharing,
-which adds an mDNS hostname and a dedicated same-network listener.
+EXPOSURE — a project that declares a port gets a stable URL by default: a
+hostname routed to it through Caddy on loopback, derived by the engine the
+moment the port exists. No command creates it.
+
+Two switches sit on top, and they are independent:
+  stable URL   on by default; 'exposure off' declines the hostname entirely.
+               The project's own http://localhost:<port> is unaffected — this
+               only skips the Caddy route.
+  LAN sharing  off by default; 'exposure share' adds an mDNS hostname and a
+               dedicated same-network listener.
+A project can have either, both or neither.
 
 DO NOT CONSTRUCT THESE URLS — read them. The port Caddy serves on is probed at
 boot and stepped up if something already holds the preferred one, and the mDNS
@@ -407,6 +414,14 @@ EXPOSURE
         With no project: every exposed project plus Caddy's own status. With
         one: just that project's addresses. An unexposed project renders empty
         rather than erroring — declare a port first.
+    exposure off <project>
+        Stop publishing this project through Caddy. The hostname stops
+        resolving and the entry disappears from 'exposure list'; nothing about
+        the project's own http://localhost:<port> changes, and LAN sharing is
+        untouched. Same switch as 'project update --no-stable-url' and the
+        desktop's Stable URL control.
+    exposure on <project>
+        Give the hostname back.
     exposure share <project>
         Turn on LAN sharing: rebind Caddy to 0.0.0.0, publish the mDNS name,
         allocate a dedicated LAN listener. Prints the project's full address

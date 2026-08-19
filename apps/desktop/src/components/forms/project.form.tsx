@@ -162,6 +162,17 @@ const ProjectDialog = ({
             description: "PNG, SVG, JPEG or WebP. Shown instead of the generic kind glyph."
           }
         },
+        // Decided here, not corrected afterwards: a project created with a URL
+        // and switched off a second later has already been published under it.
+        stableUrl: {
+          type: "switch",
+          defaultValue: existing?.stableUrl !== false,
+          metadata: {
+            label: "Stable URL",
+            description:
+              "Publish this project at http://<name>.localhost through Caddy. Its own http://localhost:<port> works either way, and sharing on the network is a separate switch."
+          }
+        },
         groupSlug: {
           type: "select",
           defaultValue: existing?.groupSlug ?? "",
@@ -279,7 +290,8 @@ const ProjectDialog = ({
           ...(kind === "docker" ? { image: String(values["image"] ?? "").trim() } : {}),
           ...(kind === "compose" ? { composeFile: String(values["composeFile"] ?? "").trim() } : {}),
           groupSlug: groupSlug === "" ? null : GroupSlug.make(groupSlug),
-          pathToIcon: pathToIcon === "" ? null : pathToIcon
+          pathToIcon: pathToIcon === "" ? null : pathToIcon,
+          stableUrl: values["stableUrl"] !== false
         } as ProjectPatch
 
         if (await updateProject(existing.id, patch)) onClose()
@@ -295,7 +307,8 @@ const ProjectDialog = ({
         ...(kind === "docker" ? { image: String(values["image"] ?? "").trim() } : {}),
         ...(kind === "compose" ? { composeFile: String(values["composeFile"] ?? "").trim() } : {}),
         ...(groupSlug === "" ? {} : { groupSlug: GroupSlug.make(groupSlug) }),
-        ...(pathToIcon === "" ? {} : { pathToIcon })
+        ...(pathToIcon === "" ? {} : { pathToIcon }),
+        ...(values["stableUrl"] === false ? { stableUrl: false } : {})
       } as NewProject
 
       if (await addProject(payload)) onClose()

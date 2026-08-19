@@ -73,9 +73,15 @@ const add = Command.make(
     compose: Options.optional(Options.text("compose")),
     group: Options.optional(Options.text("group")),
     icon: Options.optional(Options.text("icon")),
+    noStableUrl: Options.boolean("no-stable-url").pipe(
+      Options.withDefault(false),
+      Options.withDescription(
+    "Do not give this project a http://<name>.localhost:<caddy-port> hostname. Its own http://localhost:<port> is unaffected — this only skips the Caddy route. LAN sharing is a separate switch."
+  )
+    ),
     port: portOption("port")
   },
-  ({ cmd, compose, dir, group, icon, image, name, port }) =>
+  ({ cmd, compose, dir, group, icon, image, name, noStableUrl, port }) =>
     Effect.gen(function* () {
       yield* applyGlobals
       const render = yield* Renderer
@@ -89,6 +95,9 @@ const add = Command.make(
         ...(Option.isSome(compose) ? { composeFile: compose.value } : {}),
         ...(Option.isSome(group) ? { groupSlug: GroupSlug.make(group.value) } : {}),
         ...(Option.isSome(icon) ? { pathToIcon: icon.value } : {}),
+        // Decided here rather than switched off afterwards: a project created
+        // exposed and corrected a second later has already been published.
+        ...(noStableUrl ? { stableUrl: false } : {}),
         ports: toPorts(port)
       } as NewProject
       const created = yield* call("catalog.add", input)
@@ -117,9 +126,21 @@ const update = Command.make(
     group: Options.optional(Options.text("group")),
     icon: Options.optional(Options.text("icon")),
     port: portOption("port"),
-    noPorts: Options.boolean("no-ports").pipe(Options.withDefault(false))
+    noPorts: Options.boolean("no-ports").pipe(Options.withDefault(false)),
+    // A pair rather than one flag: a patch has to be able to say "turn it back
+    // on" as well as "turn it off", and omitting both must leave it alone.
+    stableUrl: Options.boolean("stable-url").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Give this project its Caddy hostname back")
+    ),
+    noStableUrl: Options.boolean("no-stable-url").pipe(
+      Options.withDefault(false),
+      Options.withDescription(
+        "Stop publishing this project at http://<name>.localhost:<caddy-port>. Its own http://localhost:<port> is unaffected."
+      )
+    )
   },
-  ({ cmd, compose, dir, group, icon, id, image, name, noPorts, port }) =>
+  ({ cmd, compose, dir, group, icon, id, image, name, noPorts, noStableUrl, port, stableUrl }) =>
     Effect.gen(function* () {
       yield* applyGlobals
       const render = yield* Renderer
@@ -143,7 +164,10 @@ const update = Command.make(
         // moved off a port kept claiming it — and the claim is global, so it
         // also kept every OTHER project off it. `--no-ports` is the empty list
         // said out loud.
-        ...(noPorts ? { ports: [] } : port.length > 0 ? { ports: toPorts(port) } : {})
+        ...(noPorts ? { ports: [] } : port.length > 0 ? { ports: toPorts(port) } : {}),
+        // --no-stable-url wins if both are passed: the flag that takes an
+        // exposure AWAY is the safer reading of a contradictory instruction.
+        ...(noStableUrl ? { stableUrl: false } : stableUrl ? { stableUrl: true } : {})
       }
       const updated = yield* call("catalog.update", {
         id: yield* resolveProject(id),

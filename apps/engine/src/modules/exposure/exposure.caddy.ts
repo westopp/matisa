@@ -50,6 +50,10 @@ export interface RouteSpec {
   /** LAN share enabled → hostname on the mDNS domain joins the matcher and a
    * dedicated 0.0.0.0 listener is emitted on `lanPort`. */
   readonly lan?: { readonly lanPort: number }
+  /** The project declined its loopback hostname (0007). It keeps its LAN
+   * listener if it has one — the two are separate switches — so this omits the
+   * route from the SHARED server only, rather than dropping the spec. */
+  readonly stableUrl?: boolean
 }
 
 export interface DesiredConfigOpts {
@@ -109,7 +113,7 @@ export const desiredConfig = (
       listen: [`127.0.0.1:${opts.httpPort}`, `[::1]:${opts.httpPort}`],
       automatic_https: { disable: true },
       routes: [
-        ...specs.map(routeFor),
+        ...specs.filter((s) => s.stableUrl !== false).map(routeFor),
         // Unmatched hostnames (stale URL after a rename, a typo) get an
         // explicit 404 instead of Caddy's default empty 200.
         {

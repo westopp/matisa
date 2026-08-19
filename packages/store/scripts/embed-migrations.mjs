@@ -25,7 +25,10 @@ const LEDGER = [
   { version: "0005_events_unscoped", file: "0005_events_unscoped.sql" },
   // Environments stop being global: every context names its project, every
   // project owns its own `base`, and the always-injected global layer is gone.
-  { version: "0006_env_project_scoped", file: "0006_env_project_scoped.sql" }
+  { version: "0006_env_project_scoped", file: "0006_env_project_scoped.sql" },
+  // A project can decline its Caddy hostname; the flag lives on the project
+  // rather than on the exposure row the reconciler rewrites.
+  { version: "0007_project_stable_url", file: "0007_project_stable_url.sql" }
 ]
 
 const entries = LEDGER.map(({ version, file }) => {

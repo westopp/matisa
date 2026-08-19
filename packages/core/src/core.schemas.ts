@@ -228,6 +228,15 @@ export const Project = Schema.Struct({
    *  glyph. A path, not the bytes: the engine reads it on demand (fs.readIcon)
    *  so an icon the user swaps on disk is picked up without a re-add. */
   pathToIcon: Schema.optional(Schema.String),
+  /** Whether this project gets a stable Caddy hostname
+   *  (http://<slug>.localhost:<caddy-port>). Its own http://localhost:<port> is
+   *  unaffected either way, and LAN sharing is a separate switch.
+   *
+   *  Defaults to true: every project that existed before this flag had one, and
+   *  taking URLs away on upgrade would break bookmarks and anything proxying
+   *  through them. It is an opt-OUT, for the project that should not be
+   *  published at all. */
+  stableUrl: Schema.optionalWith(Schema.Boolean, { default: () => true }),
   createdAt: Schema.Number,
   updatedAt: Schema.Number
 }).pipe(Schema.filter(kindFieldsValid, { message: () => kindMessage }))
@@ -245,6 +254,7 @@ const projectFields = {
   activeContextId: Schema.optional(ContextId),
   groupSlug: Schema.optional(GroupSlug),
   pathToIcon: Schema.optional(Schema.String),
+  stableUrl: Schema.optionalWith(Schema.Boolean, { default: () => true }),
   createdAt: Schema.Number,
   updatedAt: Schema.Number
 }
@@ -268,7 +278,12 @@ export const NewProject = Schema.Struct({
   composeFile: Schema.optional(Schema.String),
   ports: Schema.optionalWith(Schema.Array(Port), { default: () => [] }),
   groupSlug: Schema.optional(GroupSlug),
-  pathToIcon: Schema.optional(Schema.String)
+  pathToIcon: Schema.optional(Schema.String),
+  /** Decided at creation, so a project never flashes a URL it was not meant to
+   *  have. Omitted means the default: exposed — left genuinely optional rather
+   *  than defaulted here so a caller building a NewProject is not made to state
+   *  a preference it does not have. */
+  stableUrl: Schema.optional(Schema.Boolean)
 }).pipe(Schema.filter(kindFieldsValid, { message: () => kindMessage }))
 export type NewProject = typeof NewProject.Type
 
@@ -282,7 +297,8 @@ export const ProjectPatch = Schema.Struct({
   composeFile: Schema.optional(Schema.String),
   ports: Schema.optional(Schema.Array(Port)),
   groupSlug: Schema.optional(Schema.NullOr(GroupSlug)),
-  pathToIcon: Schema.optional(Schema.NullOr(Schema.String))
+  pathToIcon: Schema.optional(Schema.NullOr(Schema.String)),
+  stableUrl: Schema.optional(Schema.Boolean)
 })
 export type ProjectPatch = typeof ProjectPatch.Type
 

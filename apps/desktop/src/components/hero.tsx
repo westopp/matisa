@@ -228,6 +228,10 @@ export const ProjectHero = ({ project, onEdit }: { project: ProjectWithState; on
   const entries = useEngine((s) => s.exposures[project.id])
   const caddy = useEngine((s) => s.caddy)
   const setLanShare = useEngine((s) => s.setLanShare)
+  const updateProject = useEngine((s) => s.updateProject)
+  // The project's own answer, not a row in the snapshot: an opted-out project
+  // reports no stable_url entry at all, so the switch has to read the flag.
+  const stableUrl = project.stableUrl !== false
   const [copied, setCopied] = useState(false)
 
   const { busy, running, warmingUp } = useLifecycleState(project)
@@ -330,6 +334,24 @@ export const ProjectHero = ({ project, onEdit }: { project: ProjectWithState; on
             onClick={() => void setLanShare(project.id, !lanShared)}
           >
             <Icons.Broadcast size={15} />
+          </button>
+          {/* Beside LAN sharing, because they are the two exposures and reading
+              them together is how you tell what this project publishes. The
+              glyph is the eye rather than a globe: what it governs is whether
+              the project is VISIBLE at a hostname, not whether it is running. */}
+          <button
+            className={`ico-btn ${stableUrl ? "active" : ""}`}
+            title={
+              port === undefined
+                ? "Declare a port to get a stable URL"
+                : stableUrl
+                  ? `Stable URL on — http://<name>.localhost. Click to stop publishing through Caddy; localhost:${port} is unaffected`
+                  : `Stable URL off — only http://localhost:${port} reaches this project`
+            }
+            disabled={port === undefined || busy}
+            onClick={() => void updateProject(project.id, { stableUrl: !stableUrl })}
+          >
+            {stableUrl ? <Icons.Eye size={15} /> : <Icons.EyeOff size={15} />}
           </button>
           <button
             className="ico-btn"

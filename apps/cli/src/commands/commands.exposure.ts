@@ -5,10 +5,15 @@ import { Renderer } from "../render/render.index.js"
 import { applyGlobals } from "../cli.globals.js"
 import { resolveOptional, resolveProject } from "../cli.resolve.js"
 
-// exposure list|share|unshare — the reverse-proxy surface. Stable URLs are
-// derived engine-side the moment a project declares a port (no command needed
-// to create them); these commands only READ the resolved addresses and toggle
-// the one opt-in bit, LAN sharing. Mirrors the desktop hero, headless.
+// exposure list|share|unshare|on|off — the reverse-proxy surface.
+//
+// A stable URL is derived engine-side the moment a project declares a port, so
+// there is nothing to create; `on`/`off` set the project's own opt-out flag and
+// the reconciler does the rest. `share`/`unshare` are the separate LAN switch.
+//
+// Two switches rather than one on purpose: the loopback hostname and the LAN
+// listener are different exposures with different reasons to be off, and a
+// project can legitimately want one without the other. Mirrors the desktop.
 
 // —— list ——
 //
@@ -50,6 +55,49 @@ const setLan = (name: "share" | "unshare", enabled: boolean) =>
     })
   )
 
+// —— on | off ——
+//
+// The project-level switch. Writes `stableUrl` through catalog.update, which
+// makes the exposure module reconcile: the row and the Caddy route go, and the
+// snapshot stops reporting an address that no longer resolves. The project's
+// own http://localhost:<port> is untouched — this declines the HOSTNAME, not
+// the port.
+const setStable = (name: "on" | "off", stableUrl: boolean) =>
+  Command.make(name, { id: Args.text({ name: "id" }) }, ({ id }) =>
+    Effect.gen(function* () {
+      yield* applyGlobals
+      const render = yield* Renderer
+      const projectId = yield* resolveProject(id)
+      yield* call("catalog.update", { id: projectId, patch: { stableUrl } })
+      const snap = yield* call("exposure.snapshot", undefined)
+      const found = snap.projects.find((p) => p.projectId === projectId)
+
+      // Turning it OFF has no entries to print, and the generic empty line
+      // ("declare a port first") would be a lie: the port is there, the
+      // hostname is what was declined. Say which of the two happened.
+      if (!stableUrl) {
+        yield* render.raw(
+          { projectId, stableUrl: false, entries: found?.entries ?? [] },
+          "stable URL off — this project is no longer published through Caddy"
+        )
+        return
+      }
+      yield* render.exposureEntries(projectId, found?.entries ?? [])
+    })
+  ).pipe(
+    Command.withDescription(
+      stableUrl
+        ? "Give this project its http://<name>.localhost:<caddy-port> hostname back"
+        : "Stop publishing this project through Caddy — its own localhost:<port> is unaffected"
+    )
+  )
+
 export const exposure = Command.make("exposure").pipe(
-  Command.withSubcommands([list, setLan("share", true), setLan("unshare", false)])
+  Command.withSubcommands([
+    list,
+    setLan("share", true),
+    setLan("unshare", false),
+    setStable("on", true),
+    setStable("off", false)
+  ])
 )

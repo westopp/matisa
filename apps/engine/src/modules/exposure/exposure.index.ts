@@ -37,6 +37,11 @@ import { makeMdnsPublisher } from "./exposure.mdns.js"
 //
 // Derivation rules:
 //   port declared            → `stable_url` row + http://<slug>.localhost:<p>
+//   project.stableUrl false  → no row, no route on the shared server. The
+//                              project's own localhost:<port> is untouched —
+//                              this only declines the hostname — and LAN stays
+//                              its own switch, so a project can be reachable on
+//                              the network without a loopback hostname.
 //   LAN share toggled on     → `lan` row: <slug>.<domain> via mDNS plus a
 //                              dedicated 0.0.0.0 listener on an allocated port.
 //                              The shared loopback listener is NOT touched —
@@ -160,6 +165,7 @@ const make = Effect.gen(function* () {
         projectId: p.id,
         slug: slugify(p.name),
         upstreamPort: port,
+        ...(p.stableUrl === false ? { stableUrl: false } : {}),
         ...(typeof lanPort === "number" ? { lan: { lanPort } } : {})
       })
     }
@@ -229,15 +235,22 @@ const make = Effect.gen(function* () {
         ? undefined
         : (child?.ownershipFault() ?? "caddy not running")
 
-    const entries: Array<ExposureEntry> = [
-      {
-        kind: "stable_url",
-        url: `http://${slug}.localhost:${httpPort}`,
-        enabled: true,
-        state: caddyState,
-        ...(caddyMessage !== undefined ? { message: caddyMessage } : {})
-      }
-    ]
+    // No row, no entry: a project that declined the hostname reports nothing
+    // where the URL would be, rather than an entry saying it is switched off —
+    // the switch itself lives on the project, and the snapshot is a list of
+    // addresses that exist.
+    const entries: Array<ExposureEntry> =
+      project.stableUrl === false
+        ? []
+        : [
+            {
+              kind: "stable_url",
+              url: `http://${slug}.localhost:${httpPort}`,
+              enabled: true,
+              state: caddyState,
+              ...(caddyMessage !== undefined ? { message: caddyMessage } : {})
+            }
+          ]
 
     const lanRow = rows.find((r) => r.projectId === project.id && r.kind === "lan" && r.enabled)
     if (lanRow) {
@@ -306,14 +319,28 @@ const make = Effect.gen(function* () {
       }
 
       const slug = slugify(project.value.name)
-      yield* exposures
-        .upsert({
-          projectId,
-          kind: "stable_url",
-          enabled: true,
-          hostname: `${slug}.localhost`
-        })
-        .pipe(Effect.ignore)
+
+      // The project's own answer, not the reconciler's assumption. A project
+      // that declined its hostname loses the ROW as well as the route: a
+      // disabled row left behind would still be reported in the snapshot, and a
+      // client drawing "stable_url, off" beside a project that opted out is
+      // offering a switch the user already threw.
+      //
+      // LAN is untouched here. It is a separate switch over a separate row, and
+      // a project can legitimately want to be reachable on the network without
+      // a loopback hostname.
+      if (project.value.stableUrl === false) {
+        yield* exposures.removeKind(projectId, "stable_url").pipe(Effect.ignore)
+      } else {
+        yield* exposures
+          .upsert({
+            projectId,
+            kind: "stable_url",
+            enabled: true,
+            hostname: `${slug}.localhost`
+          })
+          .pipe(Effect.ignore)
+      }
 
       // A rename moves the hostname: refresh the lan row + advert if present.
       const rows = yield* exposures.forProject(projectId).pipe(Effect.orElseSucceed(() => []))

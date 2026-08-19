@@ -1,0 +1,22 @@
+-- 0007_project_stable_url — a project can decline its Caddy hostname.
+--
+-- Until now `stable_url` was derived, not chosen: the exposure module upserted
+-- an enabled row for every project with a declared port, on every catalog
+-- change, unconditionally. The only per-project switch was LAN sharing, which
+-- governs a different row — so a project could be kept off the network and
+-- still be published at http://<slug>.localhost:<caddy-port> with no way to say
+-- otherwise.
+--
+-- The intent belongs on the PROJECT, not on the exposure row. Exposure rows are
+-- a projection the reconciler owns and rewrites freely; a preference stored
+-- there is one the next catalog change would overwrite, and it would not
+-- survive the project's port being removed and re-added.
+--
+-- Defaults to 1, so every project that exists today keeps the URL it has. This
+-- is an opt-OUT: taking stable URLs away from an installation on upgrade would
+-- be a silent breaking change to every bookmark and every proxied hostname.
+--
+-- Named for what the user chooses (a stable URL), not for what currently
+-- implements it (Caddy) — the provider is replaceable, the concept is not.
+
+ALTER TABLE projects ADD COLUMN stable_url INTEGER NOT NULL DEFAULT 1;
