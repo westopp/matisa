@@ -522,6 +522,13 @@ button {
   background: var(--warning-tint);
   color: var(--warning);
 }
+/* The update strip. Nothing is wrong, so it does not wear an alarm colour —
+   but it is the one notice that persists until acted on, and it has to stay
+   legible as furniture rather than shout for the days it may sit there. */
+.banner.info {
+  background: var(--info-tint);
+  color: var(--info);
+}
 .banner-ico {
   display: flex;
   flex-shrink: 0;

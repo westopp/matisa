@@ -34,6 +34,7 @@ import {
   type SettingsPatch
 } from "@matisa/core"
 import { engineUrl, rpc, RpcError } from "~/rpc/rpc.client"
+import { startEngine } from "~/lib/native"
 import { raise, type Notifiable } from "~/lib/notify"
 import { useLogs } from "~/store/store.logs"
 import { isSystemId, SYSTEM_IDS } from "~/store/store.systems"
@@ -94,6 +95,11 @@ const MAX_FAILURES = 50
  *  window is in SEQ, and log lines share that space — hence a window much wider
  *  than the number of entries it will actually yield. */
 const ACTIVITY_BACKFILL = 400
+
+/** How long to wait for a shutting-down engine to actually let go of the socket.
+ *  Generous because teardown signals every supervised child and waits on them —
+ *  a fleet of processes takes longer to stop than an idle daemon. */
+const ENGINE_STOP_TIMEOUT_MS = 10_000
 
 /** Seq numbers for entries this client mints itself — a Docker daemon that
  *  refused to start, a socket that dropped. The engine's own seqs count up from
@@ -407,6 +413,12 @@ interface EngineState {
   /** Ask the engine to shut itself down. Nothing in this client can start it
    *  again — that lives in the desktop shell — so callers must confirm first. */
   shutdownEngine: () => Promise<void>
+  /** Stop the running daemon and start one from THIS bundle. The recovery for a
+   *  version mismatch, which is what an app update leaves behind — the engine
+   *  outlives the app on purpose, so a new build finds the old daemon still
+   *  listening and cannot tell by the port alone. Resolves false if the old one
+   *  would not go, in which case nothing was started. */
+  restartEngine: () => Promise<boolean>
   addProject: (project: NewProject) => Promise<boolean>
   updateProject: (projectId: ProjectId, patch: ProjectPatch) => Promise<boolean>
   removeProject: (projectId: ProjectId) => Promise<boolean>
@@ -873,6 +885,52 @@ export const useEngine = create<EngineState>()((set, get) => ({
     } catch (cause) {
       reportError(cause, "could not shut down the engine")
     }
+  },
+
+  // Stop, wait for it to really be gone, start. The waiting is the part that
+  // matters: the shell's ensureEngine returns true for any port that accepts,
+  // so asking for a new engine while the old one is still winding down hands
+  // back the same old one and the mismatch this exists to fix survives it.
+  // The socket closing is the signal — the daemon is not our child and there is
+  // no exit code to await.
+  restartEngine: async () => {
+    try {
+      await rpc.call("engine.shutdown", undefined)
+    } catch (cause) {
+      reportError(cause, "could not shut down the engine")
+      return false
+    }
+
+    const gone = await new Promise<boolean>((resolve) => {
+      const deadline = Date.now() + ENGINE_STOP_TIMEOUT_MS
+      const tick = setInterval(() => {
+        if (get().status !== "open") {
+          clearInterval(tick)
+          resolve(true)
+        } else if (Date.now() > deadline) {
+          clearInterval(tick)
+          resolve(false)
+        }
+      }, 200)
+    })
+
+    if (!gone) {
+      toast.error("The engine did not stop", {
+        description: "Nothing was restarted. Try again, or stop it from a terminal."
+      })
+      return false
+    }
+
+    // Outside the shell there is no daemon to spawn — the socket is simply
+    // closed now, and the banner's own reconnect offer takes it from here.
+    const started = await startEngine()
+    if (started === null) return false
+    if (!started) {
+      toast.error("The engine did not come back", { description: "See the engine log for why." })
+      return false
+    }
+    rpc.reconnectNow()
+    return true
   },
 
   addProject: async (project) => {

@@ -78,6 +78,26 @@ export const ensureEngine = async (): Promise<boolean> => {
   return false
 }
 
+/** True once nothing is listening on the bridge — i.e. the daemon is really
+ *  gone, not merely asked to go.
+ *
+ *  Applying an update needs this. The daemon deliberately outlives the app, so
+ *  a bundle swapped underneath a still-running engine leaves the NEW window
+ *  talking to the OLD build's daemon — with the old handlers, the old schema
+ *  expectations, and no way to notice. The renderer asks the engine to stop
+ *  (it owns the protocol); this is the shell confirming that it did, before the
+ *  bundle is replaced. Timing out is a refusal to update, not a warning: an
+ *  update applied over a live daemon is the exact failure this exists to
+ *  prevent. */
+export const waitForEngineStop = async (timeoutMs = 10_000): Promise<boolean> => {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (!(await portAccepts(WS_PORT))) return true
+    await sleep(250)
+  }
+  return !(await portAccepts(WS_PORT))
+}
+
 // Referenced so a future "engine log" menu item knows where to look.
 export const engineLogPath = (): string => join(matisaRoot(), "engine.log")
 export const engineDir = (): string => dirname(engineEntry())

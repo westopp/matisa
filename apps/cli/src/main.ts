@@ -14,9 +14,12 @@ import { exitCodeFor } from "./cli.exit.js"
 // cli.exit. The only file that touches process.argv / process.exit.
 // ────────────────────────────────────────────────────────────────────────────
 
+// Baked in by esbuild's `define` from the product version, like the engine's —
+// `matisa --version` and `engine.status` have to be able to disagree out loud,
+// since the CLI resolves through the app bundle and the daemon may not have.
 const run = Command.run(cli, {
   name: "matisa",
-  version: "0.1.0"
+  version: process.env.MATISA_VERSION ?? "0.0.0-dev"
 })
 
 // One layer graph shared by every command handler. The socket (EngineClientLive)

@@ -1,6 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from "electron"
+import { autoUpdater } from "electron-updater"
+import { existsSync } from "node:fs"
 import { join } from "node:path"
-import { engineLogPath, ensureEngine } from "./engine.js"
+import { engineLogPath, ensureEngine, waitForEngineStop } from "./engine.js"
+import { cliLinkState, installCliLink } from "./cli-link.js"
 
 // ────────────────────────────────────────────────────────────────────────────
 // Electron main — a thin supervisor. It guarantees an engine is reachable,
@@ -101,6 +104,114 @@ ipcMain.handle("matisa:notify", (_e, payload: unknown) => {
   return true
 })
 
+// ────────────────────────────────────────────────────────────────────────────
+// Updates.
+//
+// electron-updater does the fetching; the interesting part is when the swap is
+// allowed to happen. The engine is a shared daemon that deliberately survives
+// this app quitting, so replacing the bundle on quit — autoInstallOnAppQuit,
+// the default — would leave the next launch's window talking to the previous
+// build's daemon, indefinitely. So: never install implicitly. The renderer
+// stops the engine, the shell confirms the port is closed, and only then does
+// the bundle get replaced.
+//
+// The user is asked because applying costs them something real: stopping the
+// engine stops everything it supervises. An update that silently killed a
+// running dev server would be worse than no update at all.
+// ────────────────────────────────────────────────────────────────────────────
+
+type UpdateState =
+  | { readonly phase: "idle" }
+  | { readonly phase: "downloading"; readonly version: string }
+  | { readonly phase: "ready"; readonly version: string }
+  | { readonly phase: "error"; readonly message: string }
+
+let updateState: UpdateState = { phase: "idle" }
+
+const setUpdateState = (next: UpdateState): void => {
+  updateState = next
+  win?.webContents.send("matisa:update-state", next)
+}
+
+// app-update.yml is written into the bundle only when a publish target was
+// configured at build time. A local build has no feed, and checking would throw
+// on every interval — absence is the signal that updates are not this build's
+// concern. Unpackaged (dev) is the same story.
+const updatesConfigured = (): boolean =>
+  app.isPackaged && existsSync(join(process.resourcesPath, "app-update.yml"))
+
+const CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000
+
+const initUpdates = (): void => {
+  if (!updatesConfigured()) return
+
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = false
+
+  autoUpdater.on("update-available", (info) => {
+    setUpdateState({ phase: "downloading", version: info.version })
+  })
+  autoUpdater.on("update-downloaded", (info) => {
+    setUpdateState({ phase: "ready", version: info.version })
+  })
+  // A failed check is not worth interrupting anyone over — the feed being
+  // briefly unreachable is ordinary. It is surfaced, quietly, because a tester
+  // whose updates have silently stopped arriving needs some way to find out.
+  autoUpdater.on("error", (err) => {
+    setUpdateState({ phase: "error", message: err.message })
+  })
+
+  void autoUpdater.checkForUpdates().catch(() => undefined)
+  setInterval(() => {
+    void autoUpdater.checkForUpdates().catch(() => undefined)
+  }, CHECK_INTERVAL_MS)
+}
+
+ipcMain.handle("matisa:update-state", () => updateState)
+
+// Applying. The renderer has already called engine.shutdown by the time this
+// runs — it speaks the protocol, this side does not — so all that is left is to
+// verify the daemon actually went, and refuse if it did not. Returning a reason
+// rather than throwing keeps the renderer's failure path a message, not a
+// stack trace.
+ipcMain.handle("matisa:apply-update", async () => {
+  if (updateState.phase !== "ready") {
+    return { ok: false, reason: "No update has finished downloading." }
+  }
+  if (!(await waitForEngineStop())) {
+    return {
+      ok: false,
+      reason:
+        "The engine is still running — the update was not applied. Stop it and try again, or quit and reopen Matisa."
+    }
+  }
+  // isForceRunAfter: the app is being relaunched into, not shut down. Without
+  // it a macOS update quits to nothing and the user has to find the icon again.
+  autoUpdater.quitAndInstall(false, true)
+  return { ok: true }
+})
+
+// Synchronous because it is read once, during preload, to build the bridge —
+// an async version would hand the renderer a promise for a constant.
+ipcMain.on("matisa:version", (e) => {
+  e.returnValue = app.getVersion()
+})
+
+// Whether `matisa` is on PATH, and putting it there. Read fresh on every call
+// rather than cached at launch: the window asks again when it regains focus, so
+// a user who ran the command in their own terminal sees the notice go away
+// without restarting the app.
+ipcMain.handle("matisa:cli-link", () => cliLinkState())
+// Takes no arguments — the link's source and destination are both this
+// module's, so there is nothing here a renderer could point somewhere else.
+ipcMain.handle("matisa:install-cli", () => installCliLink())
+
+// The engine log is the only artefact that explains a failure the UI could not.
+// Revealing beats opening: the user may want to send the file, not read it.
+ipcMain.handle("matisa:reveal-engine-log", () => {
+  shell.showItemInFolder(engineLogPath())
+})
+
 app.on("second-instance", () => {
   if (win !== null) {
     if (win.isMinimized()) win.restore()
@@ -119,6 +230,7 @@ app.whenReady().then(async () => {
     )
   }
   createWindow()
+  initUpdates()
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

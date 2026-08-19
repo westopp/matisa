@@ -8,6 +8,7 @@ import { Icons } from "~/components/icons"
 import { ConfirmDialog } from "~/components/forms/confirm"
 import { formatUptime, KillButton, Spinner, StatusFigure, useLatestFailure } from "~/components/primitives"
 import { engineUrl } from "~/rpc/rpc.client"
+import { appVersion, inShell, revealEngineLog } from "~/lib/native"
 
 // ────────────────────────────────────────────────────────────────────────────
 // The detail pane for a system — the engine this client talks to, and the
@@ -86,6 +87,16 @@ const EnginePane = () => {
           </div>
 
           <div className="hero-top-actions">
+            {/* The engine writes to a file because it outlives whoever started
+                it, so when it dies the reason is only ever there. Revealed
+                rather than opened: the common next step is sending it to
+                someone, not reading it here. Enabled while the engine is down —
+                that is exactly when it is worth looking at. */}
+            {inShell() && (
+              <button className="ico-btn" title="Reveal the engine log in Finder" onClick={revealEngineLog}>
+                <Icons.Logs size={15} />
+              </button>
+            )}
             <button className="ico-btn" title="Refresh the catalog" disabled={!up} onClick={() => void refreshCatalog()}>
               <Icons.Refresh size={15} />
             </button>
@@ -95,9 +106,14 @@ const EnginePane = () => {
         <div className="hero-url-row">
           <div className="sys-facts">
             <Fact label="socket" value={engineUrl()} />
+            {/* Both versions, side by side, because the interesting case is when
+                they differ — the engine outlives the app, so after an update the
+                daemon answering here may be the previous build's. The banner
+                raises it; this is where you check it. */}
+            {appVersion() !== null && <Fact label="app" value={appVersion() ?? ""} />}
             {engine !== null && (
               <>
-                <Fact label="version" value={engine.version} />
+                <Fact label="engine" value={engine.version} />
                 <Fact label="pid" value={String(engine.pid)} />
                 <Fact label="unix" value={engine.socketPath} />
                 <Fact label="db" value={engine.dbPath} />

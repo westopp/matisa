@@ -1,9 +1,20 @@
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate } from "@tanstack/react-router"
+import { toast } from "sonner"
 import { useEngine } from "~/store/store.engine"
 import { SYSTEM_IDS } from "~/store/store.systems"
 import { rpc } from "~/rpc/rpc.client"
-import { inShell, startEngine } from "~/lib/native"
+import {
+  appVersion,
+  applyUpdate,
+  cliLinkState,
+  inShell,
+  installCli,
+  startEngine,
+  subscribeUpdateState,
+  type CliLinkState,
+  type UpdateState
+} from "~/lib/native"
 import { Icons } from "./icons"
 import { Spinner } from "./primitives"
 
@@ -44,7 +55,11 @@ interface Action {
 
 interface Notice {
   readonly id: string
-  readonly tone: "danger" | "warning"
+  /** `info` is not a problem — it is the update strip. It stays because the
+   *  same rule as everything else here applies: derived from live state, so it
+   *  is on screen exactly as long as an update is waiting, and there is no
+   *  dismissal to remember or to get wrong. */
+  readonly tone: "danger" | "warning" | "info"
   readonly title: string
   readonly detail?: string
   readonly actions: ReadonlyArray<Action>
@@ -72,13 +87,43 @@ const useEngineDown = (): boolean => {
   return everOpen.current || graceOver
 }
 
+/** Whether `matisa` is on PATH, re-asked whenever the window comes back to the
+ *  front. That is the one moment the answer can have changed without this
+ *  window doing anything: the user went to a terminal and ran the command they
+ *  copied. `null` until the first answer arrives, so the strip does not appear
+ *  for a frame on every launch before the check has run. */
+const useCliLink = (): readonly [CliLinkState | null, () => void] => {
+  const [state, setState] = useState<CliLinkState | null>(null)
+  const check = useCallback(() => void cliLinkState().then(setState), [])
+  useEffect(() => {
+    check()
+    window.addEventListener("focus", check)
+    return () => window.removeEventListener("focus", check)
+  }, [check])
+  return [state, check]
+}
+
+const useUpdateState = (): UpdateState => {
+  const [state, setState] = useState<UpdateState>({ phase: "idle" })
+  useEffect(() => subscribeUpdateState(setState), [])
+  return state
+}
+
 const useNotices = (): ReadonlyArray<Notice> => {
   const navigate = useNavigate()
   const status = useEngine((s) => s.status)
   const daemon = useEngine((s) => s.daemon)
   const projects = useEngine((s) => s.projects)
+  const engine = useEngine((s) => s.engine)
   const startDaemon = useEngine((s) => s.startDaemon)
+  const shutdownEngine = useEngine((s) => s.shutdownEngine)
+  const restartEngine = useEngine((s) => s.restartEngine)
   const engineDown = useEngineDown()
+  const update = useUpdateState()
+  const [applying, setApplying] = useState(false)
+  const [linking, setLinking] = useState(false)
+  const [cli, recheckCli] = useCliLink()
+  const [restarting, setRestarting] = useState(false)
 
   const notices: Array<Notice> = []
 
@@ -126,6 +171,43 @@ const useNotices = (): ReadonlyArray<Notice> => {
     })
   }
 
+  // The daemon answering this window is not the one this build ships.
+  //
+  // This is what an app update leaves behind. The engine is shared and outlives
+  // the app on purpose, so a swapped bundle finds the previous build's daemon
+  // still listening on the same port, answering every call exactly like the
+  // right one — until it is asked for a handler it does not have, or writes a
+  // schema it does not know. The version string is the only way to see it, which
+  // is why the app and the engine are built from one number.
+  //
+  // Not `danger`: everything still works, and pretending otherwise over what is
+  // usually a five-second fix would be the boy who cried wolf. But it does not
+  // resolve on its own, and nothing else in the window would ever mention it.
+  const shellVersion = appVersion()
+  if (status === "open" && engine !== null && shellVersion !== null && engine.version !== shellVersion) {
+    notices.push({
+      id: "engine-version",
+      tone: "warning",
+      title: "The engine is from a different version of Matisa",
+      detail: `The app is ${shellVersion}, the running engine is ${engine.version}. Restarting stops everything it supervises.`,
+      actions: [
+        {
+          label: "Restart engine",
+          onClick: () => {
+            setRestarting(true)
+            void restartEngine().finally(() => setRestarting(false))
+          },
+          primary: true,
+          // The one place here that tracks a flag rather than live state: a
+          // restart spans a shutdown and a spawn with a closed socket in the
+          // middle, so there is no single field that is true for exactly as
+          // long as it is running.
+          busy: restarting
+        }
+      ]
+    })
+  }
+
   // Only when something actually needs it. A Docker daemon that is down is
   // irrelevant to a catalog of plain processes, and a banner that is irrelevant
   // is the one that teaches people to stop reading banners.
@@ -143,6 +225,100 @@ const useNotices = (): ReadonlyArray<Notice> => {
     })
   }
 
+  // An update is downloaded and waiting. It is never applied on its own — not on
+  // a timer and not on quit — because applying stops the engine, and stopping
+  // the engine stops every project it supervises. That is the user's call to
+  // make, and the detail line says so rather than leaving them to discover it.
+  //
+  // The order of the two steps is the whole design: the engine is asked to go
+  // FIRST, and the shell refuses to swap the bundle until the port is actually
+  // closed. Skip that and the new build inherits the old daemon — the exact
+  // condition the notice above exists to report.
+  if (update.phase === "ready") {
+    notices.push({
+      id: "update",
+      tone: "info",
+      title: `Matisa ${update.version} is ready to install`,
+      detail: "Applying restarts Matisa and stops everything the engine is running.",
+      actions: [
+        {
+          label: "Install and restart",
+          onClick: () => {
+            setApplying(true)
+            void (async () => {
+              await shutdownEngine()
+              const result = await applyUpdate()
+              // On success the app is already on its way out, so there is no
+              // state to put back — only a failure ever returns to this window.
+              if (!result.ok) {
+                toast.error("The update was not applied", { description: result.reason })
+                setApplying(false)
+              }
+            })()
+          },
+          primary: true,
+          busy: applying
+        }
+      ]
+    })
+  }
+
+  // The CLI is shipped inside the bundle but nothing puts it on PATH, so a
+  // fresh download leaves `matisa guide` — the first command anyone is told to
+  // run — not found. Nothing else in the window would ever mention that, and the
+  // user has no reason to suspect a command they were told exists does not.
+  //
+  // Last in the strip and `info`, because nothing is broken: the window works
+  // fully without the link. It stays until the link exists, like the update
+  // notice, because it describes a condition that does not resolve on its own —
+  // and it is derived from a live check, so linking by hand in a terminal
+  // clears it on the next focus without a restart.
+  if (cli !== null && cli.supported && !cli.installed) {
+    notices.push({
+      id: "cli",
+      tone: "info",
+      title: "The matisa command isn't on your PATH",
+      // Names the password up front. An admin prompt nobody was expecting is
+      // the thing that makes a person cancel and not try again.
+      detail: "Link it into /usr/local/bin — that needs your password — and matisa guide works in any terminal.",
+      actions: [
+        {
+          label: "Install now",
+          onClick: () => {
+            setLinking(true)
+            void installCli()
+              .then((result) => {
+                if (result.ok) {
+                  toast.success("The matisa command is installed", {
+                    description: `Linked at ${result.path}. Run matisa guide in any terminal.`
+                  })
+                  recheckCli()
+                  return
+                }
+                // A dismissed password prompt is the user declining, not a
+                // failure — telling them it went wrong would be arguing.
+                if (result.cancelled !== true) {
+                  toast.error("The command was not installed", { description: result.reason })
+                }
+              })
+              .finally(() => setLinking(false))
+          },
+          primary: true,
+          busy: linking
+        },
+        {
+          // For the machine whose admin prompt is managed away, and for the
+          // user who would rather see what is about to run as root.
+          label: "Copy command",
+          onClick: () => {
+            void navigator.clipboard?.writeText(cli.command)
+            toast.success("Command copied", { description: "Paste it into a terminal." })
+          }
+        }
+      ]
+    })
+  }
+
   return notices
 }
 
@@ -154,8 +330,18 @@ export const Banner = () => {
     <div className="banners">
       {notices.map((n) => (
         <div key={n.id} className={`banner ${n.tone}`} role="status">
+          {/* An alarm glyph on a notice that is not an alarm is how the strip
+              stops being read. The update wears the download mark, and the CLI
+              notice the terminal it is about — both are `info`, and the glyph is
+              the only thing that tells them apart at a glance. */}
           <span className="banner-ico">
-            <Icons.Alert size={14} />
+            {n.id === "cli" ? (
+              <Icons.Terminal size={14} />
+            ) : n.tone === "info" ? (
+              <Icons.ArrowDownCircle size={14} />
+            ) : (
+              <Icons.Alert size={14} />
+            )}
           </span>
           <span className="banner-text">
             <strong className="banner-title">{n.title}</strong>

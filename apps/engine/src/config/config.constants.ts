@@ -47,8 +47,15 @@ export const DEFAULT_WS_PORT = 4127
 /** Hard cap on a single NDJSON frame (bytes) before the connection is faulted. */
 export const MAX_FRAME_BYTES = 1024 * 1024
 
-/** Engine version reported by engine.status. */
-export const ENGINE_VERSION = "0.1.0"
+/** Engine version reported by engine.status.
+ *
+ * Baked in by the engine's esbuild `define` from the product version in
+ * apps/shell/package.json — NOT read from the environment at run time, which is
+ * why the substitution has to happen at build time. The value matters because
+ * the desktop client compares it against the shell's own version: a daemon left
+ * running by a previous build answers on the same port, and this string is the
+ * only way to tell that it did. Unbuilt (tsx, tests) it reads 0.0.0-dev. */
+export const ENGINE_VERSION = process.env.MATISA_VERSION ?? "0.0.0-dev"
 
 /** Durable-queue retention: keep the newest N events; older rows are pruned at
  * boot and every few hours. Clients resuming from a pruned cursor restart at
