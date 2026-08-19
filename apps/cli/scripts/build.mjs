@@ -16,5 +16,12 @@ await build({
   target: "node20",
   format: "cjs",
   sourcemap: true,
+  // See apps/engine/scripts/build.mjs for keepNames.
+  minify: true,
+  keepNames: true,
+  // See apps/engine/scripts/build.mjs — same reasoning, same single source.
+  define: {
+    "process.env.MATISA_VERSION": JSON.stringify(process.env.MATISA_VERSION ?? "0.0.0-dev")
+  },
   logLevel: "info"
 })

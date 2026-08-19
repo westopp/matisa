@@ -17,7 +17,18 @@ await build({
   target: "node20",
   format: "cjs",
   sourcemap: true,
+  // keepNames because Effect's tags, error classes and layer identities are
+  // read by name in places; the size it costs is noise next to what it prevents.
+  minify: true,
+  keepNames: true,
   // Native addons: left as require()s for the host to provide.
   external: ["node-pty", "better-sqlite3"],
+  // The packager passes the product version in; a standalone build honestly
+  // labels itself a dev build rather than inventing a number. Baked at compile
+  // time because the daemon is spawned by whoever gets there first — app or
+  // CLI — and neither can be relied on to set an environment variable.
+  define: {
+    "process.env.MATISA_VERSION": JSON.stringify(process.env.MATISA_VERSION ?? "0.0.0-dev")
+  },
   logLevel: "info"
 })

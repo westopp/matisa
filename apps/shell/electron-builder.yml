@@ -1,0 +1,77 @@
+# electron-builder — the release configuration.
+#
+# YAML rather than JSON because most of what follows is non-obvious and needed a
+# comment. This file describes a SIGNED, NOTARISED build; scripts/package.mjs
+# overrides the signing keys on the command line when no Developer ID is
+# present, so a credential-less machine still produces a runnable local build.
+#
+# appId is permanent. It is half of the code signature's designated requirement,
+# which is what Squirrel.Mac checks before it will swap one bundle for another —
+# change it after a build ships and every installed copy stops updating and
+# loses its application data. It is also unrelated to the signing team: Developer
+# ID distribution registers no App ID with Apple, so this need not match the
+# certificate's name or a domain anyone owns.
+appId: com.westopp.matisa
+productName: Matisa
+
+directories:
+  output: release
+
+# dist/** only — the renderer, main and preload bundles. node_modules is
+# deliberately absent: main.cjs is esbuild-bundled (electron-updater included),
+# and the engine's real dependencies travel as extraResources below.
+files:
+  - dist/**
+  - "!dist/**/*.map"
+
+extraResources:
+  - from: vendor/engine
+    to: engine
+  - from: resources/bin
+    to: bin
+
+asar: true
+npmRebuild: false
+
+# Stages the engine's natives into the bundle before signing. See the file —
+# this hook exists specifically so the signature is applied to a complete app.
+afterPack: scripts/after-pack.cjs
+
+# NOTE: `publish` is deliberately absent. It is passed on the command line by
+# scripts/package.mjs, and only when MATISA_FEED_URL is set. Declaring it here
+# with an env macro fails config validation on any machine without that variable
+# — and more to the point, its presence is what writes app-update.yml into the
+# bundle. A build with no feed should produce an app that never checks for one,
+# not an app that checks a URL that is not there.
+
+mac:
+  category: public.app-category.developer-tools
+  icon: Matisa.icon
+
+  # Notarisation requires the hardened runtime, and the hardened runtime denies
+  # JIT and unsigned native loads unless entitled. See the plist for what each
+  # grant is for. entitlementsInherit is the same file on purpose: the processes
+  # that inherit are the ones running as Node.
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+
+  # true reads APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID (or
+  # APPLE_API_KEY/APPLE_API_ISSUER) from the environment and submits with
+  # notarytool. `identity` is intentionally unset: electron-builder discovers the
+  # Developer ID in the login keychain, or honours CSC_NAME/CSC_LINK.
+  notarize: true
+
+  # zip is what electron-updater consumes on macOS — Squirrel.Mac cannot install
+  # from a dmg. dmg is the first-install download for a human. Both are needed;
+  # dropping the zip silently disables updates.
+  #
+  # arm64 only. better-sqlite3 is rebuilt against one Electron ABI and one
+  # architecture (see package.mjs), so an x64 slice here would ship a binary that
+  # cannot load its own database. Intel support means a second rebuild pass, not
+  # a second entry in this list.
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
