@@ -1,6 +1,7 @@
 // A static server for looking at the site locally. Not what runs in production —
-// that is Caddy on Dokploy — so this deliberately does the least it can: no
-// caching, no compression, no directory listings, no dependencies.
+// that is nginx in the image built by ../Dockerfile, on Dokploy — so this
+// deliberately does the least it can: no caching, no compression, no directory
+// listings, no dependencies.
 //
 // It exists because the page is edited by hand and file:// lies about enough
 // things (relative paths, the download attribute) to be worth avoiding.

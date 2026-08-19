@@ -180,4 +180,4 @@ console.log(`\npublished ${tag} → https://github.com/${RELEASES_REPO}/releases
 // The site is now a page with an off-site download link and nothing heavy in it,
 // so deploying it is whatever moves static files — no artifacts travel with it
 // any more.
-console.log(`\nto deploy: rsync -av --delete ${join(websiteDir, "site")}/ <host>:<path>/`)
+console.log("\nto deploy: commit the rewritten index.html and push — Dokploy rebuilds the site image from the repo.")

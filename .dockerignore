@@ -1,0 +1,12 @@
+# The build context is the repo root. Nothing in this image needs source outside
+# apps/website, so this is aggressive on purpose: matisa-old alone is 1.7GB and
+# would otherwise be uploaded to the daemon on every build.
+*
+
+!apps/website/site
+!apps/website/nginx.conf
+
+# Stale local build artifacts that live under site/. They are gitignored, so a
+# Dokploy build from a fresh clone never sees them — but a local `docker build`
+# would, and a 150MB zip in the image is not a thing to find out about later.
+apps/website/site/updates
