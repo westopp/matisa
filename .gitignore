@@ -19,9 +19,9 @@ dist/
 # matisa runtime (socket + db)
 .matisa/
 
-# published build artifacts — 150MB a piece, three at a time, rewritten every
-# release. They reach the server by deploy, never through git, which would carry
-# every build ever made forever.
+# where published build artifacts used to be staged, before releases moved to
+# the matisa-releases repo. Kept ignored so a stale local copy of a 150MB build
+# can never wander into a commit.
 apps/website/site/updates/
 
 # tool state (arcm datastore) + personal claude settings

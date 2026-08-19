@@ -206,7 +206,19 @@ const canNotarize =
     process.env.APPLE_API_ISSUER !== undefined) ||
   process.env.APPLE_KEYCHAIN_PROFILE !== undefined
 
-const feedUrl = process.env.MATISA_FEED_URL
+// Where updates come from. A public, code-free repo, and NOT the source repo —
+// which is private, and a private repo's release assets need a token on every
+// download. The only place that token could live is inside the app, so it is
+// not a token, it is a published credential. Hence the split.
+//
+// Constants rather than an environment variable: the feed's address is a
+// property of the product, not of the machine doing the build. The variable it
+// replaces (MATISA_FEED_URL) meant a build could be published anywhere, which
+// is not freedom worth having — every installed copy checks the address that
+// was baked in, so an address that varies per build is a fleet that cannot be
+// reasoned about.
+const RELEASES_OWNER = "westopp"
+const RELEASES_REPO = "matisa-releases"
 
 const flags = ["--mac", "--config electron-builder.yml"]
 if (identity === null) {
@@ -224,10 +236,27 @@ if (identity === null) {
 // feed it cannot reach checks, fails, and reports an error every six hours. No
 // feed configured, no update machinery: the shell treats the file's absence as
 // "updates are not this build's concern".
-if (feedUrl !== undefined) {
-  flags.push("-c.publish.provider=generic", `-c.publish.url=${feedUrl}`)
-} else if (identity !== null) {
-  console.log("\n⚠ MATISA_FEED_URL unset — no latest-mac.yml, this build cannot be an update")
+//
+// Tied to the signing identity, because those are the same question asked twice.
+// An unsigned build cannot be an update however it is hosted: Squirrel.Mac
+// compares the running app's designated requirement against the downloaded
+// one's, and with no identity that requirement is the cdhash — which changes
+// every build, so every update is rejected as a different app.
+//
+// `--publish never` is not a default being restated. electron-builder will
+// upload on its own given a provider and a token in the environment, and the
+// split this repo is built on — package produces candidates, publish releases
+// one — would then hold only for as long as nobody had GH_TOKEN exported. The
+// yml is still written; only the upload is refused.
+if (identity !== null) {
+  flags.push(
+    "-c.publish.provider=github",
+    `-c.publish.owner=${RELEASES_OWNER}`,
+    `-c.publish.repo=${RELEASES_REPO}`,
+    "--publish never"
+  )
+} else {
+  console.log("\n⚠ unsigned build — no latest-mac.yml, and nothing built this way can ever be an update")
 }
 
 console.log(

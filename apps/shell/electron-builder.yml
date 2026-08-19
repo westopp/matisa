@@ -38,11 +38,11 @@ npmRebuild: false
 afterPack: scripts/after-pack.cjs
 
 # NOTE: `publish` is deliberately absent. It is passed on the command line by
-# scripts/package.mjs, and only when MATISA_FEED_URL is set. Declaring it here
-# with an env macro fails config validation on any machine without that variable
-# — and more to the point, its presence is what writes app-update.yml into the
-# bundle. A build with no feed should produce an app that never checks for one,
-# not an app that checks a URL that is not there.
+# scripts/package.mjs, and only for a SIGNED build — the GitHub releases repo
+# the feed points at is named there. Its presence is what writes app-update.yml
+# into the bundle, and an unsigned build that shipped one would check a feed
+# whose builds Squirrel will refuse to install, forever and every two hours. A
+# build that cannot update should produce an app that never asks.
 
 mac:
   category: public.app-category.developer-tools

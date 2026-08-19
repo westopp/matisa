@@ -1,38 +1,69 @@
-// Move a finished build into the site, and keep the last three.
+// Release a finished build: upload it to the releases repo, then point the site
+// at it.
 //
-// This is the second half of releasing. `pnpm package` produces artifacts; this
-// puts them where matisa.westopp.com/updates/mac/ serves them from. The split is
-// deliberate — building a release candidate should never publish one.
+// This is the second half of releasing. `pnpm package` produces artifacts and
+// deliberately refuses to upload them (`--publish never`); this is the step that
+// makes a candidate into a release. The split is the point — building a release
+// candidate should never publish one.
+//
+// WHY A SEPARATE REPO. The updater reads its feed from the assets of a GitHub
+// release. westopp/matisa is private, and a private repo's assets need a token
+// on every download — the only place that token could live is inside the app,
+// where it is not a token but a published credential. So releases go to a
+// public, code-free repo instead, and the source stays private.
 //
 // WHAT IT DOES NOT DO: rename anything. electron-builder's filenames already
 // carry the version (Matisa-0.1.2-arm64-mac.zip), and latest-mac.yml references
-// the zip BY NAME with a sha512 beside it. Rename the file and every installed
-// copy asks the feed for a name that is not there — the update silently stops
-// working, and the only symptom is nobody updating. Versioned filenames are also
-// what makes three of them coexist in one directory, which is the whole point of
-// retention.
+// the zip BY NAME with a sha512 beside it. GitHub serves assets under the exact
+// filename they were uploaded with, so a rename here is an update that asks for
+// a name that is not there — it stops working silently, and the only symptom is
+// nobody updating.
 //
-// Retention keeps the newest three VERSIONS, not the newest N files: a version
-// is four files (zip, dmg, and a blockmap each), and deleting half of one is
-// worse than keeping all of it.
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+// RETENTION IS GITHUB'S NOW. Every release stays until someone deletes it, and
+// old releases cost nothing, so the three-version pruning this script used to do
+// is gone rather than reimplemented against the API. What that pruning bought —
+// a tester on a broken build having something to fall back to — a release page
+// gives for free, and better.
+import { execFileSync } from "node:child_process"
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const websiteDir = join(dirname(fileURLToPath(import.meta.url)), "..")
 const repo = join(websiteDir, "..", "..")
 const release = join(repo, "apps", "shell", "release")
-const target = join(websiteDir, "site", "updates", "mac")
 const indexPath = join(websiteDir, "site", "index.html")
 
-/** How many versions stay downloadable. The newest is what the feed points at;
- *  the two behind it are there so a tester on a broken build has something to
- *  fall back to without waiting for you to rebuild. */
-const KEEP_VERSIONS = 3
+/** Where releases go. Must match RELEASES_OWNER/RELEASES_REPO in
+ *  apps/shell/scripts/package.mjs — that is what is baked into every shipped
+ *  bundle as the address to check, and this is where the thing it checks for is
+ *  put. They disagree and the update simply never arrives. */
+const RELEASES_REPO = "westopp/matisa-releases"
 
 const fail = (message) => {
   console.error(`\npublish: ${message}\n`)
   process.exit(1)
+}
+
+const gh = (args, { capture = true } = {}) => {
+  try {
+    return execFileSync("gh", args, { encoding: "utf8", stdio: capture ? "pipe" : "inherit" })
+  } catch (error) {
+    const detail = error.stderr?.toString().trim() ?? error.message
+    fail(`gh ${args.slice(0, 2).join(" ")} failed —\n  ${detail}`)
+  }
+}
+
+/** The same, for the one question whose answer is allowed to be "no such
+ *  thing". `gh release view` exits non-zero on a release that does not exist,
+ *  which is the ordinary case here — the version being published is usually new
+ *  — so it cannot go through the fatal path above. */
+const ghOrNull = (args) => {
+  try {
+    return execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+  } catch {
+    return null
+  }
 }
 
 // ── 1. Find the build ────────────────────────────────────────────────────────
@@ -40,9 +71,9 @@ const feedPath = join(release, "latest-mac.yml")
 if (!existsSync(feedPath)) {
   fail(
     "apps/shell/release/latest-mac.yml is missing.\n" +
-      "  It is only written when MATISA_FEED_URL is set and the build produces real\n" +
-      "  targets — a --dir build has neither. Rebuild with:\n\n" +
-      "    APPLE_KEYCHAIN_PROFILE=matisa MATISA_FEED_URL=https://matisa.westopp.com/updates/mac/ pnpm package"
+      "  It is only written for a SIGNED build with real targets — an unsigned\n" +
+      "  --dir build has neither. Rebuild with:\n\n" +
+      "    APPLE_KEYCHAIN_PROFILE=matisa pnpm package"
   )
 }
 
@@ -50,9 +81,12 @@ const feed = readFileSync(feedPath, "utf8")
 const version = /^version:\s*(.+)$/m.exec(feed)?.[1]?.trim()
 if (version === undefined) fail("could not read a version out of latest-mac.yml")
 
-// Every artifact for this version, plus the feed itself. The zip is the only one
-// the updater strictly needs; the dmg is what a human downloads, and the
-// blockmaps are what let a client fetch only the changed parts.
+const tag = `v${version}`
+
+// Every artifact for this version. The zip is the only one the updater strictly
+// needs; the dmg is what a human downloads, and the blockmaps are what let a
+// client fetch only the changed parts — unused on macOS today, uploaded anyway
+// because they cost nothing and the feed names them.
 const artifacts = readdirSync(release).filter(
   (f) => f.startsWith(`Matisa-${version}-`) && !f.endsWith(".yml")
 )
@@ -67,59 +101,59 @@ if (dmg === undefined) fail(`no .dmg for ${version} — without it the download 
 // describes, every update fails its integrity check AFTER downloading 150MB.
 if (!feed.includes(zip)) fail(`latest-mac.yml does not reference ${zip} — the release directory is inconsistent, rebuild`)
 
-// ── 2. Copy in ───────────────────────────────────────────────────────────────
-mkdirSync(target, { recursive: true })
-for (const file of [...artifacts, "latest-mac.yml"]) {
-  copyFileSync(join(release, file), join(target, file))
-  const size = statSync(join(target, file)).size
-  console.log(`  → ${file} (${(size / 1024 / 1024).toFixed(1)}MB)`)
+// ── 2. Check the destination ─────────────────────────────────────────────────
+// A private releases repo is the failure this whole arrangement exists to avoid,
+// and it is invisible from the outside: the release page looks right to you,
+// signed in, and every installed copy gets a 404 with no token to offer. Cheaper
+// to ask now than to find out from a fleet that stopped updating.
+const view = JSON.parse(gh(["repo", "view", RELEASES_REPO, "--json", "visibility,isPrivate"]))
+if (view.isPrivate === true) {
+  fail(
+    `${RELEASES_REPO} is PRIVATE. Its release assets need a token to download, and the app has none —\n` +
+      `  every update would 404. Make it public:\n\n    gh repo edit ${RELEASES_REPO} --visibility public`
+  )
 }
 
-// ── 3. Prune ─────────────────────────────────────────────────────────────────
-// Newest first. Numeric segment comparison, with a release ranking above any
-// prerelease that shares its numbers (0.2.0 beats 0.2.0-beta.1).
-const compareVersions = (a, b) => {
-  const [aNum, aPre] = a.split("-")
-  const [bNum, bPre] = b.split("-")
-  const aParts = aNum.split(".").map(Number)
-  const bParts = bNum.split(".").map(Number)
-  for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
-    const diff = (bParts[i] ?? 0) - (aParts[i] ?? 0)
-    if (diff !== 0) return diff
-  }
-  if (aPre === bPre) return 0
-  if (aPre === undefined) return -1
-  if (bPre === undefined) return 1
-  return aPre < bPre ? 1 : -1
+// Re-releasing a version is not a thing that can be done quietly: installed
+// copies compare version strings, so a v0.1.2 that is not the v0.1.2 they
+// already have is a build that never reaches them, or reaches them and fails its
+// hash. Bump the version instead.
+const existing = ghOrNull(["release", "view", tag, "--repo", RELEASES_REPO, "--json", "tagName"])
+if (existing !== null) {
+  fail(`${tag} already exists in ${RELEASES_REPO}. Bump the version in apps/shell/package.json and rebuild.`)
 }
 
-const versionOf = (file) => /^Matisa-(.+?)-arm64/.exec(file)?.[1]
-const present = [...new Set(readdirSync(target).map(versionOf).filter((v) => v !== undefined))]
-present.sort(compareVersions)
-
-const keep = new Set(present.slice(0, KEEP_VERSIONS))
-const drop = present.slice(KEEP_VERSIONS)
-
-// The version the feed points at must survive regardless of where it sorts —
-// publishing a build and immediately deleting it is the one outcome that would
-// break every installed copy at once.
-if (!keep.has(version)) fail(`refusing to prune: ${version} is what latest-mac.yml points at`)
-
-for (const file of readdirSync(target)) {
-  const v = versionOf(file)
-  if (v !== undefined && !keep.has(v)) {
-    rmSync(join(target, file))
-    console.log(`  ✕ ${file}`)
-  }
+// ── 3. Upload ────────────────────────────────────────────────────────────────
+// latest-mac.yml is an asset like any other — it is the file the updater asks
+// for by name under the LATEST release, and without it in the upload there is no
+// feed at all, only files nobody is told about.
+const uploads = [...artifacts, "latest-mac.yml"].map((f) => join(release, f))
+for (const file of uploads) {
+  console.log(`  ↑ ${file.split("/").pop()} (${(statSync(file).size / 1024 / 1024).toFixed(1)}MB)`)
 }
+gh(
+  [
+    "release",
+    "create",
+    tag,
+    ...uploads,
+    "--repo",
+    RELEASES_REPO,
+    "--title",
+    `Matisa ${version}`,
+    "--notes",
+    `Matisa ${version} for macOS (Apple silicon).\n\nInstalled copies update themselves — this page is for first installs.`
+  ],
+  { capture: false }
+)
 
+// ── 4. Point the page at it ──────────────────────────────────────────────────
 // The Apple mark, inline so the button needs no second request. It lives here
 // as well as in index.html because this script REWRITES that element — a glyph
 // added to the page by hand would survive exactly until the next publish.
 const APPLE_MARK =
   '<svg class="apple" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>'
 
-// ── 4. Point the page at it ──────────────────────────────────────────────────
 // Between the markers, nothing else — a regex over the whole document would
 // eventually match something in the copy and rewrite that instead.
 const html = readFileSync(indexPath, "utf8")
@@ -130,16 +164,20 @@ const markers = /<!-- download:start -->[\s\S]*?<!-- download:end -->/
 // would report missing markers on a file that has them.
 if (!markers.test(html)) fail("could not find the download:start / download:end markers in index.html")
 
+// The full asset URL, not a `/releases/latest` alias. The alias would save this
+// rewrite and cost the guarantee it exists for: a versioned href is a name a
+// cache cannot hand someone yesterday's build under.
+const assetUrl = `https://github.com/${RELEASES_REPO}/releases/download/${tag}/${dmg}`
 const block =
   `<!-- download:start -->\n` +
-  `      <a class="download" href="updates/mac/${dmg}" download>${APPLE_MARK}<span>Download for macOS</span></a>\n` +
-  `      <p class="meta">Version ${version} · ${(statSync(join(target, dmg)).size / 1024 / 1024).toFixed(0)}MB</p>\n` +
+  `      <a class="download" href="${assetUrl}">${APPLE_MARK}<span>Download for macOS</span></a>\n` +
+  `      <p class="meta">Version ${version} · ${(statSync(join(release, dmg)).size / 1024 / 1024).toFixed(0)}MB</p>\n` +
   `      <!-- download:end -->`
 writeFileSync(indexPath, html.replace(markers, block))
 
-console.log(`\npublished ${version} — keeping ${[...keep].join(", ")}${drop.length > 0 ? `, dropped ${drop.join(", ")}` : ""}`)
+console.log(`\npublished ${tag} → https://github.com/${RELEASES_REPO}/releases/tag/${tag}`)
 
-// The site directory is now what should be on the server. Deliberately NOT
-// uploaded from here: the artifacts are gitignored and 150MB each, so how they
-// reach Dokploy is a deployment decision this script has no business making.
+// The site is now a page with an off-site download link and nothing heavy in it,
+// so deploying it is whatever moves static files — no artifacts travel with it
+// any more.
 console.log(`\nto deploy: rsync -av --delete ${join(websiteDir, "site")}/ <host>:<path>/`)
