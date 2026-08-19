@@ -1,0 +1,11 @@
+{
+  "name": "@matisa/website",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "matisa.westopp.com — the download page and the update feed it serves",
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "publish-build": "node scripts/publish.mjs"
+  }
+}

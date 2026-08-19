@@ -1,0 +1,304 @@
+/* matisa.westopp.com — one page, no JavaScript, no webfont, no dependencies.
+   Every effect here is CSS: the aurora is two blurred radial gradients on a slow
+   drift, the grain is an inline SVG turbulence filter, the entrance is staggered
+   animation-delay. Nothing waits on a network request to look finished, which is
+   the only reason a download page exists at all.
+
+   The palette is the app's dark theme, so the site and the thing it hands you
+   are recognisably one product. */
+
+:root {
+  color-scheme: dark;
+
+  --void: #08080a;
+  --text: oklch(0.975 0.002 288);
+  --muted: oklch(0.72 0.008 288);
+  --dim: oklch(0.52 0.012 288);
+  --rule: oklch(1 0 0 / 0.08);
+
+  /* Taken from the app icon rather than chosen beside it: icon.json composites
+     the mark over a display-p3 blue, and this is that blue. The site and the
+     thing it hands you should read as one object. */
+  --brand: #0a63b8;
+  --brand-lift: #1a7ad4;
+  --glow: oklch(0.58 0.16 250 / 0.5);
+
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  --frame: clamp(0.75rem, 2.2vw, 2rem);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+
+/* ── Aurora ──────────────────────────────────────────────────────────────────
+   Two blobs, counter-drifting on a minute-long cycle. Slow enough that it reads
+   as light rather than animation — you notice it only if you stay. */
+.aurora {
+  position: fixed;
+  inset: -30%;
+  z-index: 0;
+  pointer-events: none;
+  filter: blur(80px) saturate(130%);
+}
+
+.aurora::before,
+.aurora::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+}
+
+.aurora::before {
+  width: 52vw;
+  height: 52vw;
+  top: 8%;
+  left: 22%;
+  background: radial-gradient(circle, oklch(0.54 0.17 253 / 0.55), transparent 62%);
+  animation: drift-a 46s ease-in-out infinite;
+}
+
+.aurora::after {
+  width: 44vw;
+  height: 44vw;
+  bottom: 6%;
+  right: 18%;
+  background: radial-gradient(circle, oklch(0.6 0.11 215 / 0.34), transparent 62%);
+  animation: drift-b 62s ease-in-out infinite;
+}
+
+@keyframes drift-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(9vw, 6vh, 0) scale(1.12); }
+}
+
+@keyframes drift-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.06); }
+  50% { transform: translate3d(-8vw, -7vh, 0) scale(0.94); }
+}
+
+/* ── Grain ───────────────────────────────────────────────────────────────────
+   The thing that stops a dark gradient looking like a dark gradient. Fixed, so
+   it does not swim when anything moves beneath it. */
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0.045;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ── Frame ───────────────────────────────────────────────────────────────────
+   A hairline inset rectangle with the corners cut away, so the eye reads four
+   brackets rather than a box. Cheap structure, and it makes the viewport feel
+   composed rather than filled. */
+.frame {
+  position: fixed;
+  inset: var(--frame);
+  z-index: 1;
+  pointer-events: none;
+  border: 1px solid var(--rule);
+  -webkit-mask:
+    linear-gradient(#000 0 0) padding-box,
+    linear-gradient(to right, #000 0 18%, transparent 18% 82%, #000 82% 100%),
+    linear-gradient(to bottom, #000 0 18%, transparent 18% 82%, #000 82% 100%);
+  -webkit-mask-composite: source-in;
+  mask:
+    linear-gradient(to right, #000 0 18%, transparent 18% 82%, #000 82% 100%),
+    linear-gradient(to bottom, #000 0 18%, transparent 18% 82%, #000 82% 100%);
+  mask-composite: intersect;
+}
+
+/* ── Content ─────────────────────────────────────────────────────────────────*/
+main {
+  position: relative;
+  z-index: 3;
+  width: min(46rem, 100% - calc(var(--frame) * 4));
+  text-align: center;
+  display: grid;
+  justify-items: center;
+}
+
+.logo {
+  width: clamp(4.5rem, 8vw, 6.5rem);
+  height: auto;
+  /* The icon is a rounded square with its own depth, so it gets a cast shadow
+     and a bloom rather than the flat glow a flat mark wanted. */
+  filter: drop-shadow(0 14px 34px oklch(0 0 0 / 0.55)) drop-shadow(0 0 40px var(--glow));
+}
+
+h1 {
+  margin: clamp(1.5rem, 3.5vw, 2.5rem) 0 0;
+  font-size: clamp(3.5rem, 13vw, 9.5rem);
+  font-weight: 700;
+  letter-spacing: -0.055em;
+  line-height: 0.86;
+  /* A gradient that fades the word into the canvas at its feet, so the type
+     sits in the light rather than on top of it. */
+  background: linear-gradient(175deg, var(--text) 32%, oklch(0.62 0.012 288) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.tagline {
+  margin: clamp(1.25rem, 3vw, 2rem) 0 0;
+  max-width: 28rem;
+  color: var(--muted);
+  font-size: clamp(0.95rem, 1.5vw, 1.0625rem);
+  line-height: 1.55;
+  text-wrap: balance;
+}
+
+/* The one control on the page. Saturated, not the pale status green — this is a
+   thing you press, not a thing being reported. The sheen sweeps once on hover. */
+.download {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-top: clamp(2rem, 4.5vw, 3rem);
+  padding: 1rem 2.5rem;
+  border-radius: 999px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px oklch(1 0 0 / 0.08) inset, 0 12px 40px -12px var(--glow);
+  transition: background 160ms ease, transform 160ms ease, box-shadow 240ms ease;
+}
+
+.download::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  translate: -120% 0;
+  background: linear-gradient(100deg, transparent, oklch(1 0 0 / 0.28), transparent);
+}
+
+.download:hover {
+  background: var(--brand-lift);
+  transform: translateY(-2px);
+  box-shadow: 0 0 0 1px oklch(1 0 0 / 0.14) inset, 0 20px 52px -14px var(--glow);
+}
+
+.download:hover::after {
+  animation: sheen 720ms ease;
+}
+
+.download:active {
+  transform: translateY(0);
+}
+
+.download:focus-visible {
+  outline: 2px solid var(--brand-lift);
+  outline-offset: 4px;
+}
+
+/* Optically centred rather than metrically: the Apple mark has more mass below
+   its midline, so it sits a hair high next to a cap-height label. */
+.apple {
+  width: 1.0625em;
+  height: 1.0625em;
+  margin-top: -0.125em;
+  flex-shrink: 0;
+}
+
+@keyframes sheen {
+  to { translate: 120% 0; }
+}
+
+.meta {
+  margin: 1.125rem 0 0;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pinned to the frame rather than trailing the content — it is a footnote about
+   the download, not part of the pitch. */
+.req {
+  position: fixed;
+  z-index: 3;
+  left: 50%;
+  translate: -50% 0;
+  bottom: calc(var(--frame) + 1.5rem);
+  margin: 0;
+  width: min(34rem, 100% - 4rem);
+  text-wrap: balance;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  line-height: 1.7;
+  text-align: center;
+}
+
+/* ── Entrance ────────────────────────────────────────────────────────────────
+   One rise, staggered down the page. Runs once, backwards-filled so nothing is
+   visible before its turn. */
+.logo, h1, .tagline, .download, .meta, .req {
+  animation: rise 900ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.logo { animation-delay: 80ms; }
+h1 { animation-delay: 180ms; }
+.tagline { animation-delay: 300ms; }
+.download { animation-delay: 420ms; }
+.meta { animation-delay: 500ms; }
+.req { animation-delay: 620ms; }
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(1.25rem);
+    filter: blur(6px);
+  }
+}
+
+/* The download keeps its hover transition; everything ambient stops. A page
+   that drifts and grains and sweeps is exactly the page someone with vestibular
+   sensitivity asked not to be shown. */
+@media (prefers-reduced-motion: reduce) {
+  .aurora::before,
+  .aurora::after,
+  .logo, h1, .tagline, .download, .meta, .req {
+    animation: none;
+  }
+  .download { transition: background 160ms ease; }
+  .download:hover { transform: none; }
+}
+
+/* Short viewports: the fixed footnote would collide with the button, so it
+   rejoins the flow and the page scrolls if it must. */
+@media (max-height: 34rem) {
+  body { overflow: auto; }
+  main { padding: 5rem 0 3rem; }
+  .req { position: static; translate: none; margin-top: 3rem; }
+}

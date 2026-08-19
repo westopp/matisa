@@ -6,6 +6,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@matisa/desktop", "dev"],
       "port": 6110
+    },
+    {
+      "name": "website",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@matisa/website", "dev"],
+      "port": 6111
     }
   ]
 }
