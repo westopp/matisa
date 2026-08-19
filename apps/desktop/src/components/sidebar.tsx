@@ -38,6 +38,53 @@ const BUCKETS: ReadonlyArray<{ kind: ProjectKind; label: string }> = [
 
 const UNGROUPED = "__ungrouped__"
 
+// ────────────────────────────────────────────────────────────────────────────
+// Search and filter, applied to EVERY band.
+//
+// Both used to reach only the project buckets, which made them lie: searching
+// "redis" left the Systems and Unmanaged bands standing underneath the result
+// with all of their contents, and "nothing matches" appeared above two bands
+// visibly full of things. A filter that some of the window ignores is not a
+// filter, it is a suggestion.
+//
+// So both are expressed as predicates and threaded into all four bands. Systems
+// and Unmanaged answer them in their own vocabulary — an engine that is up is
+// `running` the same way a project is, and an unmanaged process is either
+// running or it is not — because the bands already draw the same status figure
+// and the user is entitled to read that consistency as real.
+// ────────────────────────────────────────────────────────────────────────────
+
+export type FleetFilter = "all" | "running" | "stopped" | "failed" | "unmanaged"
+
+const FILTERS: ReadonlyArray<{ key: FleetFilter; label: string; title: string }> = [
+  { key: "all", label: "All", title: "Everything" },
+  { key: "running", label: "Running", title: "Up right now — including anything mid-start" },
+  { key: "stopped", label: "Stopped", title: "Idle, or on its way down" },
+  { key: "failed", label: "Failed", title: "Crashed or errored" },
+  { key: "unmanaged", label: "Unmanaged", title: "Up, but not started by matisa" }
+]
+
+/** One rule, applied to projects, systems and unmanaged entries alike.
+ *
+ *  `starting` counts as running and `stopping` as stopped: a filter is a
+ *  question about where something IS heading, and a project mid-transition
+ *  vanishing from both answers is the one behaviour that would make the control
+ *  untrustworthy at exactly the moment it is being watched. */
+const matchesFilter = (state: RuntimeState, filter: FleetFilter): boolean => {
+  switch (filter) {
+    case "all":
+      return true
+    case "running":
+      return state === "running" || state === "starting"
+    case "stopped":
+      return state === "idle" || state === "stopping"
+    case "failed":
+      return state === "crashed" || state === "errored"
+    case "unmanaged":
+      return state === "unmanaged"
+  }
+}
+
 /** A group's tally: how many are up, out of how many there are — plus how many
  *  broke, and ONLY when something did. A permanent `• 0` is a slot reserved for
  *  bad news that spends its whole life reporting none, and it made every healthy
@@ -481,10 +528,14 @@ const UNMANAGED_SECTIONS: ReadonlyArray<{
 
 const UnmanagedGroup = ({
   collapsed,
-  onToggle
+  onToggle,
+  nameMatches,
+  filter
 }: {
   collapsed: boolean
   onToggle: () => void
+  nameMatches: (name: string) => boolean
+  filter: FleetFilter
 }) => {
   const discovery = useEngine((s) => s.discovery)
   const sweeping = useEngine((s) => s.discoverySweeping)
@@ -493,7 +544,18 @@ const UnmanagedGroup = ({
   const startUnmanaged = useEngine((s) => s.startUnmanaged)
   const [shut, setShut] = useState<Record<string, boolean>>({})
 
-  const entries = discovery?.unmanaged ?? []
+  // Everything here is by definition NOT managed by matisa, so it answers the
+  // `unmanaged` filter wholesale, and running/stopped by whether it is up. It
+  // can never be `failed`: a process matisa did not start has no failure for
+  // matisa to have recorded.
+  const keep = (e: UnmanagedEntry): boolean =>
+    (nameMatches(e.displayName) || nameMatches(e.ref)) &&
+    (filter === "all" ||
+      filter === "unmanaged" ||
+      (filter === "running" && e.running) ||
+      (filter === "stopped" && !e.running))
+
+  const entries = (discovery?.unmanaged ?? []).filter(keep)
   const sections = UNMANAGED_SECTIONS.map((s) => ({
     ...s,
     entries: entries.filter((e) => e.kind === s.key)
@@ -594,6 +656,8 @@ const SystemsGroup = ({
   selectedId,
   openId,
   compact,
+  nameMatches,
+  filter,
   onSelect,
   onOpen,
   onToggleOpen
@@ -604,6 +668,10 @@ const SystemsGroup = ({
   selectedId: ProjectId | null
   openId: ProjectId | null
   compact: boolean
+  /** The search, in the band's own terms — Engine and Docker are named things
+   *  and answer a name query like anything else. */
+  nameMatches: (name: string) => boolean
+  filter: FleetFilter
   onSelect: (id: ProjectId) => void
   onOpen: (id: ProjectId) => void
   onToggleOpen: (id: ProjectId) => void
@@ -632,6 +700,13 @@ const SystemsGroup = ({
   const engineUp = status === "open"
   const dockerUp = daemon.state === "running"
 
+  // The band answers the same two questions the project bands do. When neither
+  // system survives them the band goes entirely — a heading over nothing is the
+  // thing that made search look broken.
+  const showEngine = nameMatches("Engine") && matchesFilter(engineState, filter)
+  const showDocker = nameMatches("Docker") && matchesFilter(dockerState, filter)
+  if (!showEngine && !showDocker) return null
+
   // Discovery is not a daemon — nothing about it can be up or down. Its state
   // reports its FINDINGS, because that is the only thing a glance at the
   // sidebar can usefully ask of it: a claim against a configured project is a
@@ -652,6 +727,7 @@ const SystemsGroup = ({
       <Collapsible id="bucket-systems" open={!collapsed} transitionDuration={COLLAPSE_DURATION} initialOpen>
         <div className="band-groups">
         <div className="sys-body">
+          {showEngine && (
           <SystemCard
             id={SYSTEM_IDS.engine}
             name="Engine"
@@ -680,7 +756,9 @@ const SystemsGroup = ({
               onStop={() => setConfirmShutdown(true)}
             />
           </SystemCard>
+          )}
 
+          {showDocker && (
           <SystemCard
             id={SYSTEM_IDS.docker}
             name="Docker"
@@ -702,6 +780,7 @@ const SystemsGroup = ({
               onStop={() => void stopDaemon()}
             />
           </SystemCard>
+          )}
 
         </div>
         </div>
@@ -784,6 +863,10 @@ export const Sidebar = ({
   const setGroupHidden = useEngine((s) => s.setGroupHidden)
 
   const [query, setQuery] = useState("")
+  // Not persisted, deliberately: a filter remembered across launches is a fleet
+  // that comes back mysteriously half-empty, and the first thing the user does
+  // is doubt the catalog rather than look for a control they set yesterday.
+  const [filter, setFilter] = useState<FleetFilter>("all")
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [bucketCollapsed, setBucketCollapsed] = useState<Record<string, boolean>>({})
   const [editingGroup, setEditingGroup] = useState<Group | "new" | null>(null)
@@ -806,7 +889,9 @@ export const Sidebar = ({
 
   const matching = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const named = projects.filter((p) => q === "" || p.name.toLowerCase().includes(q))
+    const named = projects.filter(
+      (p) => (q === "" || p.name.toLowerCase().includes(q)) && matchesFilter(p.state, filter)
+    )
     if (q !== "") return named
 
     const byId = new Set(hiddenProjects ?? [])
@@ -818,7 +903,15 @@ export const Sidebar = ({
         p.state === "errored" ||
         !(byId.has(p.id) || (p.groupSlug !== undefined && bySlug.has(p.groupSlug)))
     )
-  }, [projects, query, hiddenProjects, hiddenGroups])
+  }, [projects, query, filter, hiddenProjects, hiddenGroups])
+
+  /** Name match, for the bands that hold things which are not projects. Empty
+   *  query matches everything — the bands are not made to disappear because
+   *  nobody has typed. */
+  const nameMatches = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return (name: string): boolean => q === "" || name.toLowerCase().includes(q)
+  }, [query])
 
   const buckets = BUCKETS.map((b) => ({
     ...b,
@@ -935,6 +1028,39 @@ export const Sidebar = ({
         <div className="search-wrap">
           <Icons.Search size={13} />
           <input placeholder="Search projects" value={query} onChange={(e) => setQuery(e.target.value)} />
+          {query !== "" && (
+            <button className="search-clear" title="Clear search" onClick={() => setQuery("")}>
+              <Icons.X size={11} />
+            </button>
+          )}
+        </div>
+
+        {/* Under the search because they compose: a filter narrows what the
+            search then looks through, and reading them on one line is how that
+            reads. The counts are of the WHOLE fleet, not of what is on screen —
+            a filter that reported its own result would always say what it just
+            selected for. */}
+        <div className="filter-chips" role="group" aria-label="Filter by state">
+          {FILTERS.map((f) => {
+            const n =
+              f.key === "all"
+                ? projects.length
+                : projects.filter((p) => matchesFilter(p.state, f.key)).length
+            return (
+              <button
+                key={f.key}
+                className={`filter-chip ${filter === f.key ? "on" : ""}`}
+                title={f.title}
+                aria-pressed={filter === f.key}
+                // Pressing the active one clears back to All, so the control
+                // can always undo itself without hunting for the first chip.
+                onClick={() => setFilter((cur) => (cur === f.key ? "all" : f.key))}
+              >
+                {f.label}
+                {n > 0 && <span className="filter-chip-n">{n}</span>}
+              </button>
+            )
+          })}
         </div>
       </div>
 
@@ -1082,13 +1208,19 @@ export const Sidebar = ({
             ) : (
               <>
                 <span className="board-empty-title">Nothing matches</span>
-                <span className="board-empty-sub">try another search</span>
+                {/* Naming the filter, because a filter set five minutes ago is
+                    the reason an empty fleet looks like a broken one. */}
+                <span className="board-empty-sub">
+                  {filter === "all" ? "try another search" : `no projects are ${filter} — clear the filter or search again`}
+                </span>
               </>
             )}
           </div>
         )}
 
         <SystemsGroup
+          nameMatches={nameMatches}
+          filter={filter}
           collapsed={bucketCollapsed["systems"] === true}
           holdsSelection={selectionAt?.kind === "systems"}
           onToggle={() => setBucketCollapsed((c) => ({ ...c, systems: !c["systems"] }))}
@@ -1105,6 +1237,8 @@ export const Sidebar = ({
             people's processes at the bottom where they are visible without
             being in the way. */}
         <UnmanagedGroup
+          nameMatches={nameMatches}
+          filter={filter}
           collapsed={bucketCollapsed["unmanaged"] === true}
           onToggle={() => setBucketCollapsed((c) => ({ ...c, unmanaged: !c["unmanaged"] }))}
         />
