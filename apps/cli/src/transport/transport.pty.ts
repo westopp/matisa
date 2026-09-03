@@ -159,10 +159,11 @@ export const runCommand = (
   projectId: string,
   name: string,
   cols: number,
-  rows: number
+  rows: number,
+  context?: string
 ): Effect.Effect<void, TransportError, EngineClient> =>
   interactiveSession(
-    call("commands.run", { projectId: ProjectId.make(projectId), name, cols, rows })
+    call("commands.run", { projectId: ProjectId.make(projectId), name, cols, rows, context })
   )
 
 /** `logs -f <id>`: attach to an existing session's live output stream. */

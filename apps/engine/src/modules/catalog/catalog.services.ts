@@ -32,6 +32,7 @@ import {
   type RuntimeSnapshot
 } from "@matisa/store"
 import { toEngineError } from "../../shared/error-map.js"
+import { resolveContextRef } from "./catalog.env-resolve.js"
 import { catalogChanged, configChanged } from "../../shared/events.js"
 import { EventsHub } from "../../server/server.events-hub.js"
 import { PtyManager } from "../pty/pty.services.js"
@@ -231,6 +232,14 @@ const make = Effect.gen(function* () {
       const extraEnv: Record<string, string> = {}
       for (const v of named.vars) extraEnv[v.key] = v.value
 
+      // Resolved here, not inside openSession: a bad ref must fail the RUN,
+      // and openSession's env resolution is behind a catch-all that would turn
+      // it into "ran with the stored environment instead" without a word.
+      const contextId =
+        params.context === undefined
+          ? undefined
+          : yield* resolveContextRef(project, params.context, { envRepo: env })
+
       const sessionId = SessionId.make(`${prefix}${params.name}:${Date.now() % 1_000_000}`)
       return yield* pty.openSession({
         project,
@@ -238,7 +247,8 @@ const make = Effect.gen(function* () {
         command: named.command,
         cols: params.cols,
         rows: params.rows,
-        extraEnv
+        extraEnv,
+        contextId
       })
     })
 

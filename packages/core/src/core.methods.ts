@@ -89,6 +89,28 @@ export type ByContextId = typeof ByContextId.Type
 
 // —— lifecycle ——
 
+/** A start (or restart) with an optional one-off environment.
+ *
+ *  `context` is a REF — a context id, or the context's name, matched
+ *  case-insensitively within this project. Names are only unique inside a
+ *  project, which is exactly the scope this param already has, so an agent can
+ *  say `staging` rather than carry a uuid.
+ *
+ *  It applies to THIS spawn only and does not touch `activeContextId`. That is
+ *  the whole point: `env.use` is a persistent selection, and an agent that
+ *  switched it to run one thing in staging would leave the project pointed at
+ *  staging after it exits — or race a second agent doing the same. A per-spawn
+ *  override has no state to restore and nothing to race.
+ *
+ *  Absent means the stored selection, which is what every existing caller
+ *  sends. */
+export const StartParams = Schema.Struct({
+  id: ProjectId,
+  context: Schema.optional(Schema.String)
+})
+export type StartParams = typeof StartParams.Type
+
+
 /** Ack that a lifecycle transition was accepted; final state arrives via events. */
 export const Accepted = Schema.Struct({
   id: ProjectId,
@@ -176,7 +198,11 @@ export const CommandRunParams = Schema.Struct({
   projectId: ProjectId,
   name: Schema.String,
   cols: Schema.optionalWith(Schema.Int, { default: () => 80 }),
-  rows: Schema.optionalWith(Schema.Int, { default: () => 24 })
+  rows: Schema.optionalWith(Schema.Int, { default: () => 24 }),
+  /** One-off environment for this run, same ref rules as `StartParams`. The
+   *  command's own vars still layer on top of it — they are configured on the
+   *  command and belong to every run of it, whichever context it runs in. */
+  context: Schema.optional(Schema.String)
 })
 export type CommandRunParams = typeof CommandRunParams.Type
 
@@ -585,9 +611,9 @@ export const methods = {
   "env.rename": { params: EnvRenameParams, result: EnvContext },
   "env.remove": { params: ByContextId, result: Schema.Void },
 
-  "lifecycle.start": { params: ById, result: Accepted },
+  "lifecycle.start": { params: StartParams, result: Accepted },
   "lifecycle.stop": { params: ById, result: Accepted },
-  "lifecycle.restart": { params: ById, result: Accepted },
+  "lifecycle.restart": { params: StartParams, result: Accepted },
   /** Force a project down NOW: SIGKILL the group (or `rm -f` the container)
    *  without a drain, then drop the runner without waiting on it. The escape
    *  hatch for a stop that will not finish — `lifecycle.stop` is the polite

@@ -1,5 +1,5 @@
 import { Effect, Either, Runtime } from "effect"
-import type { Project } from "@matisa/core"
+import type { ContextId, Project } from "@matisa/core"
 import { crashed, logLine } from "../../shared/events.js"
 import { resolveEnv } from "../catalog/catalog.env-resolve.js"
 import {
@@ -87,14 +87,18 @@ const streamComposeLogs = (project: Project, file: string, deps: RunnerDeps) =>
     Runtime.runFork(deps.rt)(deps.events.emit(logLine(project.id, stream, line, service)))
   })
 
-export const runDocker = (project: Project, deps: RunnerDeps): Effect.Effect<void> =>
+export const runDocker = (
+  project: Project,
+  deps: RunnerDeps,
+  contextId?: ContextId
+): Effect.Effect<void> =>
   Effect.scoped(
     Effect.gen(function* () {
       const driver = yield* makeDriver(project, deps)
       const startedAt = Date.now()
       yield* driver.apply(Event.Start({ attempt: 0 }))
 
-      const env = yield* resolveEnv(project, deps).pipe(
+      const env = yield* resolveEnv(project, deps, contextId).pipe(
         Effect.catchAll(() => Effect.succeed({} as Record<string, string>))
       )
 

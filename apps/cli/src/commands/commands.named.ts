@@ -87,9 +87,15 @@ export const run = Command.make(
   "run",
   {
     project: Args.text({ name: "project" }),
-    name: Args.text({ name: "name" })
+    name: Args.text({ name: "name" }),
+    context: Options.text("context").pipe(
+      Options.withDescription(
+        "run with the named environment, without changing the project's selection"
+      ),
+      Options.optional
+    )
   },
-  ({ name, project }) =>
+  ({ context, name, project }) =>
     Effect.gen(function* () {
       yield* applyGlobals
       const projectId = yield* resolveProject(project)
@@ -97,7 +103,8 @@ export const run = Command.make(
         projectId,
         name,
         process.stdout.columns ?? 80,
-        process.stdout.rows ?? 24
+        process.stdout.rows ?? 24,
+        Option.getOrUndefined(context)
       )
     })
 )

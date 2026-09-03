@@ -163,6 +163,41 @@ project, not globally — every project has its own 'dev', so 'env list' groups 
 project and 'env set' addresses a context by its id, which is unique. A project
 selects its active context with 'env use', which takes effect on its NEXT spawn.
 
+That selection is PERSISTENT, which is what makes it the wrong tool for running
+something once in a different environment: an agent that switches it and then
+dies leaves the project pointed somewhere nobody chose, and two agents on one
+project overwrite each other. So every command that SPAWNS takes '--context
+<name|id>' instead — 'lifecycle start', 'lifecycle restart' and 'run'. It
+applies to that spawn alone, reads and writes nothing on the project, and needs
+no cleanup. Prefer it. Reach for 'env use' only when you mean to change what the
+project runs as from now on.
+
+    matisa lifecycle start api --context staging     one run, in staging
+    matisa run api migrate --context staging         one task, in staging
+    matisa lifecycle start api --context base        base only, no overlay
+
+A ref that names no context of THIS project is refused, and the refusal lists
+the ones that exist — a start that quietly ran the wrong environment would be
+worse than one that did not run. Compose stacks refuse it outright: their
+environment comes from the compose file, so there is nowhere to apply one.
+
+Keep the names short and conventional — 'dev', 'test', 'staging', 'prod'. The
+context is already scoped to its project and is always shown under it, so
+'api-dev' or 'portfolio-test' repeats what the surrounding column already says
+and reads as noise in the UI and in 'env list'. Name the environment, not the
+project.
+
+WHERE A VARIABLE BELONGS — a suggestion, not a rule the engine enforces. Put a
+variable in base if the project runs with it everywhere, and put it in a named
+context only when it is true of that context alone or when it overrides base.
+A key repeated with the same value in every context of a project is base's job:
+it reads as meaningful variation when there is none, and it has to be changed in
+several places to be changed at all. This is the common drift — contexts get
+created by copying the last one, so base stays thin and every context carries
+the whole environment. Before 'env set' on a named context, look at base and at
+the sibling contexts; if the value would be identical across all of them, set it
+on base instead.
+
 Values print MASKED as <secret> everywhere, including under --json — the masking
 happens to the data, not the renderer, so no flag gets around it. 'env reveal'
 is the single exception, which is the point: it is named after what it does and
@@ -312,12 +347,21 @@ CATALOG
         Organisational buckets, purely presentational. A project joins one via
         project add/update --group <slug>; --group "" leaves.
 
+        Before adding a project with no group, run 'group list' and look at
+        what is already in each one ('project list' shows the membership).
+        Most new projects belong to a group that exists — a sibling in the
+        same repo or directory, or a service the new one talks to. Put it
+        there. Leave it ungrouped only when nothing it would sit beside is
+        already in the catalog.
+
 LIFECYCLE
 
-    lifecycle start <project>
+    lifecycle start <project> [--context <name|id>]
     lifecycle stop <project>
-    lifecycle restart <project>
+    lifecycle restart <project> [--context <name|id>]
         Accepted immediately. Poll status or read events for the outcome.
+        --context runs THIS spawn with that environment and leaves the
+        project's own selection untouched; see ENV CONTEXTS in 3.
     lifecycle kill <project>
         SIGKILL the process group (or docker rm -f) now, with no drain. The
         escape hatch for a stop that will not finish.
@@ -358,7 +402,8 @@ ENVIRONMENT
 
     env create <project> <name> [--description]
                                   the project is required — an environment
-                                  cannot exist without one
+                                  cannot exist without one. Name it for the
+                                  environment alone: 'dev', not 'api-dev'
     env rename <context> <name>   a project's base cannot be renamed
     env rm <context>              takes its variables, including secrets, with
                                   it; a project's base cannot be removed
@@ -368,7 +413,9 @@ ENVIRONMENT
                                   since a name identifies one context only
                                   within its project
     env set <context> <key> <value> [--secret]
-                                  the context must already exist
+                                  the context must already exist. Prefer base
+                                  unless the value is specific to one context or
+                                  overrides base
     env unset <context> <key>
     env use <project> <context>   select the project's active context; refused
                                   if the context belongs to another project.
@@ -390,8 +437,11 @@ TASKS
         every run of it.
     commands list <project>
     commands rm <project> <name>
-    run <project> <name>
+    run <project> <name> [--context <name|id>]
         Run a saved command as an interactive PTY session. BLOCKS until it exits.
+        --context applies to this run only. The command's own --var entries
+        still layer on top of it — they belong to every run of the command,
+        whichever environment it runs in.
 
 TERMINALS
 
@@ -584,6 +634,7 @@ The non-blocking equivalents, which are what you want:
 
 9.5 Register a new dev server
 
+    matisa group list                       # does it already belong somewhere?
     matisa project add --name api --dir /path/to/api \\
       --cmd "pnpm dev" --port 3000 --group backend
     matisa lifecycle start api

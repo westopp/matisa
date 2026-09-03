@@ -17,6 +17,7 @@ import {
   NotFound,
   SessionId,
   ValidationError,
+  type ContextId,
   type EngineError,
   type Project,
   type ProjectId,
@@ -90,6 +91,9 @@ export interface OpenSessionInput {
   readonly rows: number
   /** Layered over the project's resolved env (command vars, etc). */
   readonly extraEnv?: Record<string, string>
+  /** One-off environment for this session, replacing the project's stored
+   *  selection without changing it. Already resolved to an id by the caller. */
+  readonly contextId?: ContextId
 }
 
 export interface PtyManagerShape {
@@ -270,7 +274,7 @@ const make = Effect.gen(function* () {
   const openSession: PtyManagerShape["openSession"] = (input) =>
     Effect.gen(function* () {
       const project = input.project
-      const env = yield* resolveEnv(project, { envRepo }).pipe(
+      const env = yield* resolveEnv(project, { envRepo }, input.contextId).pipe(
         Effect.catchAll(() => Effect.succeed({} as Record<string, string>))
       )
       const shell = process.env["SHELL"] ?? "/bin/zsh"

@@ -1,5 +1,5 @@
 import { Effect, Either, Ref, Runtime } from "effect"
-import { SessionId, type Project } from "@matisa/core"
+import { SessionId, type ContextId, type Project } from "@matisa/core"
 import type { EnvRepoShape, RuntimeRepoShape, RuntimePatch } from "@matisa/store"
 import { crashed, healthChanged, stateChanged } from "../../shared/events.js"
 import { resolveEnv } from "../catalog/catalog.env-resolve.js"
@@ -144,7 +144,11 @@ export const summarizeFailure = (
     : `${how} after ${alive} with no output`
 }
 
-const runProcess = (project: Project, deps: RunnerDeps): Effect.Effect<void> =>
+const runProcess = (
+  project: Project,
+  deps: RunnerDeps,
+  contextId?: ContextId
+): Effect.Effect<void> =>
   Effect.gen(function* () {
     const sessionId = SessionId.make(runSessionId(project.id))
     const driver = yield* makeDriver(project, deps, sessionId)
@@ -154,7 +158,7 @@ const runProcess = (project: Project, deps: RunnerDeps): Effect.Effect<void> =>
         Effect.gen(function* () {
           yield* driver.apply(Event.Start({ attempt }))
 
-          const env = yield* resolveEnv(project, deps).pipe(
+          const env = yield* resolveEnv(project, deps, contextId).pipe(
             Effect.catchAll(() => Effect.succeed({} as Record<string, string>))
           )
 
@@ -284,13 +288,23 @@ const runProcess = (project: Project, deps: RunnerDeps): Effect.Effect<void> =>
       .pipe(Effect.ignore)
   })
 
-export const runProject = (project: Project, deps: RunnerDeps): Effect.Effect<void> => {
+/** `contextId` is this lifetime's one-off environment override — see
+ *  `resolveEnv`. It rides the lifetime rather than the project row, so nothing
+ *  outlives the run that asked for it. */
+export const runProject = (
+  project: Project,
+  deps: RunnerDeps,
+  contextId?: ContextId
+): Effect.Effect<void> => {
   switch (project.kind) {
     case "docker":
-      return runDocker(project, deps)
+      return runDocker(project, deps, contextId)
     case "compose":
+      // No context here by construction: a compose stack takes its environment
+      // from the compose file, so the engine has nowhere to inject one and
+      // `supervisor.start` refuses the override rather than dropping it.
       return runCompose(project, deps)
     case "process":
-      return runProcess(project, deps)
+      return runProcess(project, deps, contextId)
   }
 }

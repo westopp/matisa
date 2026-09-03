@@ -12,7 +12,9 @@ import {
 import {
   DockerDaemonRequired,
   PortBusy,
+  ValidationError,
   type Accepted,
+  type ContextId,
   type EngineError,
   type Health,
   type ProjectId,
@@ -31,6 +33,7 @@ import { DockerDaemon } from "../docker/docker.daemon.js"
 import { PtyManager } from "../pty/pty.services.js"
 import { hardKill } from "./supervisor.kill.js"
 import { foreignListener } from "./supervisor.probe.js"
+import { resolveContextRef } from "../catalog/catalog.env-resolve.js"
 import { runProject, type RunnerDeps } from "./supervisor.runner.js"
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -42,9 +45,14 @@ import { runProject, type RunnerDeps } from "./supervisor.runner.js"
 // ────────────────────────────────────────────────────────────────────────────
 
 export interface SupervisorShape {
-  readonly start: (id: ProjectId) => Effect.Effect<Accepted, EngineError>
+  /** `context` is an optional one-off environment ref (id or name, scoped to
+   *  this project) applied to THIS spawn only — the project's stored
+   *  `activeContextId` is neither read nor written. Unknown ref, or a compose
+   *  project, is a refusal: a start that quietly ran the wrong environment is
+   *  worse than one that did not run. */
+  readonly start: (id: ProjectId, context?: string) => Effect.Effect<Accepted, EngineError>
   readonly stop: (id: ProjectId) => Effect.Effect<Accepted, EngineError>
-  readonly restart: (id: ProjectId) => Effect.Effect<Accepted, EngineError>
+  readonly restart: (id: ProjectId, context?: string) => Effect.Effect<Accepted, EngineError>
   /** Force down, no drain and no waiting. See supervisor.kill.ts. */
   readonly kill: (id: ProjectId) => Effect.Effect<Accepted, EngineError>
   /** Acknowledge a terminal failure: `crashed`/`errored` → `idle`, and nothing
@@ -76,9 +84,25 @@ const make = Effect.gen(function* () {
 
   const deps: RunnerDeps = { runtimeRepo, envRepo, events, config, pty: ptyMgr, rt }
 
-  const start: SupervisorShape["start"] = (id) =>
+  const start: SupervisorShape["start"] = (id, context) =>
     Effect.gen(function* () {
       const project = yield* projects.get(id).pipe(Effect.mapError(toEngineError))
+
+      // Resolved BEFORE anything is interrupted or spawned, so a typo'd context
+      // leaves a running project running and returns the error to the caller.
+      // Validating after the stale-runner interrupt below would take the
+      // project down to tell the user their flag was wrong.
+      let contextId: ContextId | undefined
+      if (context !== undefined) {
+        if (project.kind === "compose") {
+          return yield* Effect.fail(
+            new ValidationError({
+              message: `${project.name} is a compose stack — its environment comes from ${project.composeFile ?? "the compose file"}, so matisa has nowhere to apply context "${context}"`
+            })
+          )
+        }
+        contextId = yield* resolveContextRef(project, context, { envRepo })
+      }
 
       // A start on an already-running project replaces its runner cleanly.
       const map = yield* SynchronizedRef.get(runners)
@@ -137,7 +161,7 @@ const make = Effect.gen(function* () {
         }
       }
 
-      const fiber = yield* runProject(project, deps).pipe(
+      const fiber = yield* runProject(project, deps, contextId).pipe(
         Effect.catchAllCause((cause) =>
           Effect.gen(function* () {
             const reason = Cause.pretty(cause)
@@ -176,7 +200,8 @@ const make = Effect.gen(function* () {
       return { id, state: "idle" as const }
     })
 
-  const restart: SupervisorShape["restart"] = (id) => stop(id).pipe(Effect.flatMap(() => start(id)))
+  const restart: SupervisorShape["restart"] = (id, context) =>
+    stop(id).pipe(Effect.flatMap(() => start(id, context)))
 
   // The whole point is that this returns. `stop` awaits `Fiber.interrupt`,
   // which runs the runner's finalizers — the graceful teardown, the drain, the
