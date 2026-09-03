@@ -243,6 +243,34 @@ export type ReadIconParams = typeof ReadIconParams.Type
 export const RevealParams = Schema.Struct({ path: Schema.String })
 export type RevealParams = typeof RevealParams.Type
 
+/** One project root the engine was refused. `name` travels with it because the
+ *  window names projects, not paths, and the engine is the only side that can
+ *  pair the two without a second call. */
+export const DeniedRoot = Schema.Struct({
+  projectId: ProjectId,
+  name: Schema.String,
+  root: Schema.String
+})
+export type DeniedRoot = typeof DeniedRoot.Type
+
+/** What the engine can actually reach of its own catalog.
+ *
+ *  This exists because of how a TCC denial presents: the engine spawns every
+ *  project with `cwd` set to its root, so a root the engine may not read makes
+ *  `getcwd(2)` fail in the child and Node dies with `EPERM: uv_cwd` before it
+ *  reads a line of the project. Nothing raises a prompt — macOS denies a
+ *  process that lacks the grant silently — so without this the failure is a
+ *  project that will not start and no statement anywhere of why.
+ *
+ *  `supported` is false off macOS, where there is no TCC and therefore nothing
+ *  to grant or to report. */
+export const FileAccessResult = Schema.Struct({
+  supported: Schema.Boolean,
+  denied: Schema.Array(DeniedRoot),
+  checkedAt: Schema.Number
+})
+export type FileAccessResult = typeof FileAccessResult.Type
+
 /** An icon as a data URI. The client runs in a browser sandbox and cannot read
  *  `file://`, so the engine — which does have disk access — inlines the bytes. */
 export const ReadIconResult = Schema.Struct({
@@ -609,6 +637,11 @@ export const methods = {
   "fs.chooseFile": { params: ChooseFileParams, result: ChooseDirResult },
   "fs.readIcon": { params: ReadIconParams, result: ReadIconResult },
   "fs.reveal": { params: RevealParams, result: Schema.Void },
+  /** Which catalog roots the engine is refused by the OS. Read by the window on
+   *  connect and whenever it regains focus — a grant is made in System Settings,
+   *  outside this app, so focus is the one moment the answer can have changed
+   *  without the window doing anything. */
+  "fs.access": { params: Schema.Void, result: FileAccessResult },
 
   "logs.tail": { params: LogsTailParams, result: LogsTailResult },
   "lifecycle.failures": { params: FailuresParams, result: Schema.Array(CrashRecord) },

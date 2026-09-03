@@ -8,6 +8,13 @@ contextBridge.exposeInMainWorld("matisa", {
   openExternal: (url: string): void => {
     void ipcRenderer.invoke("matisa:open-external", url)
   },
+  /** Open System Settings at Privacy & Security → Full Disk Access. Takes no
+   *  argument on purpose — see the main-process handler. Fire-and-forget: the
+   *  OS does not report back whether the user granted anything, so the window
+   *  learns the answer the only way it can, by asking the engine again. */
+  openFilePrivacySettings: (): void => {
+    void ipcRenderer.invoke("matisa:open-file-privacy-settings")
+  },
   /** Start the engine daemon if it is not already up; resolves true once its WS
    *  bridge accepts. The shell owns the engine's lifetime — it spawns one at
    *  launch — so recovering a dead engine is the shell's job to do and the

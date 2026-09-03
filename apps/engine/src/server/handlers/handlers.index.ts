@@ -67,7 +67,7 @@ export const makeHandlers: Effect.Effect<
     ...ptyHandlers(pty),
     ...engineHandlers(config, startedAt, daemon, resources, catalog, supervisor, pty),
     ...exposureHandlers(exposure),
-    ...fsHandlers(),
+    ...fsHandlers(catalog),
     ...settingsHandlers(settings, hub),
     ...gitHandlers(git)
   }

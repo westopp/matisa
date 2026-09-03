@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { promises as fs } from "node:fs"
+import { constants, promises as fs } from "node:fs"
 import { homedir, platform } from "node:os"
 import { dirname, extname, join, resolve } from "node:path"
 import { Effect } from "effect"
@@ -7,10 +7,13 @@ import {
   ValidationError,
   type ChooseDirParams,
   type ChooseFileParams,
+  type DeniedRoot,
   type ListDirParams,
+  type Project,
   type ReadIconParams,
   type RevealParams
 } from "@matisa/core"
+import type { CatalogShape } from "../../modules/catalog/catalog.services.js"
 import type { Handlers } from "../server.dispatcher.js"
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -23,6 +26,9 @@ import type { Handlers } from "../server.dispatcher.js"
 //   fs.listDir    read-only existence/stat check, used to verify typed paths.
 //   fs.readIcon   inlines an image as a data URI — a browser cannot open the
 //                 file:// URL a stored icon path points at.
+//   fs.access     which catalog roots the OS refuses this process. macOS only,
+//                 and the one call here that is about the engine rather than
+//                 about a path the user typed.
 //
 // Read-only by design: nothing here creates, moves or deletes.
 // ────────────────────────────────────────────────────────────────────────────
@@ -128,9 +134,58 @@ const revealInFileManager = (path: string): Promise<void> =>
     })
   })
 
-export const fsHandlers = (): Pick<
+
+// ── TCC ─────────────────────────────────────────────────────────────────────
+// The probe is `access(R_OK)`, and it has to be. `stat(2)` SUCCEEDS on a
+// directory this process may not read — verified against a genuinely denied
+// engine, where ~/Desktop stats fine and every one of readdir, opendir and
+// access answers EPERM. A stat-based check reports nothing wrong on precisely
+// the machine this exists for, which is worse than having no check: the window
+// would state that access is fine while every project under that root fails.
+//
+// A folder macOS protects and this process has no grant for answers EPERM —
+// not ENOENT, not EACCES. The distinction is the whole value of this check:
+//
+//   ENOENT  the root was moved or deleted. The user's problem, and one the
+//           catalog already shows as a broken path.
+//   EACCES  ordinary unix permissions. A real failure, but chmod fixes it and
+//           sending someone to Privacy & Security would be a wrong answer.
+//   EPERM   the kernel refused a process that is otherwise entitled to the
+//           bytes. On macOS, on a path under a protected folder, that is TCC.
+//
+// So only EPERM is reported. Over-reporting here costs more than missing a
+// case: the notice this feeds tells the user to grant Full Disk Access, and it
+// must never say that about a directory they simply deleted.
+const DENIED = "EPERM"
+
+const errno = (cause: unknown): string | undefined =>
+  typeof cause === "object" && cause !== null && "code" in cause
+    ? String((cause as { code: unknown }).code)
+    : undefined
+
+/** Roots are probed once each, not once per project: a monorepo puts a dozen
+ *  catalog entries under one directory, and the answer is a property of the
+ *  directory. Every project under a refused root is still listed — the window
+ *  counts projects, because that is what the user recognises. */
+const deniedRoots = async (projects: ReadonlyArray<Project>): Promise<ReadonlyArray<DeniedRoot>> => {
+  const refused = new Set<string>()
+
+  for (const root of new Set(projects.map((p) => p.root))) {
+    const denied = await fs.access(root, constants.R_OK).then(
+      () => false,
+      (cause: unknown) => errno(cause) === DENIED
+    )
+    if (denied) refused.add(root)
+  }
+
+  return projects
+    .filter((p) => refused.has(p.root))
+    .map((p) => ({ projectId: p.id, name: p.name, root: p.root }))
+}
+
+export const fsHandlers = (catalog: CatalogShape): Pick<
   Handlers,
-  "fs.listDir" | "fs.chooseDir" | "fs.chooseFile" | "fs.readIcon" | "fs.reveal"
+  "fs.listDir" | "fs.chooseDir" | "fs.chooseFile" | "fs.readIcon" | "fs.reveal" | "fs.access"
 > => ({
   "fs.chooseDir": (params) => {
     if (platform() !== "darwin") {
@@ -224,6 +279,26 @@ export const fsHandlers = (): Pick<
           message: cause instanceof Error ? cause.message : `Could not reveal ${path}`
         })
     })
+  },
+
+  // Never fails. A denial check that itself errors would take the window's only
+  // explanation of a denial with it, so an unreadable catalog reports an empty
+  // list — "nothing known to be refused" — and the projects fail on their own
+  // terms, which is the behaviour without this call at all.
+  "fs.access": () => {
+    if (platform() !== "darwin") {
+      return Effect.succeed({ supported: false, denied: [], checkedAt: Date.now() })
+    }
+
+    return catalog.list().pipe(
+      Effect.flatMap((projects) =>
+        Effect.promise(() => deniedRoots(projects))
+      ),
+      Effect.map((denied) => ({ supported: true, denied, checkedAt: Date.now() })),
+      Effect.catchAllCause(() =>
+        Effect.succeed({ supported: true, denied: [] as ReadonlyArray<DeniedRoot>, checkedAt: Date.now() })
+      )
+    )
   },
 
   "fs.listDir": (params) => {

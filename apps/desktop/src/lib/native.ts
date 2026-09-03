@@ -27,6 +27,7 @@ export type CliInstallResult =
 
 interface MatisaBridge {
   readonly openExternal: (url: string) => void
+  readonly openFilePrivacySettings: () => void
   readonly startEngine: () => Promise<boolean>
   readonly notify: (title: string, body?: string) => Promise<boolean>
   readonly revealEngineLog: () => void
@@ -53,6 +54,19 @@ export const inShell = (): boolean => window.matisa !== undefined
 export const openExternal = (url: string): void => {
   if (window.matisa !== undefined) window.matisa.openExternal(url)
   else window.open(url, "_blank", "noopener")
+}
+
+/** Open System Settings at Privacy & Security → Full Disk Access.
+ *
+ *  `false` outside the shell, where there is nothing to open — a browser tab
+ *  cannot reach System Settings, and the caller needs to know that rather than
+ *  render a button that does nothing. Full Disk Access cannot be requested by
+ *  an app at all: there is no entitlement and no prompt for it, so taking the
+ *  user to the pane is the entire available action. */
+export const openFilePrivacySettings = (): boolean => {
+  if (window.matisa === undefined) return false
+  window.matisa.openFilePrivacySettings()
+  return true
 }
 
 /** Ask the shell to start the engine it owns. `null` outside the shell, where

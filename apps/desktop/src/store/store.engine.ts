@@ -15,6 +15,7 @@ import {
   type EnvSetParams,
   type ExposureEntry,
   type ExposureSnapshot,
+  type FileAccessResult,
   type GitContext,
   type Group,
   type GroupSetParams,
@@ -307,6 +308,14 @@ interface EngineState {
   activity: ReadonlyArray<ActivityEntry>
   daemon: DaemonStatusResult
   engine: EngineStatus | null
+  /** Which project roots the OS refuses the ENGINE — not this window, which has
+   *  no filesystem of its own. Null until the first answer, so the notice this
+   *  feeds does not appear for a frame on every launch before the check has run.
+   *
+   *  Re-read whenever the catalog changes (the roots changed) and whenever the
+   *  window regains focus (the GRANT may have changed — it is made in System
+   *  Settings, where this app cannot see it happen). */
+  fileAccess: FileAccessResult | null
   /** Per-project URL entries + provider status, mirrored from exposure.snapshot
    *  and patched by exposure_changed events. */
   exposures: Record<string, ReadonlyArray<ExposureEntry>>
@@ -341,6 +350,11 @@ interface EngineState {
   // —— queries ——
   bootstrap: () => Promise<void>
   refreshCatalog: () => Promise<void>
+  /** Ask the engine what of its own catalog it can still reach. Never throws —
+   *  a failed check leaves the last known answer in place, because "the check
+   *  did not run" and "nothing is refused" are different things and only one of
+   *  them should clear the notice. */
+  refreshFileAccess: () => Promise<void>
   refreshContexts: () => Promise<void>
   refreshGroups: () => Promise<void>
   refreshSettings: () => Promise<void>
@@ -467,6 +481,7 @@ export const useEngine = create<EngineState>()((set, get) => ({
   activity: [],
   daemon: { state: "unknown" },
   engine: null,
+  fileAccess: null,
   exposures: {},
   caddy: null,
   discovery: null,
@@ -524,6 +539,7 @@ export const useEngine = create<EngineState>()((set, get) => ({
       get().refreshResources(),
       get().refreshGroups(),
       get().refreshSettings(),
+      get().refreshFileAccess(),
       rpc.call("engine.status", undefined).then((engine) => set({ engine })),
       rpc.call("docker.daemon.status", undefined).then((daemon) => set({ daemon })),
       rpc.call("lifecycle.failures", { limit: 20 }).then((failures) => set({ failures })),
@@ -554,6 +570,15 @@ export const useEngine = create<EngineState>()((set, get) => ({
   },
 
   refreshCatalog: async () => set({ projects: await rpc.call("catalog.list", undefined) }),
+
+  refreshFileAccess: async () => {
+    try {
+      set({ fileAccess: await rpc.call("fs.access", undefined) })
+    } catch {
+      // Deliberately silent. This runs on every focus, and an engine that went
+      // away mid-check is already reported by the banner above this one.
+    }
+  },
 
   refreshContexts: async () => set({ contexts: await rpc.call("env.list", undefined) }),
 
@@ -1210,6 +1235,10 @@ export const useEngine = create<EngineState>()((set, get) => ({
       }
       case "catalog_changed": {
         scheduleCatalogRefresh()
+        // A project added under a refused root has to be reported the moment it
+        // is added, not on the next launch — adding it is exactly when the user
+        // is standing there wondering why it will not run.
+        void get().refreshFileAccess()
         break
       }
       // The other client edited something that is not a project row. Each scope

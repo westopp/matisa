@@ -10,6 +10,7 @@ import {
   cliLinkState,
   inShell,
   installCli,
+  openFilePrivacySettings,
   startEngine,
   subscribeUpdateState,
   type CliLinkState,
@@ -103,6 +104,20 @@ const useCliLink = (): readonly [CliLinkState | null, () => void] => {
   return [state, check]
 }
 
+/** Re-ask the engine what it can reach whenever the window comes back to the
+ *  front. Same reasoning as `useCliLink`: the fix happens in another app —
+ *  System Settings — so returning to this window is the one moment the answer
+ *  can have changed without this window doing anything. The store holds the
+ *  answer; this only decides when to ask again. */
+const useFileAccessOnFocus = (): void => {
+  const refresh = useEngine((s) => s.refreshFileAccess)
+  useEffect(() => {
+    const check = (): void => void refresh()
+    window.addEventListener("focus", check)
+    return () => window.removeEventListener("focus", check)
+  }, [refresh])
+}
+
 const useUpdateState = (): UpdateState => {
   const [state, setState] = useState<UpdateState>({ phase: "idle" })
   useEffect(() => subscribeUpdateState(setState), [])
@@ -119,6 +134,9 @@ const useNotices = (): ReadonlyArray<Notice> => {
   const shutdownEngine = useEngine((s) => s.shutdownEngine)
   const restartEngine = useEngine((s) => s.restartEngine)
   const engineDown = useEngineDown()
+  const fileAccess = useEngine((s) => s.fileAccess)
+  const refreshFileAccess = useEngine((s) => s.refreshFileAccess)
+  useFileAccessOnFocus()
   const update = useUpdateState()
   const [applying, setApplying] = useState(false)
   const [linking, setLinking] = useState(false)
@@ -205,6 +223,68 @@ const useNotices = (): ReadonlyArray<Notice> => {
           busy: restarting
         }
       ]
+    })
+  }
+
+  // The OS is refusing the engine the folders its own projects live in.
+  //
+  // This is macOS TCC, and it is worth spelling out why it needs a banner at
+  // all rather than being left to the project that fails. The engine spawns
+  // every project with `cwd` set to the project root. A root under a protected
+  // folder the engine has no grant for makes `getcwd(2)` fail in the child, so
+  // anything running on Node dies with "EPERM: operation not permitted, uv_cwd"
+  // before it reads a line of the project — while bun, which does not call it,
+  // starts fine. The same catalog half works, and nothing anywhere names the
+  // cause. Worse, macOS raises no prompt: a process without the grant is denied
+  // silently, so there is no dialog the user missed and nothing to go back to.
+  //
+  // Also why the fix is two steps and the notice says both. Full Disk Access
+  // has no entitlement, no API and no prompt — it is granted by hand or not at
+  // all — and the engine reads its grants when it starts, so a daemon that was
+  // running while the grant was made is still refused. Offering only the pane
+  // would leave the user having granted it and watched nothing change.
+  const denied = fileAccess !== null && fileAccess.supported ? fileAccess.denied : []
+  const firstDenied = denied[0]
+  if (firstDenied !== undefined) {
+    const roots = [...new Set(denied.map((d) => d.root))]
+    notices.push({
+      id: "file-access",
+      tone: "warning",
+      title:
+        denied.length === 1
+          ? `macOS is blocking the engine from ${firstDenied.name}'s folder`
+          : `macOS is blocking the engine from ${denied.length} projects' folders`,
+      // Names a path, not just a count. "Grant access to Matisa" means nothing
+      // until you know which folder is being talked about, and the path is what
+      // the user will recognise in the Settings pane they are about to open.
+      detail: `${firstDenied.root}${roots.length > 1 ? ` and ${roots.length - 1} other location(s)` : ""} cannot be read, so those projects will fail to start. Grant Matisa Full Disk Access, then restart the engine — it only picks up the grant on launch.`,
+      actions: inShell()
+        ? [
+            {
+              label: "Open Settings",
+              onClick: () => {
+                openFilePrivacySettings()
+                // Nothing reports back from System Settings, so the answer is
+                // re-asked on focus when the user comes back here.
+              },
+              primary: true
+            },
+            {
+              label: "Restart engine",
+              onClick: () => {
+                setRestarting(true)
+                void restartEngine()
+                  .then(() => refreshFileAccess())
+                  .finally(() => setRestarting(false))
+              },
+              busy: restarting
+            }
+          ]
+        : // In a browser tab there is no System Settings to open and no daemon
+          // to restart from here. Re-checking is the only honest offer, and it
+          // is a real one: the engine is restarted outside this window in that
+          // case, and this is how the window notices.
+          [{ label: "Check again", onClick: () => void refreshFileAccess(), primary: true }]
     })
   }
 

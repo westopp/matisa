@@ -48,6 +48,34 @@ mac:
   category: public.app-category.developer-tools
   icon: Matisa.icon
 
+  # TCC: without a usage string macOS does not prompt, it DENIES — silently.
+  # The engine spawns every project with `cwd` set to the project's root, and a
+  # root under ~/Desktop, ~/Documents or ~/Downloads is TCC-protected, so
+  # `getcwd(2)` in the child returns EPERM. Node calls it at startup, so `npm`,
+  # `pnpm` and anything else running on Node dies before it reads a line of the
+  # project ("Error: EPERM: operation not permitted, uv_cwd"); bun does not, so
+  # the same catalog appears to work for some projects and not others. Nothing
+  # asks the user, and the app never appears under Privacy & Security → Files
+  # and Folders for them to grant it by hand — the key below is what puts it
+  # there. Removable and network volumes are here for the same reason: a project
+  # root is wherever the user keeps their code.
+  extendInfo:
+    NSDesktopFolderUsageDescription: >-
+      Matisa runs the projects in your catalog from the folders you point it at.
+      Grant access if you keep code on your Desktop.
+    NSDocumentsFolderUsageDescription: >-
+      Matisa runs the projects in your catalog from the folders you point it at.
+      Grant access if you keep code in Documents.
+    NSDownloadsFolderUsageDescription: >-
+      Matisa runs the projects in your catalog from the folders you point it at.
+      Grant access if you keep code in Downloads.
+    NSRemovableVolumesUsageDescription: >-
+      Matisa runs the projects in your catalog from the folders you point it at.
+      Grant access if you keep code on an external drive.
+    NSNetworkVolumesUsageDescription: >-
+      Matisa runs the projects in your catalog from the folders you point it at.
+      Grant access if you keep code on a network volume.
+
   # Notarisation requires the hardened runtime, and the hardened runtime denies
   # JIT and unsigned native loads unless entitled. See the plist for what each
   # grant is for. entitlementsInherit is the same file on purpose: the processes

@@ -74,6 +74,24 @@ ipcMain.handle("matisa:open-external", (_e, url: unknown) => {
   }
 })
 
+// The Full Disk Access pane, for the banner that reports a refused project
+// root. A separate channel rather than a scheme allowance on open-external:
+// that handler takes a URL from the renderer and http/https is the whole of
+// what it should ever be able to reach. `x-apple.systempreferences:` addresses
+// panes by identifier, and a renderer that could pass one could send the user
+// anywhere in System Settings. This takes no argument and has exactly one
+// destination.
+//
+// There is nothing to grant programmatically — Full Disk Access has no
+// entitlement and no API, and cannot be prompted for. Opening the pane the user
+// has to use is the most an app is permitted to do about it.
+ipcMain.handle("matisa:open-file-privacy-settings", () => {
+  if (process.platform !== "darwin") return
+  void shell.openExternal(
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+  )
+})
+
 // Recovering a dead engine, asked for by the window's banner. Takes no
 // arguments and can only ever start the one engine this app owns, so there is
 // nothing here for a renderer to get wrong. ensureEngine is already idempotent —
